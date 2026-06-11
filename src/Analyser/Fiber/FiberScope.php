@@ -4,6 +4,7 @@ namespace PHPStan\Analyser\Fiber;
 
 use Fiber;
 use PhpParser\Node\Expr;
+use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\Scope;
 use PHPStan\Reflection\FunctionReflection;
@@ -11,6 +12,7 @@ use PHPStan\Reflection\MethodReflection;
 use PHPStan\Reflection\ParameterReflection;
 use PHPStan\Type\Type;
 use function array_pop;
+use function count;
 
 final class FiberScope extends MutatingScope
 {
@@ -57,12 +59,20 @@ final class FiberScope extends MutatingScope
 	/** @api */
 	public function getType(Expr $node): Type
 	{
-		/** @var Scope $beforeScope */
-		$beforeScope = Fiber::suspend(
-			new BeforeScopeForExprRequest($node, $this),
+		/** @var ExpressionResult $expressionResult */
+		$expressionResult = Fiber::suspend(
+			new ExpressionResultRequest($node, $this),
 		);
 
-		$scope = $this->preprocessScope($beforeScope->toMutatingScope());
+		if (
+			!$this->nativeTypesPromoted
+			&& count($this->truthyValueExprs) === 0
+			&& count($this->falseyValueExprs) === 0
+		) {
+			return $expressionResult->getType();
+		}
+
+		$scope = $this->preprocessScope($expressionResult->getBeforeScope());
 		return $scope->getType($node);
 	}
 
@@ -79,23 +89,31 @@ final class FiberScope extends MutatingScope
 	/** @api */
 	public function getNativeType(Expr $expr): Type
 	{
-		/** @var Scope $beforeScope */
-		$beforeScope = Fiber::suspend(
-			new BeforeScopeForExprRequest($expr, $this),
+		/** @var ExpressionResult $expressionResult */
+		$expressionResult = Fiber::suspend(
+			new ExpressionResultRequest($expr, $this),
 		);
 
-		$scope = $this->preprocessScope($beforeScope->toMutatingScope());
+		if (
+			!$this->nativeTypesPromoted
+			&& count($this->truthyValueExprs) === 0
+			&& count($this->falseyValueExprs) === 0
+		) {
+			return $expressionResult->getNativeType();
+		}
+
+		$scope = $this->preprocessScope($expressionResult->getBeforeScope());
 		return $scope->getNativeType($expr);
 	}
 
 	public function getKeepVoidType(Expr $node): Type
 	{
-		/** @var Scope $beforeScope */
-		$beforeScope = Fiber::suspend(
-			new BeforeScopeForExprRequest($node, $this),
+		/** @var ExpressionResult $expressionResult */
+		$expressionResult = Fiber::suspend(
+			new ExpressionResultRequest($node, $this),
 		);
 
-		$scope = $this->preprocessScope($beforeScope->toMutatingScope());
+		$scope = $this->preprocessScope($expressionResult->getBeforeScope());
 
 		return $scope->getKeepVoidType($node);
 	}

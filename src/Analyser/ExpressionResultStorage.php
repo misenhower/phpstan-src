@@ -5,48 +5,42 @@ namespace PHPStan\Analyser;
 use Fiber;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
-use PHPStan\Analyser\Fiber\BeforeScopeForExprRequest;
+use PHPStan\Analyser\Fiber\ExpressionResultRequest;
 use PHPStan\Analyser\Fiber\ParkFiberRequest;
-use function spl_object_id;
+use SplObjectStorage;
 
 final class ExpressionResultStorage
 {
 
-	/**
-	 * Keeps every stored Expr alive so its spl_object_id() cannot be reused
-	 * by another node while $scopesById still maps it.
-	 *
-	 * @var array<int, Expr>
-	 */
-	private array $exprsById = [];
+	/** @var SplObjectStorage<Expr, ExpressionResult> */
+	private SplObjectStorage $exprResults;
 
-	/** @var array<int, Scope> */
-	private array $scopesById = [];
-
-	/** @var array<array{fiber: Fiber<mixed, Scope|array{callable(Node $node, Scope $scope): void, Node, Scope}, null, BeforeScopeForExprRequest|ParkFiberRequest>, request: BeforeScopeForExprRequest}> */
+	/** @var array<array{fiber: Fiber<mixed, ExpressionResult|array{callable(Node $node, Scope $scope): void, Node, MutatingScope}, null, ExpressionResultRequest|ParkFiberRequest>, request: ExpressionResultRequest}> */
 	public array $pendingFibers = [];
 
-	/** @var list<Fiber<mixed, Scope|array{callable(Node $node, Scope $scope): void, Node, Scope}, null, BeforeScopeForExprRequest|ParkFiberRequest>> */
+	/** @var list<Fiber<mixed, ExpressionResult|array{callable(Node $node, Scope $scope): void, Node, MutatingScope}, null, ExpressionResultRequest|ParkFiberRequest>> */
 	public array $parkedFibers = [];
+
+	public function __construct()
+	{
+		$this->exprResults = new SplObjectStorage();
+	}
 
 	public function duplicate(): self
 	{
 		$new = new self();
-		$new->exprsById = $this->exprsById;
-		$new->scopesById = $this->scopesById;
+		$new->exprResults->addAll($this->exprResults);
 		return $new;
 	}
 
-	public function storeBeforeScope(Expr $expr, Scope $scope): void
+	public function storeExpressionResult(Expr $expr, ExpressionResult $expressionResult): void
 	{
-		$id = spl_object_id($expr);
-		$this->exprsById[$id] = $expr;
-		$this->scopesById[$id] = $scope;
+		$this->exprResults[$expr] = $expressionResult;
 	}
 
-	public function findBeforeScope(Expr $expr): ?Scope
+	public function findExpressionResult(Expr $expr): ?ExpressionResult
 	{
-		return $this->scopesById[spl_object_id($expr)] ?? null;
+		return $this->exprResults[$expr] ?? null;
 	}
 
 }

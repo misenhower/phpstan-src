@@ -353,7 +353,7 @@ class NodeScopeResolver
 		$this->processPendingFibers($expressionResultStorage);
 	}
 
-	public function storeBeforeScope(ExpressionResultStorage $storage, Expr $expr, Scope $beforeScope): void
+	public function storeExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
 	}
 
@@ -2773,7 +2773,6 @@ class NodeScopeResolver
 		ExpressionContext $context,
 	): ExpressionResult
 	{
-		$this->storeBeforeScope($storage, $expr, $scope);
 		if ($expr instanceof Expr\CallLike && $expr->isFirstClassCallable()) {
 			if ($expr instanceof FuncCall) {
 				$newExpr = new FunctionCallableNode($expr->name, $expr);
@@ -2787,22 +2786,30 @@ class NodeScopeResolver
 				throw new ShouldNotHappenException();
 			}
 
-			return $this->processExprNode($stmt, $newExpr, $scope, $storage, $nodeCallback, $context);
+			$newExprResult = $this->processExprNode($stmt, $newExpr, $scope, $storage, $nodeCallback, $context);
+			$expressionResult = $this->expressionResultFactory->create(
+				$newExprResult->getScope(),
+				beforeScope: $scope,
+				expr: $expr,
+				hasYield: $newExprResult->hasYield(),
+				isAlwaysTerminating: $newExprResult->isAlwaysTerminating(),
+				throwPoints: $newExprResult->getThrowPoints(),
+				impurePoints: $newExprResult->getImpurePoints(),
+			);
+			$this->storeExpressionResult($storage, $expr, $expressionResult);
+			return $expressionResult;
 		}
 
 		$this->callNodeCallbackWithExpression($nodeCallback, $expr, $scope, $storage, $context);
 
 		$exprHandler = ExprHandlerRegistry::resolve($expr, $this->container);
 		if ($exprHandler !== null) {
-			return $exprHandler->processExpr($this, $stmt, $expr, $scope, $storage, $nodeCallback, $context);
+			$expressionResult = $exprHandler->processExpr($this, $stmt, $expr, $scope, $storage, $nodeCallback, $context);
+			$this->storeExpressionResult($storage, $expr, $expressionResult);
+			return $expressionResult;
 		}
 
-		if ($expr instanceof List_) {
-			// only in assign and foreach, processed elsewhere
-			return $this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $expr, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: []);
-		}
-
-		return $this->expressionResultFactory->create(
+		$expressionResult = $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $scope,
 			expr: $expr,
@@ -2811,6 +2818,9 @@ class NodeScopeResolver
 			throwPoints: [],
 			impurePoints: [],
 		);
+		$this->storeExpressionResult($storage, $expr, $expressionResult);
+
+		return $expressionResult;
 	}
 
 	/**
@@ -3676,7 +3686,15 @@ class NodeScopeResolver
 					$impurePoints = array_merge($impurePoints, $closureResult->getImpurePoints());
 				}
 
-				$this->storeBeforeScope($storage, $arg->value, $scopeToPass);
+				$this->storeExpressionResult($storage, $arg->value, new ExpressionResult(
+					$closureResult->getScope(),
+					$scopeToPass,
+					$arg->value,
+					hasYield: false,
+					isAlwaysTerminating: false,
+					throwPoints: [],
+					impurePoints: [],
+				));
 
 				$uses = [];
 				foreach ($arg->value->uses as $use) {
@@ -3747,7 +3765,7 @@ class NodeScopeResolver
 						$deferredInvalidateExpressions[] = [$arrowFunctionType->getInvalidateExpressions(), $arrowFunctionType->getUsedVariables()];
 					}
 				}
-				$this->storeBeforeScope($storage, $arg->value, $scopeToPass);
+				$this->storeExpressionResult($storage, $arg->value, $arrowFunctionResult);
 			} else {
 				$exprType = $scope->getType($arg->value);
 				$enterExpressionAssignForByRef = $assignByReference && $arg->value instanceof ArrayDimFetch && $arg->value->dim === null;

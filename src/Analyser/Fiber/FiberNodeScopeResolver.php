@@ -5,9 +5,12 @@ namespace PHPStan\Analyser\Fiber;
 use Fiber;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
+use PHPStan\Analyser\ExpressionContext;
+use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\ShouldNotHappenException;
@@ -48,26 +51,26 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 		$this->runFiberForNodeCallback($storage, $fiber, $request);
 	}
 
-	public function storeBeforeScope(ExpressionResultStorage $storage, Expr $expr, Scope $beforeScope): void
+	public function storeExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
-		$storage->storeBeforeScope($expr, $beforeScope);
-		$this->processPendingFibersForRequestedExpr($storage, $expr, $beforeScope);
+		$storage->storeExpressionResult($expr, $expressionResult);
+		$this->processPendingFibersForRequestedExpr($storage, $expr, $expressionResult);
 	}
 
 	/**
-	 * @param Fiber<mixed, Scope|array{callable(Node $node, Scope $scope): void, Node, Scope}, null, BeforeScopeForExprRequest|ParkFiberRequest> $fiber
+	 * @param Fiber<mixed, ExpressionResult|array{callable(Node $node, Scope $scope): void, Node, MutatingScope}, null, ExpressionResultRequest|ParkFiberRequest> $fiber
 	 */
 	private function runFiberForNodeCallback(
 		ExpressionResultStorage $storage,
 		Fiber $fiber,
-		BeforeScopeForExprRequest|ParkFiberRequest|null $request,
+		ExpressionResultRequest|ParkFiberRequest|null $request,
 	): void
 	{
 		while (!$fiber->isTerminated()) {
-			if ($request instanceof BeforeScopeForExprRequest) {
-				$beforeScope = $storage->findBeforeScope($request->expr);
-				if ($beforeScope !== null) {
-					$request = $fiber->resume($beforeScope);
+			if ($request instanceof ExpressionResultRequest) {
+				$expressionResult = $storage->findExpressionResult($request->expr);
+				if ($expressionResult !== null) {
+					$request = $fiber->resume($expressionResult);
 					continue;
 				}
 
@@ -100,16 +103,29 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 
 		foreach ($storage->pendingFibers as $key => $pending) {
 			$request = $pending['request'];
-			$beforeScope = $storage->findBeforeScope($request->expr);
+			$expressionResult = $storage->findExpressionResult($request->expr);
 
-			if ($beforeScope !== null) {
+			if ($expressionResult !== null) {
 				throw new ShouldNotHappenException('Pending fibers at the end should be about synthetic nodes');
 			}
 
 			unset($storage->pendingFibers[$key]);
 
 			$fiber = $pending['fiber'];
-			$request = $fiber->resume($request->scope);
+
+			// Process the expression with a duplicated storage so that the result
+			// computed from the asker's scope does not poison the real storage.
+			// The expression might still be processed naturally later (e.g. a loop
+			// condition asked about by a rule before the loop converges) and other
+			// fibers need to wait for that result instead of this one.
+			$request = $fiber->resume($this->processExprNode(
+				new Node\Stmt\Expression($request->expr),
+				$request->expr,
+				$request->scope->toMutatingScope(),
+				$storage->duplicate(),
+				new NoopNodeCallback(),
+				ExpressionContext::createTopLevel(),
+			));
 			$this->runFiberForNodeCallback($storage, $fiber, $request);
 
 			// Break and restart the loop since the array may have been modified
@@ -117,7 +133,7 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 		}
 	}
 
-	private function processPendingFibersForRequestedExpr(ExpressionResultStorage $storage, Expr $expr, Scope $result): void
+	private function processPendingFibersForRequestedExpr(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
 		start:
 
@@ -130,7 +146,7 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 			unset($storage->pendingFibers[$key]);
 
 			$fiber = $pending['fiber'];
-			$request = $fiber->resume($result);
+			$request = $fiber->resume($expressionResult);
 			$this->runFiberForNodeCallback($storage, $fiber, $request);
 
 			// Break and restart the loop since the array may have been modified
