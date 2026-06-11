@@ -275,6 +275,7 @@ final class BooleanAndHandler implements ExprHandler
 
 		return $this->expressionResultFactory->create(
 			$leftMergedWithRightScope,
+			beforeScope: $scope,
 			hasYield: $leftResult->hasYield() || $rightResult->hasYield(),
 			isAlwaysTerminating: $leftResult->isAlwaysTerminating(),
 			throwPoints: array_merge($leftResult->getThrowPoints(), $rightResult->getThrowPoints()),

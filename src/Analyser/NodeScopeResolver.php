@@ -2799,11 +2799,12 @@ class NodeScopeResolver
 
 		if ($expr instanceof List_) {
 			// only in assign and foreach, processed elsewhere
-			return $this->expressionResultFactory->create($scope, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: []);
+			return $this->expressionResultFactory->create($scope, beforeScope: $scope, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: []);
 		}
 
 		return $this->expressionResultFactory->create(
 			$scope,
+			beforeScope: $scope,
 			hasYield: false,
 			isAlwaysTerminating: false,
 			throwPoints: [],
@@ -3170,7 +3171,7 @@ class NodeScopeResolver
 		$this->callNodeCallback($nodeCallback, new InArrowFunctionNode($arrowFunctionType, $expr), $arrowFunctionScope, $storage);
 		$exprResult = $this->processExprNode($stmt, $expr->expr, $arrowFunctionScope, $storage, $nodeCallback, ExpressionContext::createTopLevel());
 
-		return $this->expressionResultFactory->create($scope, false, $exprResult->isAlwaysTerminating(), $exprResult->getThrowPoints(), $exprResult->getImpurePoints());
+		return $this->expressionResultFactory->create($scope, beforeScope: $scope, hasYield: false, isAlwaysTerminating: $exprResult->isAlwaysTerminating(), throwPoints: $exprResult->getThrowPoints(), impurePoints: $exprResult->getImpurePoints());
 	}
 
 	/**
@@ -3888,7 +3889,7 @@ class NodeScopeResolver
 		}
 
 		// not storing this, it's scope after processing all args
-		return $this->expressionResultFactory->create($scope, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints);
+		return $this->expressionResultFactory->create($scope, $scope, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints);
 	}
 
 	/**
@@ -4040,7 +4041,7 @@ class NodeScopeResolver
 			$assignedExpr,
 			new VirtualAssignNodeCallback($nodeCallback),
 			ExpressionContext::createDeep(),
-			fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: []),
+			fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, beforeScope: $scope, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: []),
 			false,
 		);
 	}
