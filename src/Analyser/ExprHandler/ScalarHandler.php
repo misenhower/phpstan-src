@@ -10,23 +10,19 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
-use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
-use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Reflection\InitializerExprContext;
 use PHPStan\Reflection\InitializerExprTypeResolver;
-use PHPStan\Type\Type;
 
 /**
- * @implements TypeResolvingExprHandler<Scalar>
+ * @implements ExprHandler<Scalar>
  */
 #[AutowiredService]
-final class ScalarHandler implements TypeResolvingExprHandler
+final class ScalarHandler implements ExprHandler
 {
 
 	public function __construct(
@@ -43,6 +39,7 @@ final class ScalarHandler implements TypeResolvingExprHandler
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
+		// TODO $typeSpecifier->specifyDefaultTypes($scope, $expr, $context) OR noop
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $scope,
@@ -51,17 +48,8 @@ final class ScalarHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
+			typeCallback: fn (Scope $scope) => $this->initializerExprTypeResolver->getType($expr, InitializerExprContext::fromScope($scope)),
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		return $this->initializerExprTypeResolver->getType($expr, InitializerExprContext::fromScope($scope));
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }

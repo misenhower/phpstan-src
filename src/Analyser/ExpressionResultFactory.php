@@ -3,6 +3,7 @@
 namespace PHPStan\Analyser;
 
 use PhpParser\Node\Expr;
+use PHPStan\Type\Type;
 
 interface ExpressionResultFactory
 {
@@ -12,6 +13,7 @@ interface ExpressionResultFactory
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
 	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
+	 * @param (callable(MutatingScope, Expr): Type)|null $typeCallback
 	 */
 	public function create(
 		MutatingScope $scope,
@@ -23,6 +25,7 @@ interface ExpressionResultFactory
 		array $impurePoints,
 		?callable $truthyScopeCallback = null,
 		?callable $falseyScopeCallback = null,
+		?callable $typeCallback = null,
 	): ExpressionResult;
 
 }
