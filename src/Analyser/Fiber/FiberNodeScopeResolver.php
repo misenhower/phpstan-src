@@ -5,7 +5,6 @@ namespace PHPStan\Analyser\Fiber;
 use Fiber;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
-use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\MutatingScope;
@@ -32,6 +31,12 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 		ExpressionResultStorage $storage,
 	): void
 	{
+		if ($nodeCallback instanceof NoopNodeCallback) {
+			// fibers exist solely to let node callbacks ask about types,
+			// a noop callback does not need one
+			return;
+		}
+
 		if (Fiber::getCurrent() !== null) {
 			$nodeCallback($node, $scope->toFiberScope());
 			return;
@@ -115,21 +120,11 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 
 			// Process the synthetic node with a duplicated storage so that the result
 			// computed from the asker's scope does not poison the real storage.
-			// Real AST nodes contained in the synthetic node already have their
-			// results stored and are not processed again.
-			$this->returnStoredExpressionResults = true;
-			try {
-				$expressionResult = $this->processExprNode(
-					new Node\Stmt\Expression($request->expr),
-					$request->expr,
-					$request->scope->toMutatingScope(),
-					$storage->duplicate(),
-					new NoopNodeCallback(),
-					ExpressionContext::createTopLevel(),
-				);
-			} finally {
-				$this->returnStoredExpressionResults = false;
-			}
+			$expressionResult = $this->processExprOnDemand(
+				$request->expr,
+				$request->scope->toMutatingScope(),
+				$storage->duplicate(),
+			);
 			$request = $fiber->resume($expressionResult);
 			$this->runFiberForNodeCallback($storage, $fiber, $request);
 

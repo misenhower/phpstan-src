@@ -69,7 +69,7 @@ parameters:
 		-
 			rawMessage: Casting to string something that's already string.
 			identifier: cast.useless
-			count: 1
+			count: 5
 			path: src/Analyser/MutatingScope.php
 
 		-
@@ -115,12 +115,6 @@ parameters:
 			path: src/Analyser/RuleErrorTransformer.php
 
 		-
-			rawMessage: Casting to string something that's already string.
-			identifier: cast.useless
-			count: 2
-			path: src/Analyser/ScopeOps.php
-
-		-
 			rawMessage: 'Doing instanceof PHPStan\Type\Constant\ConstantBooleanType is error-prone and deprecated. Use Type::isTrue() or Type::isFalse() instead.'
 			identifier: phpstanApi.instanceofType
 			count: 2
@@ -149,6 +143,12 @@ parameters:
 			identifier: missingType.generics
 			count: 1
 			path: src/Collectors/Registry.php
+
+		-
+			rawMessage: Anonymous function has an unused use $container.
+			identifier: closure.unusedUse
+			count: 1
+			path: src/Command/CommandHelper.php
 
 		-
 			rawMessage: 'Call to static method expand() of internal class Nette\DI\Helpers from outside its root namespace Nette.'
@@ -764,6 +764,12 @@ parameters:
 			identifier: return.internalClass
 			count: 1
 			path: src/Testing/LevelsTestCase.php
+
+		-
+			rawMessage: Anonymous function has an unused use $container.
+			identifier: closure.unusedUse
+			count: 1
+			path: src/Testing/PHPStanTestCase.php
 
 		-
 			rawMessage: 'Doing instanceof PHPStan\Type\ConstantScalarType is error-prone and deprecated. Use Type::isConstantScalarValue() or Type::getConstantScalarTypes() or Type::getConstantScalarValues() instead.'

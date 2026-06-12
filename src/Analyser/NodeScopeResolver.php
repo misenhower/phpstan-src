@@ -282,6 +282,25 @@ class NodeScopeResolver
 	): void
 	{
 		$expressionResultStorage = new ExpressionResultStorage();
+		$scope->pushExpressionResultStorage($expressionResultStorage);
+		try {
+			$this->processNodesWithStorage($nodes, $scope, $expressionResultStorage, $nodeCallback);
+		} finally {
+			$scope->popExpressionResultStorage();
+		}
+	}
+
+	/**
+	 * @param Node[] $nodes
+	 * @param callable(Node $node, Scope $scope): void $nodeCallback
+	 */
+	private function processNodesWithStorage(
+		array $nodes,
+		MutatingScope $scope,
+		ExpressionResultStorage $expressionResultStorage,
+		callable $nodeCallback,
+	): void
+	{
 		$alreadyTerminated = false;
 		$exitPoints = [];
 
@@ -497,14 +516,19 @@ class NodeScopeResolver
 	): StatementResult
 	{
 		$storage = new ExpressionResultStorage();
-		return $this->processStmtNodesInternal(
-			$parentNode,
-			$stmts,
-			$scope,
-			$storage,
-			$nodeCallback,
-			$context,
-		)->toPublic();
+		$scope->pushExpressionResultStorage($storage);
+		try {
+			return $this->processStmtNodesInternal(
+				$parentNode,
+				$stmts,
+				$scope,
+				$storage,
+				$nodeCallback,
+				$context,
+			)->toPublic();
+		} finally {
+			$scope->popExpressionResultStorage();
+		}
 	}
 
 	/**
@@ -1447,8 +1471,13 @@ class NodeScopeResolver
 			// fresh storage - the same trait node objects are processed once per
 			// using class and fibers must not see results from a previous pass
 			$traitStorage = new ExpressionResultStorage();
-			$this->processTraitUse($stmt, $scope, $traitStorage, $nodeCallback);
-			$this->processPendingFibers($traitStorage);
+			$scope->pushExpressionResultStorage($traitStorage);
+			try {
+				$this->processTraitUse($stmt, $scope, $traitStorage, $nodeCallback);
+				$this->processPendingFibers($traitStorage);
+			} finally {
+				$scope->popExpressionResultStorage();
+			}
 
 			// class-level node callbacks (like ClassMethodsNode) are invoked with
 			// the outer storage but ask about expressions inside the used trait
@@ -2770,6 +2799,31 @@ class NodeScopeResolver
 		}
 
 		return null;
+	}
+
+	/**
+	 * Processes an expression outside the normal AST traversal - e.g. a synthetic
+	 * node a rule or extension asks about. Real AST nodes contained in it return
+	 * their already-stored results instead of being processed again. New results
+	 * are stored into the given storage - pass a duplicate to keep them isolated.
+	 */
+	public function processExprOnDemand(Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage): ExpressionResult
+	{
+		$this->returnStoredExpressionResults = true;
+		$scope->pushExpressionResultStorage($storage);
+		try {
+			return $this->processExprNode(
+				new Node\Stmt\Expression($expr),
+				$expr,
+				$scope,
+				$storage,
+				new NoopNodeCallback(),
+				ExpressionContext::createTopLevel(),
+			);
+		} finally {
+			$scope->popExpressionResultStorage();
+			$this->returnStoredExpressionResults = false;
+		}
 	}
 
 	/**

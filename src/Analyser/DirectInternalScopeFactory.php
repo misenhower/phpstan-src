@@ -19,6 +19,8 @@ use PHPStan\Type\ClosureType;
 final class DirectInternalScopeFactory implements InternalScopeFactory
 {
 
+	private ExpressionResultStorageStack $expressionResultStorageStack;
+
 	/**
 	 * @param int|array{min: int, max: int}|null $configPhpVersion
 	 * @param callable(Node $node, Scope $scope): void|null $nodeCallback
@@ -38,8 +40,10 @@ final class DirectInternalScopeFactory implements InternalScopeFactory
 		private $nodeCallback,
 		private ConstantResolver $constantResolver,
 		private bool $fiber = false,
+		?ExpressionResultStorageStack $expressionResultStorageStack = null,
 	)
 	{
+		$this->expressionResultStorageStack = $expressionResultStorageStack ?? new ExpressionResultStorageStack();
 	}
 
 	public function create(
@@ -77,6 +81,7 @@ final class DirectInternalScopeFactory implements InternalScopeFactory
 			$this->propertyReflectionFinder,
 			$this->parser,
 			$this->constantResolver,
+			$this->expressionResultStorageStack,
 			$context,
 			$this->phpVersion,
 			$this->attributeReflectionFactory,
@@ -102,25 +107,15 @@ final class DirectInternalScopeFactory implements InternalScopeFactory
 
 	public function toFiberFactory(): InternalScopeFactory
 	{
-		return new self(
-			$this->container,
-			$this->reflectionProvider,
-			$this->initializerExprTypeResolver,
-			$this->expressionTypeResolverExtensionRegistryProvider,
-			$this->exprPrinter,
-			$this->typeSpecifier,
-			$this->propertyReflectionFinder,
-			$this->parser,
-			$this->phpVersion,
-			$this->attributeReflectionFactory,
-			$this->configPhpVersion,
-			$this->nodeCallback,
-			$this->constantResolver,
-			true,
-		);
+		return $this->withFlavor(true);
 	}
 
 	public function toMutatingFactory(): InternalScopeFactory
+	{
+		return $this->withFlavor(false);
+	}
+
+	private function withFlavor(bool $fiber): self
 	{
 		return new self(
 			$this->container,
@@ -136,7 +131,8 @@ final class DirectInternalScopeFactory implements InternalScopeFactory
 			$this->configPhpVersion,
 			$this->nodeCallback,
 			$this->constantResolver,
-			false,
+			$fiber,
+			$this->expressionResultStorageStack,
 		);
 	}
 

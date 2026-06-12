@@ -41,6 +41,8 @@ final class LazyInternalScopeFactory implements InternalScopeFactory
 
 	private ?ConstantResolver $constantResolver = null;
 
+	private ExpressionResultStorageStack $expressionResultStorageStack;
+
 	private ?PhpVersion $phpVersionType = null;
 
 	private ?AttributeReflectionFactory $attributeReflectionFactory = null;
@@ -52,10 +54,12 @@ final class LazyInternalScopeFactory implements InternalScopeFactory
 		private Container $container,
 		private $nodeCallback,
 		private bool $fiber = false,
+		?ExpressionResultStorageStack $expressionResultStorageStack = null,
 	)
 	{
 		$this->phpVersion = $this->container->getParameter('phpVersion');
 		$this->currentSimpleVersionParser = $this->container->getService('currentPhpVersionSimpleParser');
+		$this->expressionResultStorageStack = $expressionResultStorageStack ?? new ExpressionResultStorageStack();
 	}
 
 	public function create(
@@ -105,6 +109,7 @@ final class LazyInternalScopeFactory implements InternalScopeFactory
 			$this->propertyReflectionFinder,
 			$this->currentSimpleVersionParser,
 			$this->constantResolver,
+			$this->expressionResultStorageStack,
 			$context,
 			$this->phpVersionType,
 			$this->attributeReflectionFactory,
@@ -130,12 +135,12 @@ final class LazyInternalScopeFactory implements InternalScopeFactory
 
 	public function toFiberFactory(): InternalScopeFactory
 	{
-		return new self($this->container, $this->nodeCallback, true);
+		return new self($this->container, $this->nodeCallback, true, $this->expressionResultStorageStack);
 	}
 
 	public function toMutatingFactory(): InternalScopeFactory
 	{
-		return new self($this->container, $this->nodeCallback, false);
+		return new self($this->container, $this->nodeCallback, false, $this->expressionResultStorageStack);
 	}
 
 }

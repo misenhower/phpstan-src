@@ -181,6 +181,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		private PropertyReflectionFinder $propertyReflectionFinder,
 		private Parser $parser,
 		private ConstantResolver $constantResolver,
+		private ExpressionResultStorageStack $expressionResultStorageStack,
 		protected ScopeContext $context,
 		private PhpVersion $phpVersion,
 		private AttributeReflectionFactory $attributeReflectionFactory,
@@ -1070,11 +1071,66 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		}
 
 		$exprHandler = ExprHandlerRegistry::resolve($node, $this->container);
-		if ($exprHandler instanceof TypeResolvingExprHandler) {
-			return $exprHandler->resolveType($this, $node);
+		if ($exprHandler !== null) {
+			if ($exprHandler instanceof TypeResolvingExprHandler) {
+				return $exprHandler->resolveType($this, $node);
+			}
+
+			return $this->resolveTypeOfNewWorldHandlerNode($node);
 		}
 
 		return new MixedType();
+	}
+
+	/**
+	 * The handler of the node no longer implements TypeResolvingExprHandler.
+	 * The answer comes from the ExpressionResult stored during the analysis
+	 * currently in progress, or from processing the node on demand (synthetic
+	 * nodes, or no analysis in progress at all).
+	 *
+	 * The scope deliberately does not reference the storage - that would create
+	 * a reference cycle that never gets collected (see ExpressionResultStorageStack).
+	 */
+	private function resolveTypeOfNewWorldHandlerNode(Expr $node): Type
+	{
+		$storage = $this->expressionResultStorageStack->getCurrent();
+		if ($storage !== null) {
+			$result = $storage->findExpressionResult($node);
+			if ($result !== null) {
+				if (!$result->hasTypeCallback()) {
+					throw new ShouldNotHappenException(sprintf(
+						'ExprHandler for %s does not implement TypeResolvingExprHandler but its ExpressionResult is missing a typeCallback.',
+						get_class($node),
+					));
+				}
+
+				return $result->getTypeForScope($this);
+			}
+		}
+
+		// a synthetic node, or no analysis in progress
+		$onDemandResult = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
+			$node,
+			$this,
+			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
+		);
+
+		return $onDemandResult->getTypeForScope($this);
+	}
+
+	/**
+	 * Makes the storage answer type questions asked on this scope (and every
+	 * scope sharing its ExpressionResultStorageStack) for the duration of an
+	 * analysis. The caller must pop in a finally block.
+	 */
+	public function pushExpressionResultStorage(ExpressionResultStorage $storage): void
+	{
+		$this->expressionResultStorageStack->push($storage);
+	}
+
+	public function popExpressionResultStorage(): void
+	{
+		$this->expressionResultStorageStack->pop();
 	}
 
 	/**
@@ -3292,17 +3348,168 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$specifiedExpressions[$typeSpecification['exprString']] = ExpressionTypeHolder::createYes($expr, $scope->getScopeType($expr));
 		}
 
-		[$conditions] = ScopeOps::matchConditionalExpressions($scope->conditionalExpressions, $specifiedExpressions);
+		$scope = $scope->processConditionalExpressionsAfterSpecifying($specifiedExpressions);
 
-		return $this->applyFilteredConditions($scope, $conditions, $specifiedTypes);
+		/** @var static */
+		return $scope->scopeFactory->create(
+			$scope->context,
+			$scope->isDeclareStrictTypes(),
+			$scope->getFunction(),
+			$scope->getNamespace(),
+			$scope->expressionTypes,
+			$scope->nativeExpressionTypes,
+			$this->mergeConditionalExpressions($specifiedTypes->getNewConditionalExpressionHolders(), $scope->conditionalExpressions),
+			$scope->inClosureBindScopeClasses,
+			$scope->anonymousFunctionReflection,
+			$scope->inFirstLevelStatement,
+			$scope->currentlyAssignedExpressions,
+			$scope->currentlyAllowedUndefinedExpressions,
+			$scope->inFunctionCallsStack,
+			$scope->afterExtractCall,
+			$scope->parentScope,
+			$scope->nativeTypesPromoted,
+		);
 	}
 
 	/**
-	 * @param array<string, ConditionalExpressionHolder[]> $conditions
-	 * @return static
+	 * New-world counterpart of filterBySpecifiedTypes.
+	 *
+	 * The types inside SpecifiedTypes were already computed from ExpressionResults
+	 * by the specifyTypesCallback of an ExprHandler. This method must never call
+	 * Scope::getType() - it only combines the given types with already-tracked
+	 * expression type holders.
 	 */
-	private function applyFilteredConditions(self $scope, array $conditions, SpecifiedTypes $specifiedTypes): self
+	public function applySpecifiedTypes(SpecifiedTypes $specifiedTypes): self
 	{
+		$typeSpecifications = [];
+		foreach ($specifiedTypes->getSureTypes() as $exprString => [$expr, $type]) {
+			if ($expr instanceof Node\Scalar || $expr instanceof Array_ || $expr instanceof Expr\UnaryMinus && $expr->expr instanceof Node\Scalar) {
+				continue;
+			}
+			$typeSpecifications[] = [
+				'sure' => true,
+				'exprString' => (string) $exprString,
+				'expr' => $expr,
+				'type' => $type,
+			];
+		}
+		foreach ($specifiedTypes->getSureNotTypes() as $exprString => [$expr, $type]) {
+			if ($expr instanceof Node\Scalar || $expr instanceof Array_ || $expr instanceof Expr\UnaryMinus && $expr->expr instanceof Node\Scalar) {
+				continue;
+			}
+			$typeSpecifications[] = [
+				'sure' => false,
+				'exprString' => (string) $exprString,
+				'expr' => $expr,
+				'type' => $type,
+			];
+		}
+
+		usort($typeSpecifications, static function (array $a, array $b): int {
+			$length = strlen($a['exprString']) - strlen($b['exprString']);
+			if ($length !== 0) {
+				return $length;
+			}
+
+			return $b['sure'] - $a['sure']; // @phpstan-ignore minus.leftNonNumeric, minus.rightNonNumeric
+		});
+
+		$scope = $this;
+		$specifiedExpressions = [];
+		foreach ($typeSpecifications as $typeSpecification) {
+			$expr = $typeSpecification['expr'];
+			$type = $typeSpecification['type'];
+			$exprString = $typeSpecification['exprString'];
+
+			if ($expr instanceof IssetExpr) {
+				$issetExpr = $expr;
+				$expr = $issetExpr->getExpr();
+
+				if ($typeSpecification['sure']) {
+					$scope = $scope->setExpressionCertainty(
+						$expr,
+						TrinaryLogic::createMaybe(),
+					);
+				} else {
+					$scope = $scope->unsetExpression($expr);
+				}
+
+				continue;
+			}
+
+			$trackedType = null;
+			$trackedNativeType = null;
+			if (array_key_exists($exprString, $scope->expressionTypes)) {
+				$trackedType = $scope->expressionTypes[$exprString]->getType();
+			}
+			if (array_key_exists($exprString, $scope->nativeExpressionTypes)) {
+				$trackedNativeType = $scope->nativeExpressionTypes[$exprString]->getType();
+			}
+
+			if ($typeSpecification['sure']) {
+				if ($specifiedTypes->shouldOverwrite()) {
+					$scope = $scope->assignExpression($expr, $type, $type);
+				} else {
+					$newType = $trackedType !== null ? TypeCombinator::intersect($type, $trackedType) : $type;
+					$newNativeType = $trackedNativeType !== null ? TypeCombinator::intersect($type, $trackedNativeType) : $type;
+					$scope = $scope->specifyExpressionType($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+				}
+			} else {
+				if ($type instanceof NeverType || $trackedType instanceof NeverType) {
+					continue;
+				}
+				$newType = $trackedType !== null ? TypeCombinator::remove($trackedType, $type) : null;
+				if ($newType === null) {
+					// the expression is not tracked - there is nothing to subtract from
+					continue;
+				}
+				$newNativeType = $trackedNativeType !== null ? TypeCombinator::remove($trackedNativeType, $type) : $newType;
+				$scope = $scope->specifyExpressionType($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+			}
+
+			$holderType = array_key_exists($exprString, $scope->expressionTypes)
+				? $scope->expressionTypes[$exprString]->getType()
+				: $type;
+			$specifiedExpressions[$exprString] = ExpressionTypeHolder::createYes($expr, $holderType);
+		}
+
+		$scope = $scope->processConditionalExpressionsAfterSpecifying($specifiedExpressions);
+
+		/** @var static */
+		return $scope->scopeFactory->create(
+			$scope->context,
+			$scope->isDeclareStrictTypes(),
+			$scope->getFunction(),
+			$scope->getNamespace(),
+			$scope->expressionTypes,
+			$scope->nativeExpressionTypes,
+			$this->mergeConditionalExpressions($specifiedTypes->getNewConditionalExpressionHolders(), $scope->conditionalExpressions),
+			$scope->inClosureBindScopeClasses,
+			$scope->anonymousFunctionReflection,
+			$scope->inFirstLevelStatement,
+			$scope->currentlyAssignedExpressions,
+			$scope->currentlyAllowedUndefinedExpressions,
+			$scope->inFunctionCallsStack,
+			$scope->afterExtractCall,
+			$scope->parentScope,
+			$scope->nativeTypesPromoted,
+		);
+	}
+
+	/**
+	 * Matches already-registered conditional expressions against the just-specified
+	 * expression type holders and applies the matching consequences.
+	 *
+	 * Mutates and returns $this - only to be called on an intermediate scope
+	 * that is about to be rebuilt through the scope factory.
+	 *
+	 * @param array<string, ExpressionTypeHolder> $specifiedExpressions
+	 */
+	private function processConditionalExpressionsAfterSpecifying(array $specifiedExpressions): self
+	{
+		$scope = $this;
+		[$conditions] = ScopeOps::matchConditionalExpressions($scope->conditionalExpressions, $specifiedExpressions);
+
 		foreach ($conditions as $conditionalExprString => $expressions) {
 			$certainty = TrinaryLogic::lazyExtremeIdentity($expressions, static fn (ConditionalExpressionHolder $holder) => $holder->getTypeHolder()->getCertainty());
 			if ($certainty->no()) {
@@ -3325,18 +3532,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			}
 		}
 
-		/** @var static */
-		return ScopeOps::scopeWith(
-			$scope,
-			$scope->expressionTypes,
-			$scope->nativeExpressionTypes,
-			$this->mergeConditionalExpressions($specifiedTypes->getNewConditionalExpressionHolders(), $scope->conditionalExpressions),
-			$scope->currentlyAssignedExpressions,
-			$scope->currentlyAllowedUndefinedExpressions,
-			$scope->inFunctionCallsStack,
-			$scope->inFirstLevelStatement,
-			$scope->afterExtractCall,
-		);
+		return $scope;
 	}
 
 	/**

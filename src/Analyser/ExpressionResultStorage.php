@@ -15,6 +15,12 @@ final class ExpressionResultStorage
 	/** @var SplObjectStorage<Expr, ExpressionResult> */
 	private SplObjectStorage $exprResults;
 
+	/**
+	 * Read-only fallback - writes never reach it. Makes duplicate() O(1)
+	 * instead of copying all stored results.
+	 */
+	private ?self $fallback = null;
+
 	/** @var array<array{fiber: Fiber<mixed, ExpressionResult|array{callable(Node $node, Scope $scope): void, Node, MutatingScope}, null, ExpressionResultRequest|ParkFiberRequest>, request: ExpressionResultRequest}> */
 	public array $pendingFibers = [];
 
@@ -29,7 +35,7 @@ final class ExpressionResultStorage
 	public function duplicate(): self
 	{
 		$new = new self();
-		$new->exprResults->addAll($this->exprResults);
+		$new->fallback = $this;
 		return $new;
 	}
 
@@ -45,7 +51,7 @@ final class ExpressionResultStorage
 
 	public function findExpressionResult(Expr $expr): ?ExpressionResult
 	{
-		return $this->exprResults[$expr] ?? null;
+		return $this->exprResults[$expr] ?? $this->fallback?->findExpressionResult($expr);
 	}
 
 }

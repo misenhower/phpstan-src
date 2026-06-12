@@ -15,6 +15,9 @@ final class ExpressionResult
 	/** @var (callable(MutatingScope, Expr): Type)|null */
 	private $typeCallback;
 
+	/** @var (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null */
+	private $specifyTypesCallback;
+
 	/** @var (callable(): MutatingScope)|null */
 	private $truthyScopeCallback;
 
@@ -33,6 +36,7 @@ final class ExpressionResult
 	 * @param InternalThrowPoint[] $throwPoints
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(MutatingScope, Expr): Type)|null $typeCallback
+	 * @param (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null $specifyTypesCallback
 	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
 	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
 	 */
@@ -48,11 +52,13 @@ final class ExpressionResult
 		?callable $truthyScopeCallback = null,
 		?callable $falseyScopeCallback = null,
 		?callable $typeCallback = null,
+		?callable $specifyTypesCallback = null,
 	)
 	{
 		$this->truthyScopeCallback = $truthyScopeCallback;
 		$this->falseyScopeCallback = $falseyScopeCallback;
 		$this->typeCallback = $typeCallback;
+		$this->specifyTypesCallback = $specifyTypesCallback;
 	}
 
 	public function getScope(): MutatingScope
@@ -93,6 +99,12 @@ final class ExpressionResult
 		}
 
 		if ($this->truthyScopeCallback === null) {
+			if ($this->specifyTypesCallback !== null) {
+				return $this->truthyScope = $this->scope->applySpecifiedTypes(
+					($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createTruthy()),
+				);
+			}
+
 			return $this->truthyScope = $this->scope->filterByTruthyValue($this->expr);
 		}
 
@@ -107,6 +119,12 @@ final class ExpressionResult
 		}
 
 		if ($this->falseyScopeCallback === null) {
+			if ($this->specifyTypesCallback !== null) {
+				return $this->falseyScope = $this->scope->applySpecifiedTypes(
+					($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createFalsey()),
+				);
+			}
+
 			return $this->falseyScope = $this->scope->filterByFalseyValue($this->expr);
 		}
 
@@ -150,6 +168,24 @@ final class ExpressionResult
 		}
 
 		return $this->cachedNativeType = $this->beforeScope->getNativeType($this->expr);
+	}
+
+	public function hasTypeCallback(): bool
+	{
+		return $this->typeCallback !== null;
+	}
+
+	/**
+	 * Re-evaluates the expression type on a different scope (e.g. a narrowed one).
+	 * Unlike getType(), the result is not cached.
+	 */
+	public function getTypeForScope(MutatingScope $scope): Type
+	{
+		if ($this->typeCallback !== null) {
+			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($scope, $this->expr));
+		}
+
+		return $scope->getType($this->expr);
 	}
 
 }
