@@ -12,13 +12,9 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
-use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
-use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\LiteralArrayItem;
 use PHPStan\Node\LiteralArrayNode;
@@ -26,14 +22,16 @@ use PHPStan\Reflection\InitializerExprTypeResolver;
 use PHPStan\Type\CallableType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
+use function array_key_exists;
 use function array_merge;
 use function count;
+use function spl_object_id;
 
 /**
- * @implements TypeResolvingExprHandler<Array_>
+ * @implements ExprHandler<Array_>
  */
 #[AutowiredService]
-final class ArrayHandler implements TypeResolvingExprHandler
+final class ArrayHandler implements ExprHandler
 {
 
 	public function __construct(
@@ -48,34 +46,11 @@ final class ArrayHandler implements TypeResolvingExprHandler
 		return $expr instanceof Array_;
 	}
 
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$type = $this->initializerExprTypeResolver->getArrayType($expr, static fn (Expr $expr): Type => $scope->getType($expr));
-
-		if (
-			count($expr->items) === 2
-			&& isset($expr->items[0], $expr->items[1])
-			&& $type->isCallable()->maybe()
-		) {
-			$isCallableCall = new FuncCall(
-				new FullyQualified('is_callable'),
-				[new Arg($expr)],
-			);
-			if (
-				$scope->hasExpressionType($isCallableCall)->yes()
-				&& $scope->getType($isCallableCall)->isTrue()->yes()
-			) {
-				$type = TypeCombinator::intersect($type, new CallableType());
-			}
-		}
-
-		return $type;
-	}
-
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		$beforeScope = $scope;
 		$itemNodes = [];
+		$itemResults = [];
 		$hasYield = false;
 		$throwPoints = [];
 		$impurePoints = [];
@@ -85,6 +60,7 @@ final class ArrayHandler implements TypeResolvingExprHandler
 			$nodeScopeResolver->callNodeCallback($nodeCallback, $arrayItem, $scope, $storage);
 			if ($arrayItem->key !== null) {
 				$keyResult = $nodeScopeResolver->processExprNode($stmt, $arrayItem->key, $scope, $storage, $nodeCallback, $context->enterDeep());
+				$itemResults[spl_object_id($arrayItem->key)] = $keyResult;
 				$hasYield = $hasYield || $keyResult->hasYield();
 				$throwPoints = array_merge($throwPoints, $keyResult->getThrowPoints());
 				$impurePoints = array_merge($impurePoints, $keyResult->getImpurePoints());
@@ -93,6 +69,7 @@ final class ArrayHandler implements TypeResolvingExprHandler
 			}
 
 			$valueResult = $nodeScopeResolver->processExprNode($stmt, $arrayItem->value, $scope, $storage, $nodeCallback, $context->enterDeep());
+			$itemResults[spl_object_id($arrayItem->value)] = $valueResult;
 			$hasYield = $hasYield || $valueResult->hasYield();
 			$throwPoints = array_merge($throwPoints, $valueResult->getThrowPoints());
 			$impurePoints = array_merge($impurePoints, $valueResult->getImpurePoints());
@@ -109,12 +86,43 @@ final class ArrayHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-		);
-	}
+			typeCallback: function (MutatingScope $s) use ($expr, $itemResults): Type {
+				// each item type was captured at its own evaluation point in the
+				// sequence - resolving all items on any single scope (the old world)
+				// cannot handle items with side effects like [$b = 1, $b + 1, $b++]
+				$type = $this->initializerExprTypeResolver->getArrayType($expr, static function (Expr $inner) use ($itemResults, $s): Type {
+					$id = spl_object_id($inner);
+					if (array_key_exists($id, $itemResults)) {
+						return $s->nativeTypesPromoted
+							? $itemResults[$id]->getNativeType()
+							: $itemResults[$id]->getType();
+					}
 
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+					// getArrayType only asks about item keys and values - guarded
+					// legacy bridge just in case
+					return $s->getType($inner);
+				});
+
+				if (
+					count($expr->items) === 2
+					&& isset($expr->items[0], $expr->items[1])
+					&& $type->isCallable()->maybe()
+				) {
+					$isCallableCall = new FuncCall(
+						new FullyQualified('is_callable'),
+						[new Arg($expr)],
+					);
+					if (
+						$s->hasExpressionType($isCallableCall)->yes()
+						&& $s->getType($isCallableCall)->isTrue()->yes()
+					) {
+						$type = TypeCombinator::intersect($type, new CallableType());
+					}
+				}
+
+				return $type;
+			},
+		);
 	}
 
 }
