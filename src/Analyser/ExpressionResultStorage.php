@@ -33,6 +33,11 @@ final class ExpressionResultStorage
 		return $new;
 	}
 
+	public function mergeResults(self $other): void
+	{
+		$this->exprResults->addAll($other->exprResults);
+	}
+
 	public function storeExpressionResult(Expr $expr, ExpressionResult $expressionResult): void
 	{
 		$this->exprResults[$expr] = $expressionResult;

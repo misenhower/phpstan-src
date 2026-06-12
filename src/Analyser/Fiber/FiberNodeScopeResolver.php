@@ -113,19 +113,24 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 
 			$fiber = $pending['fiber'];
 
-			// Process the expression with a duplicated storage so that the result
+			// Process the synthetic node with a duplicated storage so that the result
 			// computed from the asker's scope does not poison the real storage.
-			// The expression might still be processed naturally later (e.g. a loop
-			// condition asked about by a rule before the loop converges) and other
-			// fibers need to wait for that result instead of this one.
-			$request = $fiber->resume($this->processExprNode(
-				new Node\Stmt\Expression($request->expr),
-				$request->expr,
-				$request->scope->toMutatingScope(),
-				$storage->duplicate(),
-				new NoopNodeCallback(),
-				ExpressionContext::createTopLevel(),
-			));
+			// Real AST nodes contained in the synthetic node already have their
+			// results stored and are not processed again.
+			$this->returnStoredExpressionResults = true;
+			try {
+				$expressionResult = $this->processExprNode(
+					new Node\Stmt\Expression($request->expr),
+					$request->expr,
+					$request->scope->toMutatingScope(),
+					$storage->duplicate(),
+					new NoopNodeCallback(),
+					ExpressionContext::createTopLevel(),
+				);
+			} finally {
+				$this->returnStoredExpressionResults = false;
+			}
+			$request = $fiber->resume($expressionResult);
 			$this->runFiberForNodeCallback($storage, $fiber, $request);
 
 			// Break and restart the loop since the array may have been modified

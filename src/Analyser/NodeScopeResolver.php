@@ -207,6 +207,12 @@ class NodeScopeResolver
 	private array $calledMethodResults = [];
 
 	/**
+	 * When processing a synthetic node on demand (for a Fiber request), real AST
+	 * nodes contained in it were already processed and must not be processed again.
+	 */
+	protected bool $returnStoredExpressionResults = false;
+
+	/**
 	 * @param string[][] $earlyTerminatingMethodCalls className(string) => methods(string[])
 	 * @param array<int, string> $earlyTerminatingFunctionCalls
 	 */
@@ -1438,10 +1444,15 @@ class NodeScopeResolver
 			$throwPoints = [];
 			$impurePoints = [];
 
-			$traitStorage = $storage->duplicate();
-			$traitStorage->pendingFibers = [];
+			// fresh storage - the same trait node objects are processed once per
+			// using class and fibers must not see results from a previous pass
+			$traitStorage = new ExpressionResultStorage();
 			$this->processTraitUse($stmt, $scope, $traitStorage, $nodeCallback);
 			$this->processPendingFibers($traitStorage);
+
+			// class-level node callbacks (like ClassMethodsNode) are invoked with
+			// the outer storage but ask about expressions inside the used trait
+			$storage->mergeResults($traitStorage);
 		} elseif ($stmt instanceof Foreach_) {
 			if ($stmt->expr instanceof Variable && is_string($stmt->expr->name)) {
 				$scope = $this->processVarAnnotation($scope, [$stmt->expr->name], $stmt);
@@ -2773,6 +2784,13 @@ class NodeScopeResolver
 		ExpressionContext $context,
 	): ExpressionResult
 	{
+		if ($this->returnStoredExpressionResults) {
+			$storedResult = $storage->findExpressionResult($expr);
+			if ($storedResult !== null) {
+				return $storedResult;
+			}
+		}
+
 		if ($expr instanceof Expr\CallLike && $expr->isFirstClassCallable()) {
 			if ($expr instanceof FuncCall) {
 				$newExpr = new FunctionCallableNode($expr->name, $expr);
@@ -3686,7 +3704,7 @@ class NodeScopeResolver
 					$impurePoints = array_merge($impurePoints, $closureResult->getImpurePoints());
 				}
 
-				$this->storeExpressionResult($storage, $arg->value, new ExpressionResult(
+				$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
 					$closureResult->getScope(),
 					$scopeToPass,
 					$arg->value,
@@ -4757,6 +4775,11 @@ class NodeScopeResolver
 					throw new ShouldNotHappenException();
 				}
 				$traitScope = $scope->enterTrait($traitReflection);
+
+				// attribute args are not processed as part of the trait statements
+				// but rules like TraitAttributesRule ask about their types
+				$this->processAttributeGroups($node, $node->attrGroups, $traitScope, $storage, new NoopNodeCallback());
+
 				$this->callNodeCallback($nodeCallback, new InTraitNode($node, $traitReflection, $scope->getClassReflection()), $traitScope, $storage);
 				$this->processStmtNodesInternal($node, $stmts, $traitScope, $storage, $nodeCallback, StatementContext::createTopLevel());
 				return;
