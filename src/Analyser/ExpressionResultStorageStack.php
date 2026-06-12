@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser;
 
+use PHPStan\ShouldNotHappenException;
 use function array_pop;
 use function count;
 
@@ -37,6 +38,10 @@ final class ExpressionResultStorageStack
 
 	public function pop(): void
 	{
+		if (count($this->stack) === 0) {
+			throw new ShouldNotHappenException('Unbalanced ExpressionResultStorageStack pop.');
+		}
+
 		array_pop($this->stack);
 	}
 
