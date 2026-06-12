@@ -1142,8 +1142,8 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		}
 
 		return [
-			$result->getTypeForScope($this),
-			$result->getTypeForScope($this->promoteNativeTypes()),
+			$result->getType(),
+			$result->getNativeType(),
 		];
 	}
 
