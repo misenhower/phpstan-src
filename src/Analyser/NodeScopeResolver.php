@@ -380,6 +380,9 @@ class NodeScopeResolver
 
 	public function storeExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
+		// converted handlers (no TypeResolvingExprHandler) are answered from
+		// stored results in both worlds - storing must not depend on fibers
+		$storage->storeExpressionResult($expr, $expressionResult);
 	}
 
 	protected function processPendingFibers(ExpressionResultStorage $storage): void

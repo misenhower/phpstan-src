@@ -58,7 +58,7 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 
 	public function storeExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
-		$storage->storeExpressionResult($expr, $expressionResult);
+		parent::storeExpressionResult($storage, $expr, $expressionResult);
 		$this->processPendingFibersForRequestedExpr($storage, $expr, $expressionResult);
 	}
 

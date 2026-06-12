@@ -3394,6 +3394,11 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				continue;
 			}
 
+			if ($expr instanceof Variable && is_string($expr->name) && $scope->hasVariableType($expr->name)->no()) {
+				// testing a certainly-undefined variable cannot make it defined
+				continue;
+			}
+
 			if ($typeSpecification['sure']) {
 				if ($specifiedTypes->shouldOverwrite()) {
 					$scope = $scope->assignExpression($expr, $type, $type);
@@ -3492,6 +3497,11 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 					$scope = $scope->unsetExpression($expr);
 				}
 
+				continue;
+			}
+
+			if ($expr instanceof Variable && is_string($expr->name) && $scope->hasVariableType($expr->name)->no()) {
+				// testing a certainly-undefined variable cannot make it defined
 				continue;
 			}
 

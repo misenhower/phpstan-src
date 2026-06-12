@@ -1714,6 +1714,10 @@ class DefinedVariableRuleTest extends RuleTestCase
 			],
 			[
 				'Undefined variable: $undefined',
+				9,
+			],
+			[
+				'Undefined variable: $undefined',
 				15,
 			],
 		]);
