@@ -17,13 +17,13 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -52,10 +52,10 @@ use function count;
 use function is_string;
 
 /**
- * @implements ExprHandler<Isset_>
+ * @implements TypeResolvingExprHandler<Isset_>
  */
 #[AutowiredService]
-final class IssetHandler implements ExprHandler
+final class IssetHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

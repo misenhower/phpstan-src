@@ -13,13 +13,13 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -34,10 +34,10 @@ use function is_string;
 use function sprintf;
 
 /**
- * @implements ExprHandler<AssignOp>
+ * @implements TypeResolvingExprHandler<AssignOp>
  */
 #[AutowiredService]
-final class AssignOpHandler implements ExprHandler
+final class AssignOpHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

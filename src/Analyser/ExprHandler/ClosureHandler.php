@@ -9,22 +9,22 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ClosureTypeResolver;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Type\Type;
 
 /**
- * @implements ExprHandler<Closure>
+ * @implements TypeResolvingExprHandler<Closure>
  */
 #[AutowiredService]
-final class ClosureHandler implements ExprHandler
+final class ClosureHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

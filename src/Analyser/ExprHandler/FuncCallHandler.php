@@ -18,7 +18,6 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\OutputBufferHelper;
 use PHPStan\Analyser\ExprHandler\Helper\VoidToNullTypeTransformer;
 use PHPStan\Analyser\ImpurePoint;
@@ -28,6 +27,7 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
@@ -83,10 +83,10 @@ use function sprintf;
 use function str_starts_with;
 
 /**
- * @implements ExprHandler<FuncCall>
+ * @implements TypeResolvingExprHandler<FuncCall>
  */
 #[AutowiredService]
-final class FuncCallHandler implements ExprHandler
+final class FuncCallHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

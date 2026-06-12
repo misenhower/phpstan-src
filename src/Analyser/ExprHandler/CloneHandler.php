@@ -9,12 +9,12 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\Traverser\CloneTypeTraverser;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -24,10 +24,10 @@ use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\TypeTraverser;
 
 /**
- * @implements ExprHandler<Clone_>
+ * @implements TypeResolvingExprHandler<Clone_>
  */
 #[AutowiredService]
-final class CloneHandler implements ExprHandler
+final class CloneHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(private ExpressionResultFactory $expressionResultFactory)

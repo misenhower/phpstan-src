@@ -11,12 +11,12 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -25,10 +25,10 @@ use PHPStan\Type\Type;
 use function array_merge;
 
 /**
- * @implements ExprHandler<Cast\String_>
+ * @implements TypeResolvingExprHandler<Cast\String_>
  */
 #[AutowiredService]
-final class CastStringHandler implements ExprHandler
+final class CastStringHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

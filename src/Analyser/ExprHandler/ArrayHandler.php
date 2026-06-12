@@ -12,11 +12,11 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -30,10 +30,10 @@ use function array_merge;
 use function count;
 
 /**
- * @implements ExprHandler<Array_>
+ * @implements TypeResolvingExprHandler<Array_>
  */
 #[AutowiredService]
-final class ArrayHandler implements ExprHandler
+final class ArrayHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

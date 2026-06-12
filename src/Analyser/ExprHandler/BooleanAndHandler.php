@@ -12,13 +12,13 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ConditionalExpressionHolderHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -34,10 +34,10 @@ use function array_reverse;
 use function is_string;
 
 /**
- * @implements ExprHandler<BooleanAnd|LogicalAnd>
+ * @implements TypeResolvingExprHandler<BooleanAnd|LogicalAnd>
  */
 #[AutowiredService]
-final class BooleanAndHandler implements ExprHandler
+final class BooleanAndHandler implements TypeResolvingExprHandler
 {
 
 	private const BOOLEAN_EXPRESSION_MAX_PROCESS_DEPTH = 4;

@@ -13,7 +13,6 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\MethodCallReturnTypeHelper;
 use PHPStan\Analyser\ExprHandler\Helper\MethodThrowPointHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NullsafeShortCircuitingHelper;
@@ -23,6 +22,7 @@ use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
@@ -49,10 +49,10 @@ use function sprintf;
 use function strtolower;
 
 /**
- * @implements ExprHandler<MethodCall>
+ * @implements TypeResolvingExprHandler<MethodCall>
  */
 #[AutowiredService]
-final class MethodCallHandler implements ExprHandler
+final class MethodCallHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

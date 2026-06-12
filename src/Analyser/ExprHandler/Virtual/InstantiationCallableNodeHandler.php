@@ -8,11 +8,11 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -21,10 +21,10 @@ use PHPStan\Type\MixedType;
 use PHPStan\Type\Type;
 
 /**
- * @implements ExprHandler<InstantiationCallableNode>
+ * @implements TypeResolvingExprHandler<InstantiationCallableNode>
  */
 #[AutowiredService]
-final class InstantiationCallableNodeHandler implements ExprHandler
+final class InstantiationCallableNodeHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(private ExpressionResultFactory $expressionResultFactory)

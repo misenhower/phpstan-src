@@ -28,7 +28,6 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExpressionTypeHolder;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
@@ -36,6 +35,7 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -85,10 +85,10 @@ use function is_int;
 use function is_string;
 
 /**
- * @implements ExprHandler<Assign|AssignRef>
+ * @implements TypeResolvingExprHandler<Assign|AssignRef>
  */
 #[AutowiredService]
-final class AssignHandler implements ExprHandler
+final class AssignHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(

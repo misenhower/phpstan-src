@@ -10,13 +10,13 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -26,10 +26,10 @@ use PHPStan\Type\Type;
 use function array_merge;
 
 /**
- * @implements ExprHandler<Yield_>
+ * @implements TypeResolvingExprHandler<Yield_>
  */
 #[AutowiredService]
-final class YieldHandler implements ExprHandler
+final class YieldHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(private ExpressionResultFactory $expressionResultFactory)

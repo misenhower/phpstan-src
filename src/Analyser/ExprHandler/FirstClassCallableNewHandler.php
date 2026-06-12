@@ -9,11 +9,11 @@ use PhpParser\Node\Stmt\Class_;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -23,10 +23,10 @@ use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Type;
 
 /**
- * @implements ExprHandler<New_>
+ * @implements TypeResolvingExprHandler<New_>
  */
 #[AutowiredService]
-final class FirstClassCallableNewHandler implements ExprHandler
+final class FirstClassCallableNewHandler implements TypeResolvingExprHandler
 {
 
 	public function __construct(
