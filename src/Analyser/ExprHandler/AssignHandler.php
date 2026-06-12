@@ -420,6 +420,9 @@ final class AssignHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
+			// VariableHandler no longer implements TypeResolvingExprHandler -
+			// type questions about the target node are answered from this result
+			typeCallback: $var instanceof Variable ? VariableHandler::createTypeCallback($var) : null,
 		));
 		$nodeScopeResolver->callNodeCallback($nodeCallback, $var, $enterExpressionAssign ? $scope->enterExpressionAssign($var) : $scope, $storage);
 		$hasYield = false;

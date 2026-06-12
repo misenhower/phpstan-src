@@ -176,6 +176,20 @@ final class ExpressionResult
 	}
 
 	/**
+	 * Re-evaluates the narrowing on a different scope (e.g. the one an old-world
+	 * caller holds). Returns null when the handler wired no specifyTypesCallback -
+	 * the caller falls back to default truthy/falsey narrowing.
+	 */
+	public function getSpecifiedTypesForScope(MutatingScope $scope, TypeSpecifierContext $context): ?SpecifiedTypes
+	{
+		if ($this->specifyTypesCallback === null) {
+			return null;
+		}
+
+		return ($this->specifyTypesCallback)($scope, $context);
+	}
+
+	/**
 	 * Re-evaluates the expression type on a different scope (e.g. a narrowed one).
 	 * Unlike getType(), the result is not cached.
 	 */

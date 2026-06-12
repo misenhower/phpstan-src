@@ -1119,6 +1119,64 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	}
 
 	/**
+	 * Prices the current (phpdoc, native) type pair of an expression that
+	 * applySpecifiedTypes() needs to intersect with or subtract from but that
+	 * is not tracked in the scope. Old-world filterBySpecifiedTypes() asked
+	 * Scope::getType() here; pricing from the stored ExpressionResult answers
+	 * through the typeCallback for converted handlers and keeps the legacy
+	 * resolution as a bridge for the rest. Returns null for nodes the analysis
+	 * in progress never processed (synthetic ones).
+	 *
+	 * @return array{Type, Type}|null
+	 */
+	private function getCurrentTypesOfSpecifiedExpr(Expr $expr): ?array
+	{
+		$storage = $this->expressionResultStorageStack->getCurrent();
+		if ($storage === null) {
+			return null;
+		}
+
+		$result = $storage->findExpressionResult($expr);
+		if ($result === null) {
+			return null;
+		}
+
+		return [
+			$result->getTypeForScope($this),
+			$result->getTypeForScope($this->promoteNativeTypes()),
+		];
+	}
+
+	/**
+	 * Narrowing counterpart of resolveTypeOfNewWorldHandlerNode() - the old-world
+	 * TypeSpecifier dispatcher asks here for nodes whose handler no longer
+	 * implements TypeResolvingExprHandler. Returns null when the ExpressionResult
+	 * carries no specifyTypesCallback - the dispatcher falls back to default
+	 * truthy/falsey narrowing, which is what such handlers used to implement.
+	 *
+	 * @internal
+	 */
+	public function specifyTypesOfNewWorldHandlerNode(Expr $node, TypeSpecifierContext $context): ?SpecifiedTypes
+	{
+		$storage = $this->expressionResultStorageStack->getCurrent();
+		if ($storage !== null) {
+			$result = $storage->findExpressionResult($node);
+			if ($result !== null) {
+				return $result->getSpecifiedTypesForScope($this, $context);
+			}
+		}
+
+		// a synthetic node, or no analysis in progress
+		$onDemandResult = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
+			$node,
+			$this,
+			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
+		);
+
+		return $onDemandResult->getSpecifiedTypesForScope($this, $context);
+	}
+
+	/**
 	 * Makes the storage answer type questions asked on this scope (and every
 	 * scope sharing its ExpressionResultStorageStack) for the duration of an
 	 * analysis. The caller must pop in a finally block.
@@ -3437,13 +3495,34 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				continue;
 			}
 
+			// only Yes-certainty holders hold the current type of the expression -
+			// a Maybe-certainty holder holds the when-defined type (e.g. after
+			// merging a branch where the expression was never assigned), which
+			// the certainty-aware Scope::getType() of the old world never returned
 			$trackedType = null;
 			$trackedNativeType = null;
-			if (array_key_exists($exprString, $scope->expressionTypes)) {
+			if (
+				array_key_exists($exprString, $scope->expressionTypes)
+				&& $scope->expressionTypes[$exprString]->getCertainty()->yes()
+			) {
 				$trackedType = $scope->expressionTypes[$exprString]->getType();
 			}
-			if (array_key_exists($exprString, $scope->nativeExpressionTypes)) {
+			if (
+				array_key_exists($exprString, $scope->nativeExpressionTypes)
+				&& $scope->nativeExpressionTypes[$exprString]->getCertainty()->yes()
+			) {
 				$trackedNativeType = $scope->nativeExpressionTypes[$exprString]->getType();
+			}
+			if ($trackedType === null) {
+				$currentTypes = $scope->getCurrentTypesOfSpecifiedExpr($expr);
+				if ($currentTypes !== null) {
+					if ($scope->isComplexUnionType($currentTypes[0])) {
+						continue;
+					}
+
+					$trackedType = $currentTypes[0];
+					$trackedNativeType ??= $currentTypes[1];
+				}
 			}
 
 			if ($typeSpecification['sure']) {

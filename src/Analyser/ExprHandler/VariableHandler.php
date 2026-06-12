@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler;
 
+use Closure;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\BinaryOp\Identical;
 use PhpParser\Node\Expr\Variable;
@@ -11,12 +12,12 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -29,13 +30,16 @@ use function in_array;
 use function is_string;
 
 /**
- * @implements TypeResolvingExprHandler<Variable>
+ * @implements ExprHandler<Variable>
  */
 #[AutowiredService]
-final class VariableHandler implements TypeResolvingExprHandler
+final class VariableHandler implements ExprHandler
 {
 
-	public function __construct(private ExpressionResultFactory $expressionResultFactory)
+	public function __construct(
+		private ExpressionResultFactory $expressionResultFactory,
+		private TypeSpecifier $typeSpecifier,
+	)
 	{
 	}
 
@@ -44,36 +48,49 @@ final class VariableHandler implements TypeResolvingExprHandler
 		return $expr instanceof Variable;
 	}
 
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
+	/**
+	 * Evaluates the variable as a read on the asking scope. Also used by
+	 * AssignHandler for the placeholder result it stores for an assignment
+	 * target - every stored result for a Variable node must carry a
+	 * typeCallback now that this handler no longer implements
+	 * TypeResolvingExprHandler.
+	 *
+	 * @return Closure(MutatingScope): Type
+	 */
+	public static function createTypeCallback(Variable $expr, ?ExpressionResult $nameResult = null): Closure
 	{
-		if (is_string($expr->name)) {
-			if ($scope->hasVariableType($expr->name)->no()) {
-				return new ErrorType();
-			}
-
-			return $scope->getVariableType($expr->name);
-		}
-
-		$nameType = $scope->getType($expr->name);
-		if (count($nameType->getConstantStrings()) > 0) {
-			$types = [];
-			foreach ($nameType->getConstantStrings() as $constantString) {
-				$variableScope = $scope
-					->filterByTruthyValue(
-						new Identical($expr->name, new String_($constantString->getValue())),
-					);
-				if ($variableScope->hasVariableType($constantString->getValue())->no()) {
-					$types[] = new ErrorType();
-					continue;
+		return static function (MutatingScope $s) use ($expr, $nameResult): Type {
+			if (is_string($expr->name)) {
+				if ($s->hasVariableType($expr->name)->no()) {
+					return new ErrorType();
 				}
 
-				$types[] = $variableScope->getVariableType($constantString->getValue());
+				return $s->getVariableType($expr->name);
 			}
 
-			return TypeCombinator::union(...$types);
-		}
+			$nameType = $nameResult !== null
+				? $nameResult->getTypeForScope($s)
+				: $s->getType($expr->name);
+			if (count($nameType->getConstantStrings()) > 0) {
+				$types = [];
+				foreach ($nameType->getConstantStrings() as $constantString) {
+					$variableScope = $s
+						->filterByTruthyValue(
+							new Identical($expr->name, new String_($constantString->getValue())),
+						);
+					if ($variableScope->hasVariableType($constantString->getValue())->no()) {
+						$types[] = new ErrorType();
+						continue;
+					}
 
-		return new MixedType();
+					$types[] = $variableScope->getVariableType($constantString->getValue());
+				}
+
+				return TypeCombinator::union(...$types);
+			}
+
+			return new MixedType();
+		};
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -83,6 +100,7 @@ final class VariableHandler implements TypeResolvingExprHandler
 		$throwPoints = [];
 		$impurePoints = [];
 		$isAlwaysTerminating = false;
+		$nameResult = null;
 		if (is_string($expr->name)) {
 			if (in_array($expr->name, Scope::SUPERGLOBAL_VARIABLES, true)) {
 				$impurePoints[] = new ImpurePoint($scope, $expr, 'superglobal', 'access to superglobal variable', true);
@@ -95,22 +113,18 @@ final class VariableHandler implements TypeResolvingExprHandler
 			$isAlwaysTerminating = $nameResult->isAlwaysTerminating();
 			$scope = $nameResult->getScope();
 		}
+
 		return $this->expressionResultFactory->create(
 			$scope,
-			$beforeScope,
-			$expr,
-			$hasYield,
-			$isAlwaysTerminating,
-			$throwPoints,
-			$impurePoints,
-			static fn (): MutatingScope => $scope->filterByTruthyValue($expr),
-			static fn (): MutatingScope => $scope->filterByFalseyValue($expr),
+			beforeScope: $beforeScope,
+			expr: $expr,
+			hasYield: $hasYield,
+			isAlwaysTerminating: $isAlwaysTerminating,
+			throwPoints: $throwPoints,
+			impurePoints: $impurePoints,
+			typeCallback: self::createTypeCallback($expr, $nameResult),
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->typeSpecifier->specifyDefaultTypes($s, $expr, $context),
 		);
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
