@@ -156,7 +156,7 @@ final class ExpressionResult
 			}
 		}
 
-		if ($this->typeCallback !== null) {
+		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope)) {
 			return $this->cachedType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($this->beforeScope, $this->expr));
 		}
 
@@ -169,11 +169,26 @@ final class ExpressionResult
 			return $this->cachedNativeType;
 		}
 
-		if ($this->typeCallback !== null) {
+		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope->doNotTreatPhpDocTypesAsCertain())) {
 			return $this->cachedNativeType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($this->beforeScope->doNotTreatPhpDocTypesAsCertain(), $this->expr));
 		}
 
 		return $this->cachedNativeType = $this->beforeScope->getNativeType($this->expr);
+	}
+
+	/**
+	 * A narrowed or ensured type tracked for the whole expression (e.g. the
+	 * nullsafe handlers ensure `($x ?? null)` is not null before processing
+	 * the chain) wins over recomputing the type - mirrors the tracked-holder
+	 * early return in MutatingScope::resolveType(). Asking the scope is safe:
+	 * its own early return answers from the holder without dispatching back.
+	 */
+	private function hasTrackedExpressionType(MutatingScope $scope): bool
+	{
+		return !$this->expr instanceof Expr\Variable
+			&& !$this->expr instanceof Expr\Closure
+			&& !$this->expr instanceof Expr\ArrowFunction
+			&& $scope->hasExpressionType($this->expr)->yes();
 	}
 
 	public function hasTypeCallback(): bool
@@ -220,7 +235,7 @@ final class ExpressionResult
 	 */
 	public function getTypeForScope(MutatingScope $scope): Type
 	{
-		if ($this->typeCallback !== null) {
+		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($scope)) {
 			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($scope, $this->expr));
 		}
 

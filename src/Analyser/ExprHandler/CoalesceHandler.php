@@ -9,17 +9,14 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
-use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\NullType;
@@ -28,10 +25,10 @@ use PHPStan\Type\TypeCombinator;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<Coalesce>
+ * @implements ExprHandler<Coalesce>
  */
 #[AutowiredService]
-final class CoalesceHandler implements TypeResolvingExprHandler
+final class CoalesceHandler implements ExprHandler
 {
 
 	public function __construct(
@@ -47,76 +44,22 @@ final class CoalesceHandler implements TypeResolvingExprHandler
 		return $expr instanceof Coalesce;
 	}
 
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
+	/**
+	 * A falsey coalesce means its left side was null (when it was surely set) -
+	 * shared by the specifyTypesCallback and by processExpr() for the scope
+	 * the right side evaluates under.
+	 *
+	 * @param Coalesce $expr
+	 */
+	private function getFalseySpecifiedTypes(MutatingScope $s, Expr $expr, ExpressionResult $condResult, TypeSpecifierContext $context): SpecifiedTypes
 	{
-		$issetLeftExpr = new Expr\Isset_([$expr->left]);
+		$isset = $s->issetCheck($expr->left, static fn () => true);
 
-		$result = $scope->issetCheck($expr->left, static function (Type $type): ?bool {
-			$isNull = $type->isNull();
-			if ($isNull->maybe()) {
-				return null;
-			}
-
-			return !$isNull->yes();
-		});
-
-		if ($result !== null && $result !== false) {
-			return TypeCombinator::removeNull($scope->filterByTruthyValue($issetLeftExpr)->getType($expr->left));
+		if ($isset !== true) {
+			return new SpecifiedTypes();
 		}
 
-		$rightType = $scope->filterByFalseyValue($issetLeftExpr)->getType($expr->right);
-
-		if ($result === null) {
-			return TypeCombinator::union(
-				TypeCombinator::removeNull($scope->filterByTruthyValue($issetLeftExpr)->getType($expr->left)),
-				$rightType,
-			);
-		}
-
-		return $rightType;
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		if ($context->null()) {
-			return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
-		}
-
-		if (!$context->true()) {
-			if (!$scope instanceof MutatingScope) {
-				throw new ShouldNotHappenException();
-			}
-
-			$isset = $scope->issetCheck($expr->left, static fn () => true);
-
-			if ($isset !== true) {
-				return new SpecifiedTypes();
-			}
-
-			return $typeSpecifier->create(
-				$expr->left,
-				new NullType(),
-				$context->negate(),
-				$scope,
-			)->setRootExpr($expr);
-		}
-
-		if (
-			!$context->falsey()
-			&& (new ConstantBooleanType(false))->isSuperTypeOf($scope->getType($expr->right)->toBoolean())->yes()
-		) {
-			return $typeSpecifier->create(
-				$expr->left,
-				new NullType(),
-				TypeSpecifierContext::createFalse(),
-				$scope,
-			)->setRootExpr($expr);
-		}
-
-		// The Coalesce condition matched but produced no narrowing; the legacy
-		// if/elseif chain fell through to its empty-SpecifiedTypes tail here,
-		// not to the truthy/falsey default.
-		return (new SpecifiedTypes([], []))->setRootExpr($expr);
+		return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, new NullType(), $context->negate())->setRootExpr($expr);
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -128,7 +71,9 @@ final class CoalesceHandler implements TypeResolvingExprHandler
 		$scope = $this->nonNullabilityHelper->revertNonNullability($condResult->getScope(), $nonNullabilityResult->getSpecifiedExpressions());
 		$scope = $nodeScopeResolver->lookForUnsetAllowedUndefinedExpressions($scope, $expr->left);
 
-		$rightScope = $scope->filterByFalseyValue($expr);
+		// the falsey narrowing of this very node - asking the scope about it
+		// mid-processing would take the on-demand path and recurse
+		$rightScope = $scope->applySpecifiedTypes($this->getFalseySpecifiedTypes($scope, $expr, $condResult, TypeSpecifierContext::createFalsey()));
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $rightScope, $storage, $nodeCallback, $context->enterDeep());
 		$rightExprType = $scope->getType($expr->right);
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
@@ -145,6 +90,53 @@ final class CoalesceHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $condResult->isAlwaysTerminating(),
 			throwPoints: array_merge($condResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($condResult->getImpurePoints(), $rightResult->getImpurePoints()),
+			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $rightScope): Type {
+				$issetLeftExpr = new Expr\Isset_([$expr->left]);
+
+				$result = $s->issetCheck($expr->left, static function (Type $type): ?bool {
+					$isNull = $type->isNull();
+					if ($isNull->maybe()) {
+						return null;
+					}
+
+					return !$isNull->yes();
+				});
+
+				if ($result !== null && $result !== false) {
+					return TypeCombinator::removeNull($condResult->getTypeForScope($s->filterByTruthyValue($issetLeftExpr)));
+				}
+
+				// the right side was processed on the left-is-null scope - that
+				// captured scope is the evaluation point
+				$rightType = $rightResult->getTypeForScope($s->nativeTypesPromoted ? $rightScope->doNotTreatPhpDocTypesAsCertain() : $rightScope);
+
+				if ($result === null) {
+					return TypeCombinator::union(
+						TypeCombinator::removeNull($condResult->getTypeForScope($s->filterByTruthyValue($issetLeftExpr))),
+						$rightType,
+					);
+				}
+
+				return $rightType;
+			},
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult): SpecifiedTypes {
+				if ($context->null()) {
+					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+				}
+
+				if (!$context->true()) {
+					return $this->getFalseySpecifiedTypes($s, $expr, $condResult, $context);
+				}
+
+				if ((new ConstantBooleanType(false))->isSuperTypeOf($rightResult->getTypeForScope($s)->toBoolean())->yes()) {
+					return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, new NullType(), TypeSpecifierContext::createFalse())->setRootExpr($expr);
+				}
+
+				// The Coalesce condition matched but produced no narrowing; the legacy
+				// if/elseif chain fell through to its empty-SpecifiedTypes tail here,
+				// not to the truthy/falsey default.
+				return (new SpecifiedTypes([], []))->setRootExpr($expr);
+			},
 			// a type constraint on the coalesce constrains its left side when
 			// the type rules the right side in or out - what
 			// TypeSpecifier::create() recovered by unwrapping the coalesce

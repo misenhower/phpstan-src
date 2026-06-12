@@ -6,6 +6,7 @@ use PhpParser\Node\Expr;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Printer\ExprPrinter;
@@ -25,8 +26,32 @@ use PHPStan\Type\Type;
 final class DefaultNarrowingHelper
 {
 
-	public function __construct(private ExprPrinter $exprPrinter)
+	public function __construct(
+		private ExprPrinter $exprPrinter,
+		private TypeSpecifier $typeSpecifier,
+	)
 	{
+	}
+
+	/**
+	 * The narrowing of an already-processed child expression in the given
+	 * boolean context: answered by the child result's specifyTypesCallback.
+	 * Until the child's handler migrates its narrowing - or when the child
+	 * is a synthetic node with no result - this bridges through the
+	 * old-world dispatcher, which answers converted handlers from stored
+	 * results, so the bridge terminates. The bridge dies in 3.0 together
+	 * with TypeSpecifier::specifyTypesInCondition().
+	 */
+	public function getChildSpecifiedTypes(MutatingScope $s, Expr $childExpr, ?ExpressionResult $childResult, TypeSpecifierContext $context): SpecifiedTypes
+	{
+		if ($childResult !== null) {
+			$types = $childResult->getSpecifiedTypesForScope($s, $context);
+			if ($types !== null) {
+				return $types;
+			}
+		}
+
+		return $this->typeSpecifier->specifyTypesInCondition($s, $childExpr, $context);
 	}
 
 	public function specifyDefaultTypes(Expr $expr, TypeSpecifierContext $context): SpecifiedTypes

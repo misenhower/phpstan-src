@@ -11,13 +11,11 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\NoopNodeCallback;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Type\NeverType;
@@ -26,15 +24,15 @@ use PHPStan\Type\TypeCombinator;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<Ternary>
+ * @implements ExprHandler<Ternary>
  */
 #[AutowiredService]
-final class TernaryHandler implements TypeResolvingExprHandler
+final class TernaryHandler implements ExprHandler
 {
 
 	public function __construct(
-		private NodeScopeResolver $nodeScopeResolver,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -42,62 +40,6 @@ final class TernaryHandler implements TypeResolvingExprHandler
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof Ternary;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$condResult = $this->nodeScopeResolver->processExprNode(new Stmt\Expression($expr->cond), $expr->cond, $scope, new ExpressionResultStorage(), new NoopNodeCallback(), ExpressionContext::createDeep());
-		if ($expr->if === null) {
-			$conditionType = $scope->getType($expr->cond);
-			$booleanConditionType = $conditionType->toBoolean();
-			if ($booleanConditionType->isTrue()->yes()) {
-				return $condResult->getTruthyScope()->getType($expr->cond);
-			}
-
-			if ($booleanConditionType->isFalse()->yes()) {
-				return $condResult->getFalseyScope()->getType($expr->else);
-			}
-
-			return TypeCombinator::union(
-				TypeCombinator::removeFalsey($condResult->getTruthyScope()->getType($expr->cond)),
-				$condResult->getFalseyScope()->getType($expr->else),
-			);
-		}
-
-		$booleanConditionType = $scope->getType($expr->cond)->toBoolean();
-		if ($booleanConditionType->isTrue()->yes()) {
-			return $condResult->getTruthyScope()->getType($expr->if);
-		}
-
-		if ($booleanConditionType->isFalse()->yes()) {
-			return $condResult->getFalseyScope()->getType($expr->else);
-		}
-
-		return TypeCombinator::union(
-			$condResult->getTruthyScope()->getType($expr->if),
-			$condResult->getFalseyScope()->getType($expr->else),
-		);
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		if ($expr->cond instanceof Ternary || $context->null()) {
-			return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
-		}
-
-		if ($expr->if !== null) {
-			$conditionExpr = new BooleanOr(
-				new BooleanAnd($expr->cond, $expr->if),
-				new BooleanAnd(new Expr\BooleanNot($expr->cond), $expr->else),
-			);
-		} else {
-			$conditionExpr = new BooleanOr(
-				$expr->cond,
-				new BooleanAnd(new Expr\BooleanNot($expr->cond), $expr->else),
-			);
-		}
-
-		return $typeSpecifier->specifyTypesInCondition($scope, $conditionExpr, $context)->setRootExpr($expr);
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -109,7 +51,10 @@ final class TernaryHandler implements TypeResolvingExprHandler
 		$ifTrueScope = $ternaryCondResult->getTruthyScope();
 		$ifFalseScope = $ternaryCondResult->getFalseyScope();
 		$ifTrueType = null;
+		$ifResult = null;
 
+		$ifProcessingScope = $ifTrueScope;
+		$elseProcessingScope = $ifFalseScope;
 		if ($expr->if === null) {
 			$elseResult = $nodeScopeResolver->processExprNode($stmt, $expr->else, $ifFalseScope, $storage, $nodeCallback, $context);
 			$throwPoints = array_merge($throwPoints, $elseResult->getThrowPoints());
@@ -158,6 +103,67 @@ final class TernaryHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $ternaryCondResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			// the branches were processed on the cond-truthy/cond-falsey scopes
+			// including the condition's side effects - those captured scopes
+			// are the evaluation points, no re-walk needed
+			typeCallback: static function (MutatingScope $s) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $ifProcessingScope, $elseProcessingScope): Type {
+				if ($s->nativeTypesPromoted) {
+					$ifProcessingScope = $ifProcessingScope->doNotTreatPhpDocTypesAsCertain();
+					$elseProcessingScope = $elseProcessingScope->doNotTreatPhpDocTypesAsCertain();
+				}
+				$booleanConditionType = $ternaryCondResult->getTypeForScope($s)->toBoolean();
+				$elseType = $elseResult->getTypeForScope($elseProcessingScope);
+				if ($expr->if === null || $ifResult === null) {
+					$condTruthyType = $ternaryCondResult->getTypeForScope($ifProcessingScope);
+					if ($booleanConditionType->isTrue()->yes()) {
+						return $condTruthyType;
+					}
+
+					if ($booleanConditionType->isFalse()->yes()) {
+						return $elseType;
+					}
+
+					return TypeCombinator::union(
+						TypeCombinator::removeFalsey($condTruthyType),
+						$elseType,
+					);
+				}
+
+				$ifType = $ifResult->getTypeForScope($ifProcessingScope);
+				if ($booleanConditionType->isTrue()->yes()) {
+					return $ifType;
+				}
+
+				if ($booleanConditionType->isFalse()->yes()) {
+					return $elseType;
+				}
+
+				return TypeCombinator::union(
+					$ifType,
+					$elseType,
+				);
+			},
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+				if ($expr->cond instanceof Ternary || $context->null()) {
+					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+				}
+
+				if ($expr->if !== null) {
+					$conditionExpr = new BooleanOr(
+						new BooleanAnd($expr->cond, $expr->if),
+						new BooleanAnd(new Expr\BooleanNot($expr->cond), $expr->else),
+					);
+				} else {
+					$conditionExpr = new BooleanOr(
+						$expr->cond,
+						new BooleanAnd(new Expr\BooleanNot($expr->cond), $expr->else),
+					);
+				}
+
+				// the synthetic condition takes the on-demand bridge; its real
+				// subnodes answer from stored results
+				return $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $conditionExpr, null, $context)->setRootExpr($expr);
+			},
 		);
 	}
 
