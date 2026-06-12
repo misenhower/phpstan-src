@@ -52,6 +52,7 @@ use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStan\Analyser\ExprHandler\AssignHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
+use PHPStan\Analyser\Fiber\FiberScope;
 use PHPStan\BetterReflection\Reflection\Adapter\ReflectionClass;
 use PHPStan\BetterReflection\Reflection\ReflectionEnum;
 use PHPStan\BetterReflection\Reflector\Reflector;
@@ -2841,6 +2842,15 @@ class NodeScopeResolver
 		ExpressionContext $context,
 	): ExpressionResult
 	{
+		if ($scope instanceof FiberScope) {
+			// the engine never processes on the rule-facing FiberScope - one can
+			// arrive here through a stored result's memoized truthy/falsey scope
+			// (first computed inside a rule fiber) consumed by a handler for a
+			// child's processing scope; its type asks would suspend outside
+			// a fiber
+			$scope = $scope->toMutatingScope();
+		}
+
 		if ($this->returnStoredExpressionResults) {
 			$storedResult = $storage->findExpressionResult($expr);
 			if ($storedResult !== null) {
