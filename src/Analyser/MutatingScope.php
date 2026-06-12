@@ -1093,6 +1093,11 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 */
 	private function resolveTypeOfNewWorldHandlerNode(Expr $node): Type
 	{
+		// the hooks are the boundary between the rule-facing world and the
+		// engine - a rule's FiberScope must not flow into result callbacks or
+		// on-demand processing, where its suspending type asks crash outside
+		// a fiber
+		$scope = $this->toMutatingScope();
 		$storage = $this->expressionResultStorageStack->getCurrent();
 		if ($storage !== null) {
 			$result = $storage->findExpressionResult($node);
@@ -1104,18 +1109,18 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 					));
 				}
 
-				return $result->getTypeForScope($this);
+				return $result->getTypeForScope($scope);
 			}
 		}
 
 		// a synthetic node, or no analysis in progress
 		$onDemandResult = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
 			$node,
-			$this,
+			$scope,
 			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
 		);
 
-		return $onDemandResult->getTypeForScope($this);
+		return $onDemandResult->getTypeForScope($scope);
 	}
 
 	/**
@@ -1158,22 +1163,26 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 */
 	public function specifyTypesOfNewWorldHandlerNode(Expr $node, TypeSpecifierContext $context): ?SpecifiedTypes
 	{
+		// see resolveTypeOfNewWorldHandlerNode() - rules ask the dispatcher
+		// with their FiberScope (e.g. ImpossibleCheckTypeHelper), the engine
+		// side of the boundary works with the mutating flavor
+		$scope = $this->toMutatingScope();
 		$storage = $this->expressionResultStorageStack->getCurrent();
 		if ($storage !== null) {
 			$result = $storage->findExpressionResult($node);
 			if ($result !== null) {
-				return $result->getSpecifiedTypesForScope($this, $context);
+				return $result->getSpecifiedTypesForScope($scope, $context);
 			}
 		}
 
 		// a synthetic node, or no analysis in progress
 		$onDemandResult = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
 			$node,
-			$this,
+			$scope,
 			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
 		);
 
-		return $onDemandResult->getSpecifiedTypesForScope($this, $context);
+		return $onDemandResult->getSpecifiedTypesForScope($scope, $context);
 	}
 
 	/**
