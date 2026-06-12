@@ -11,10 +11,10 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Type\BooleanType;
@@ -40,7 +40,7 @@ final class InstanceofHandler implements ExprHandler
 
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
-		private TypeSpecifier $typeSpecifier,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -146,7 +146,7 @@ final class InstanceofHandler implements ExprHandler
 					} else {
 						$type = new ObjectType($className);
 					}
-					return $this->typeSpecifier->create($exprNode, $type, $context, $s)->setRootExpr($expr);
+					return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 				}
 
 				$classNameType = $classResult !== null
@@ -162,16 +162,16 @@ final class InstanceofHandler implements ExprHandler
 							$type,
 							new ObjectWithoutClassType(),
 						);
-						return $this->typeSpecifier->create($exprNode, $type, $context, $s)->setRootExpr($expr);
+						return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 					} elseif ($context->false() && !$uncertainty) {
 						$exprType = $exprResult->getTypeForScope($s);
 						if (!$type->isSuperTypeOf($exprType)->yes()) {
-							return $this->typeSpecifier->create($exprNode, $type, $context, $s)->setRootExpr($expr);
+							return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 						}
 					}
 				}
 				if ($context->true()) {
-					return $this->typeSpecifier->create($exprNode, new ObjectWithoutClassType(), $context, $s)->setRootExpr($exprNode);
+					return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, new ObjectWithoutClassType(), $context)->setRootExpr($exprNode);
 				}
 
 				return (new SpecifiedTypes([], []))->setRootExpr($expr);

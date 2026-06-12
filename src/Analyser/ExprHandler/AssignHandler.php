@@ -28,6 +28,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExpressionTypeHolder;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
@@ -97,6 +98,7 @@ final class AssignHandler implements TypeResolvingExprHandler
 		private ExprPrinter $exprPrinter,
 		private MatchHandler $matchHandler,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -292,6 +294,7 @@ final class AssignHandler implements TypeResolvingExprHandler
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		$beforeScope = $scope;
+		$assignedExprResult = null;
 		$result = $this->processAssignVar(
 			$nodeScopeResolver,
 			$scope,
@@ -301,7 +304,7 @@ final class AssignHandler implements TypeResolvingExprHandler
 			$expr->expr,
 			$nodeCallback,
 			$context,
-			function (MutatingScope $scope) use ($stmt, $expr, $nodeCallback, $context, $storage, $nodeScopeResolver): ExpressionResult {
+			function (MutatingScope $scope) use ($stmt, $expr, $nodeCallback, $context, $storage, $nodeScopeResolver, &$assignedExprResult): ExpressionResult {
 				$beforeScope = $scope;
 				$impurePoints = [];
 				if ($expr instanceof AssignRef) {
@@ -331,6 +334,7 @@ final class AssignHandler implements TypeResolvingExprHandler
 				}
 
 				$result = $nodeScopeResolver->processExprNode($stmt, $expr->expr, $scope, $storage, $nodeCallback, $context->enterDeep());
+				$assignedExprResult = $result;
 				$hasYield = $result->hasYield();
 				$throwPoints = $result->getThrowPoints();
 				$impurePoints = array_merge($impurePoints, $result->getImpurePoints());
@@ -391,7 +395,149 @@ final class AssignHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $result->isAlwaysTerminating(),
 			throwPoints: $result->getThrowPoints(),
 			impurePoints: $result->getImpurePoints(),
+			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($expr) : null,
+			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult) : null,
 		);
+	}
+
+	/**
+	 * A type constraint on an assignment constrains the assigned variable
+	 * and the assigned expression - what TypeSpecifier::create() recovered
+	 * by unwrapping assign chains. Nested assignments compose through the
+	 * assigned expression's own result.
+	 *
+	 * @return Closure(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes
+	 */
+	private function createCreateTypesCallback(Assign $expr, ?ExpressionResult $assignedExprResult): Closure
+	{
+		return function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $assignedExprResult): SpecifiedTypes {
+			$types = $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->var, null, $type, $context);
+
+			return $types->unionWith(
+				$this->defaultNarrowingHelper->createSubjectTypes($s, $expr->expr, $assignedExprResult, $type, $context),
+			);
+		};
+	}
+
+	/**
+	 * New-world copy of the non-null contexts of specifyTypes(): the assigned
+	 * variable narrows by the boolean outcome, plus the $arr[$key] inference
+	 * after $key = array_key_first/array_key_last/array_search/array_find_key.
+	 * The null-context inferences stay in specifyTypes() - result-based asks
+	 * are always truthy or falsey.
+	 *
+	 * @return Closure(MutatingScope, TypeSpecifierContext): SpecifiedTypes
+	 */
+	private function createSpecifyTypesCallback(Assign $expr): Closure
+	{
+		return function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+			if ($context->null()) {
+				return (new SpecifiedTypes([], []))->setRootExpr($expr);
+			}
+
+			$specifiedTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr->var, $context)->setRootExpr($expr);
+
+			// infer $arr[$key] after $key = array_key_first/last($arr)
+			if (
+				$expr->expr instanceof FuncCall
+				&& $expr->expr->name instanceof Name
+				&& !$expr->expr->isFirstClassCallable()
+				&& in_array($expr->expr->name->toLowerString(), ['array_key_first', 'array_key_last'], true)
+				&& count($expr->expr->getArgs()) >= 1
+			) {
+				$arrayArg = $expr->expr->getArgs()[0]->value;
+				$arrayType = $s->getType($arrayArg);
+
+				if ($arrayType->isArray()->yes()) {
+					if ($context->true()) {
+						$specifiedTypes = $specifiedTypes->unionWith(
+							$this->defaultNarrowingHelper->createSubjectTypes($s, $arrayArg, null, new NonEmptyArrayType(), TypeSpecifierContext::createTrue()),
+						);
+						$isNonEmpty = true;
+					} else {
+						$isNonEmpty = $arrayType->isIterableAtLeastOnce()->yes();
+					}
+
+					if ($isNonEmpty) {
+						$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
+						$specifiedTypes = $specifiedTypes->unionWith(
+							$this->defaultNarrowingHelper->createSubjectTypes($s, $dimFetch, null, $arrayType->getIterableValueType(), TypeSpecifierContext::createTrue()),
+						);
+					} elseif ($expr->var instanceof Variable && is_string($expr->var->name)) {
+						$keyType = $s->getType($expr->expr);
+						$nonNullKeyType = TypeCombinator::removeNull($keyType);
+						if (!$nonNullKeyType instanceof NeverType) {
+							$specifiedTypes = $specifiedTypes->unionWith(
+								$this->createArrayDimFetchConditionalExpressionHolder($expr->var, $arrayArg, $nonNullKeyType, $arrayType->getIterableValueType()),
+							);
+						}
+					}
+				}
+			}
+
+			// infer $arr[$key] after $key = array_search($needle, $arr) or $key = array_find_key($arr, $callback)
+			if (
+				$expr->expr instanceof FuncCall
+				&& $expr->expr->name instanceof Name
+				&& !$expr->expr->isFirstClassCallable()
+				&& count($expr->expr->getArgs()) >= 2
+			) {
+				$funcName = $expr->expr->name->toLowerString();
+				$arrayArg = null;
+				$sentinelType = null;
+				$isStrictArraySearch = false;
+
+				if ($funcName === 'array_search') {
+					$arrayArg = $expr->expr->getArgs()[1]->value;
+					$sentinelType = new ConstantBooleanType(false);
+					$isStrictArraySearch = count($expr->expr->getArgs()) >= 3 && $s->getType($expr->expr->getArgs()[2]->value)->isTrue()->yes();
+				} elseif ($funcName === 'array_find_key') {
+					$arrayArg = $expr->expr->getArgs()[0]->value;
+					$sentinelType = new NullType();
+				}
+
+				if ($arrayArg !== null) {
+					$arrayType = $s->getType($arrayArg);
+
+					if ($arrayType->isArray()->yes()) {
+						if ($context->true()) {
+							$specifiedTypes = $specifiedTypes->unionWith(
+								$this->defaultNarrowingHelper->createSubjectTypes($s, $arrayArg, null, new NonEmptyArrayType(), TypeSpecifierContext::createTrue()),
+							);
+
+							$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
+
+							if ($isStrictArraySearch) {
+								$needleType = $s->getType($expr->expr->getArgs()[0]->value);
+								$dimFetchType = TypeCombinator::intersect($needleType, $arrayType->getIterableValueType());
+							} else {
+								$dimFetchType = $arrayType->getIterableValueType();
+							}
+
+							$specifiedTypes = $specifiedTypes->unionWith(
+								$this->defaultNarrowingHelper->createSubjectTypes($s, $dimFetch, null, $dimFetchType, TypeSpecifierContext::createTrue()),
+							);
+						} elseif ($expr->var instanceof Variable && is_string($expr->var->name)) {
+							$keyType = $s->getType($expr->expr);
+							$narrowedKeyType = TypeCombinator::remove($keyType, $sentinelType);
+							if (!$narrowedKeyType instanceof NeverType) {
+								if ($isStrictArraySearch) {
+									$needleType = $s->getType($expr->expr->getArgs()[0]->value);
+									$dimFetchType = TypeCombinator::intersect($needleType, $arrayType->getIterableValueType());
+								} else {
+									$dimFetchType = $arrayType->getIterableValueType();
+								}
+								$specifiedTypes = $specifiedTypes->unionWith(
+									$this->createArrayDimFetchConditionalExpressionHolder($expr->var, $arrayArg, $narrowedKeyType, $dimFetchType),
+								);
+							}
+						}
+					}
+				}
+			}
+
+			return $specifiedTypes;
+		};
 	}
 
 	/**

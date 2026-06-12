@@ -18,6 +18,9 @@ final class ExpressionResult
 	/** @var (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null */
 	private $specifyTypesCallback;
 
+	/** @var (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null */
+	private $createTypesCallback;
+
 	/** @var (callable(): MutatingScope)|null */
 	private $truthyScopeCallback;
 
@@ -37,6 +40,7 @@ final class ExpressionResult
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(MutatingScope, Expr): Type)|null $typeCallback
 	 * @param (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null $specifyTypesCallback
+	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
 	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
 	 */
@@ -53,12 +57,14 @@ final class ExpressionResult
 		?callable $falseyScopeCallback = null,
 		?callable $typeCallback = null,
 		?callable $specifyTypesCallback = null,
+		?callable $createTypesCallback = null,
 	)
 	{
 		$this->truthyScopeCallback = $truthyScopeCallback;
 		$this->falseyScopeCallback = $falseyScopeCallback;
 		$this->typeCallback = $typeCallback;
 		$this->specifyTypesCallback = $specifyTypesCallback;
+		$this->createTypesCallback = $createTypesCallback;
 	}
 
 	public function getScope(): MutatingScope
@@ -187,6 +193,25 @@ final class ExpressionResult
 		}
 
 		return ($this->specifyTypesCallback)($scope, $context);
+	}
+
+	/**
+	 * How a type constraint on this expression translates into narrowing
+	 * entries - the inside-out counterpart of TypeSpecifier::create(). The
+	 * handler that produced this result knows the structure: an assignment
+	 * fans out to the assigned variable and the assigned expression
+	 * (recursing through the assigned expression's own result), a coalesce
+	 * delegates to its left side when the type rules the right side in or
+	 * out. Returns null when the handler wired no createTypesCallback - the
+	 * caller emits a single entry for the expression itself.
+	 */
+	public function getCreatedTypesForScope(MutatingScope $scope, Type $type, TypeSpecifierContext $context): ?SpecifiedTypes
+	{
+		if ($this->createTypesCallback === null) {
+			return null;
+		}
+
+		return ($this->createTypesCallback)($scope, $type, $context);
 	}
 
 	/**

@@ -9,6 +9,7 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
@@ -36,6 +37,7 @@ final class CoalesceHandler implements TypeResolvingExprHandler
 	public function __construct(
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -143,6 +145,22 @@ final class CoalesceHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $condResult->isAlwaysTerminating(),
 			throwPoints: array_merge($condResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($condResult->getImpurePoints(), $rightResult->getImpurePoints()),
+			// a type constraint on the coalesce constrains its left side when
+			// the type rules the right side in or out - what
+			// TypeSpecifier::create() recovered by unwrapping the coalesce
+			createTypesCallback: function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult): SpecifiedTypes {
+				if (!$context->null()) {
+					$rightType = $rightResult->getTypeForScope($s);
+					if (
+						($context->true() && $type->isSuperTypeOf($rightType)->no())
+						|| ($context->false() && $type->isSuperTypeOf($rightType)->yes())
+					) {
+						return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, $type, $context);
+					}
+				}
+
+				return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context);
+			},
 		);
 	}
 

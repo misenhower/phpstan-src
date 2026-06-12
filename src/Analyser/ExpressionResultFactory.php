@@ -15,6 +15,7 @@ interface ExpressionResultFactory
 	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
 	 * @param (callable(MutatingScope, Expr): Type)|null $typeCallback
 	 * @param (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null $specifyTypesCallback
+	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 */
 	public function create(
 		MutatingScope $scope,
@@ -28,6 +29,7 @@ interface ExpressionResultFactory
 		?callable $falseyScopeCallback = null,
 		?callable $typeCallback = null,
 		?callable $specifyTypesCallback = null,
+		?callable $createTypesCallback = null,
 	): ExpressionResult;
 
 }
