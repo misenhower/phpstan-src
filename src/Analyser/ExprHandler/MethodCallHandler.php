@@ -151,6 +151,7 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			$context,
 		);
 		$scope = $argsResult->getScope();
+		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 
 		if ($methodReflection !== null) {
 			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context);

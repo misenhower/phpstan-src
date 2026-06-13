@@ -585,7 +585,22 @@ class NodeScopeResolver
 			$nodeCallback,
 			$context,
 		);
-		$this->processPendingFibers($storage);
+		// Flush pending fibers only at a scope boundary - a function/method body,
+		// a class/trait body, a namespace. Nested control-flow statement lists
+		// (if/else branches, loop and switch/try bodies) must NOT flush: a rule
+		// invoked at the scope's entry node (e.g. UnusedConstructorParametersRule
+		// on InClassMethodNode) asks the types of expressions appearing later in
+		// the body, and a flush at an earlier branch would resolve those fibers
+		// on the asker's scope before natural traversal stores the results. Such
+		// fibers are resumed when their expression stores its result, or at this
+		// scope boundary once the whole body is processed.
+		if (
+			$parentNode instanceof Node\FunctionLike
+			|| $parentNode instanceof Node\Stmt\ClassLike
+			|| $parentNode instanceof Node\Stmt\Namespace_
+		) {
+			$this->processPendingFibers($storage);
+		}
 
 		return $statementResult;
 	}
@@ -3087,6 +3102,37 @@ class NodeScopeResolver
 		?Type $nativePassedToType = null,
 	): ProcessClosureResult
 	{
+		// Closures reached as call arguments are processed here directly rather
+		// than through processExprNode (which tracks the node), so track the
+		// closure too: the dependency/node callbacks fired for it ask its type
+		// and suspend a fiber that must not be flushed at a nested boundary
+		// inside the closure body before the caller stores the closure result.
+		$exprId = spl_object_id($expr);
+		$this->processingExprIds[$exprId] = ($this->processingExprIds[$exprId] ?? 0) + 1;
+
+		try {
+			return $this->processClosureNodeInternal($stmt, $expr, $scope, $storage, $nodeCallback, $context, $passedToType, $nativePassedToType);
+		} finally {
+			if (--$this->processingExprIds[$exprId] === 0) {
+				unset($this->processingExprIds[$exprId]);
+			}
+		}
+	}
+
+	/**
+	 * @param callable(Node $node, Scope $scope): void $nodeCallback
+	 */
+	private function processClosureNodeInternal(
+		Node\Stmt $stmt,
+		Expr\Closure $expr,
+		MutatingScope $scope,
+		ExpressionResultStorage $storage,
+		callable $nodeCallback,
+		ExpressionContext $context,
+		?Type $passedToType,
+		?Type $nativePassedToType = null,
+	): ProcessClosureResult
+	{
 		foreach ($expr->params as $param) {
 			$this->processParamNode($stmt, $param, $scope, $storage, $nodeCallback);
 		}
@@ -4041,6 +4087,41 @@ class NodeScopeResolver
 
 		// not storing this, it's scope after processing all args
 		return $this->expressionResultFactory->create($scope, $scope, $callLike, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints);
+	}
+
+	/**
+	 * Arguments normalization (reordering, default-filling) can drop an original
+	 * argument from the call processArgs() iterates - duplicate, unknown-named or
+	 * extra arguments in an invalid call. The parameters check still asks their
+	 * types to report the error, so process them too (their result is stored).
+	 * A NoopNodeCallback keeps the dropped arguments out of rule processing,
+	 * matching the behaviour when this guard is off.
+	 */
+	public function processDroppedArgs(
+		Node\Stmt $stmt,
+		CallLike $originalCall,
+		CallLike $normalizedCall,
+		MutatingScope $scope,
+		ExpressionResultStorage $storage,
+		ExpressionContext $context,
+	): void
+	{
+		if ($originalCall === $normalizedCall) {
+			return;
+		}
+
+		$keptValueIds = [];
+		foreach ($normalizedCall->getArgs() as $normalizedArg) {
+			$keptValueIds[spl_object_id($normalizedArg->value)] = true;
+		}
+
+		foreach ($originalCall->getArgs() as $originalArg) {
+			if (isset($keptValueIds[spl_object_id($originalArg->value)])) {
+				continue;
+			}
+
+			$this->processExprNode($stmt, $originalArg->value, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
+		}
 	}
 
 	/**

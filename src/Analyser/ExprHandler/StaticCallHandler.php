@@ -217,6 +217,7 @@ final class StaticCallHandler implements TypeResolvingExprHandler
 		}
 		$argsResult = $nodeScopeResolver->processArgs($stmt, $methodReflection, null, $parametersAcceptor, $normalizedExpr, $scope, $storage, $nodeCallback, $context, $closureBindScope);
 		$scope = $argsResult->getScope();
+		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 		$scopeFunction = $scope->getFunction();
 
 		if ($methodReflection !== null) {

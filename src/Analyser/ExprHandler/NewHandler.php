@@ -204,6 +204,7 @@ final class NewHandler implements TypeResolvingExprHandler
 
 		$argsResult = $nodeScopeResolver->processArgs($stmt, $constructorReflection, null, $parametersAcceptor, $normalizedExpr, $scope, $storage, $nodeCallback, $context);
 		$scope = $argsResult->getScope();
+		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 		$hasYield = $hasYield || $argsResult->hasYield();
 		$throwPoints = array_merge($throwPoints, $argsResult->getThrowPoints());
 		$impurePoints = array_merge($impurePoints, $argsResult->getImpurePoints());

@@ -279,6 +279,7 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 		$scopeBeforeArgs = $scope;
 		$argsResult = $nodeScopeResolver->processArgs($stmt, $functionReflection, null, $parametersAcceptor, $normalizedExpr, $scope, $storage, $nodeCallbackForArgs, $context);
 		$scope = $argsResult->getScope();
+		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 		$hasYield = $argsResult->hasYield();
 		$throwPoints = array_merge($throwPoints, $argsResult->getThrowPoints());
 		$impurePoints = array_merge($impurePoints, $argsResult->getImpurePoints());
