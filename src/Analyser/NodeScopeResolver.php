@@ -175,10 +175,13 @@ use function array_merge;
 use function array_slice;
 use function array_values;
 use function count;
+use function get_class;
+use function getenv;
 use function in_array;
 use function is_array;
 use function is_int;
 use function is_string;
+use function spl_object_id;
 use function sprintf;
 use function strtolower;
 use function trim;
@@ -211,6 +214,26 @@ class NodeScopeResolver
 	 * nodes contained in it were already processed and must not be processed again.
 	 */
 	protected bool $returnStoredExpressionResults = false;
+
+	/**
+	 * spl_object_id => recursion depth of the expressions currently being
+	 * processed by processExprNode. A fiber pending on one of them must not be
+	 * flushed at a nested statement-list boundary inside that expression - it
+	 * is resumed when the expression's own processing stores its result.
+	 *
+	 * @var array<int, int>
+	 */
+	protected array $processingExprIds = [];
+
+	/**
+	 * spl_object_id => true of every Expr in the file's parsed AST. Populated
+	 * only when the PHPSTAN_GUARD_NW diagnostic is enabled, so the pending-fiber
+	 * guard can tell a real AST node (a genuine gap) from a node a rule built
+	 * during analysis (legitimately resolved on demand).
+	 *
+	 * @var array<int, true>
+	 */
+	protected array $guardRealExprIds = [];
 
 	/**
 	 * @param string[][] $earlyTerminatingMethodCalls className(string) => methods(string[])
@@ -281,6 +304,13 @@ class NodeScopeResolver
 		callable $nodeCallback,
 	): void
 	{
+		if (getenv('PHPSTAN_GUARD_NW') === '1') {
+			$this->guardRealExprIds = [];
+			foreach ((new NodeFinder())->findInstanceOf($nodes, Expr::class) as $realExpr) {
+				$this->guardRealExprIds[spl_object_id($realExpr)] = true;
+			}
+		}
+
 		$expressionResultStorage = new ExpressionResultStorage();
 		$scope->pushExpressionResultStorage($expressionResultStorage);
 		try {
@@ -2848,6 +2878,35 @@ class NodeScopeResolver
 			}
 		}
 
+		// Track that this expression is being processed. A fiber suspended on it
+		// (a rule asked its type before processing reached it) must not be
+		// flushed at a nested statement-list boundary inside this very
+		// expression - e.g. an immediately-invoked closure's body. It is resumed
+		// when this processExprNode stores the result below.
+		$exprId = spl_object_id($expr);
+		$this->processingExprIds[$exprId] = ($this->processingExprIds[$exprId] ?? 0) + 1;
+
+		try {
+			return $this->processExprNodeInternal($stmt, $expr, $scope, $storage, $nodeCallback, $context);
+		} finally {
+			if (--$this->processingExprIds[$exprId] === 0) {
+				unset($this->processingExprIds[$exprId]);
+			}
+		}
+	}
+
+	/**
+	 * @param callable(Node $node, Scope $scope): void $nodeCallback
+	 */
+	private function processExprNodeInternal(
+		Node\Stmt $stmt,
+		Expr $expr,
+		MutatingScope $scope,
+		ExpressionResultStorage $storage,
+		callable $nodeCallback,
+		ExpressionContext $context,
+	): ExpressionResult
+	{
 		if ($expr instanceof Expr\CallLike && $expr->isFirstClassCallable()) {
 			if ($expr instanceof FuncCall) {
 				$newExpr = new FunctionCallableNode($expr->name, $expr);

@@ -18,6 +18,7 @@ use function count;
 use function get_class;
 use function get_debug_type;
 use function getenv;
+use function spl_object_id;
 use function sprintf;
 
 #[AutowiredService(as: FiberNodeScopeResolver::class)]
@@ -111,20 +112,31 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 
 		foreach ($storage->pendingFibers as $key => $pending) {
 			$request = $pending['request'];
+
+			// A fiber suspended on an expression that is still being processed
+			// must not be flushed here: this boundary is a nested statement list
+			// inside that very expression (e.g. an immediately-invoked closure's
+			// body). The fiber is resumed when the enclosing processExprNode
+			// stores the result.
+			if (isset($this->processingExprIds[spl_object_id($request->expr)])) {
+				continue;
+			}
+
 			$expressionResult = $storage->findExpressionResult($request->expr);
 
 			if ($expressionResult !== null) {
 				throw new ShouldNotHappenException('Pending fibers at the end should be about synthetic nodes');
 			}
 
-			// Only synthetic nodes (built during analysis, no source position)
-			// should reach the on-demand path here. A real AST node left pending
+			// Only nodes built during analysis (rules constructing synthetic
+			// comparisons, ArgumentsNormalizer rewrites, ...) should reach the
+			// on-demand path here. A node from the file's parsed AST left pending
 			// means a rule asked about its type but it was never processed and
 			// stored during natural traversal - a gap to fix at the producing
 			// handler. Guard kept dormant; enable with PHPSTAN_GUARD_NW=1.
-			if (getenv('PHPSTAN_GUARD_NW') === '1' && $request->expr->getStartLine() !== -1) {
+			if (getenv('PHPSTAN_GUARD_NW') === '1' && isset($this->guardRealExprIds[spl_object_id($request->expr)])) {
 				throw new ShouldNotHappenException(sprintf(
-					'Pending fiber about non-synthetic node %s on line %d - it should have been processed and its result stored during natural traversal.',
+					'Pending fiber about real AST node %s on line %d - it should have been processed and its result stored during natural traversal.',
 					get_class($request->expr),
 					$request->expr->getStartLine(),
 				));
