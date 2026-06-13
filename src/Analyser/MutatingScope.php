@@ -122,6 +122,7 @@ use function is_array;
 use function is_string;
 use function ltrim;
 use function md5;
+use function spl_object_id;
 use function sprintf;
 use function str_starts_with;
 use function strlen;
@@ -955,6 +956,18 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	/** @api */
 	public function getType(Expr $node): Type
 	{
+		if (
+			NodeScopeResolver::$guardNewWorld
+			&& isset(NodeScopeResolver::$guardRealExprIds[spl_object_id($node)])
+			&& !isset(NodeScopeResolver::$guardProcessedExprIds[spl_object_id($node)])
+		) {
+			throw new ShouldNotHappenException(sprintf(
+				'getType() asked about non-synthetic %s on line %d before it was processed by processExprNode() - it should consume the node\'s ExpressionResult instead.',
+				get_class($node),
+				$node->getStartLine(),
+			));
+		}
+
 		$type = ScopeOps::getTypeFromCache($this, $node, $key);
 		if ($type !== null) {
 			return $type;

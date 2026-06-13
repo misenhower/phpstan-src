@@ -17,7 +17,6 @@ use function array_pop;
 use function count;
 use function get_class;
 use function get_debug_type;
-use function getenv;
 use function spl_object_id;
 use function sprintf;
 
@@ -134,7 +133,7 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 			// means a rule asked about its type but it was never processed and
 			// stored during natural traversal - a gap to fix at the producing
 			// handler. Guard kept dormant; enable with PHPSTAN_GUARD_NW=1.
-			if (getenv('PHPSTAN_GUARD_NW') === '1' && isset($this->guardRealExprIds[spl_object_id($request->expr)])) {
+			if (self::$guardNewWorld && isset(self::$guardRealExprIds[spl_object_id($request->expr)])) {
 				throw new ShouldNotHappenException(sprintf(
 					'Pending fiber about real AST node %s on line %d - it should have been processed and its result stored during natural traversal.',
 					get_class($request->expr),

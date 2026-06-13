@@ -225,15 +225,27 @@ class NodeScopeResolver
 	 */
 	protected array $processingExprIds = [];
 
+	/** Whether the PHPSTAN_GUARD_NW diagnostic is enabled (cached from the env). */
+	public static bool $guardNewWorld = false;
+
 	/**
 	 * spl_object_id => true of every Expr in the file's parsed AST. Populated
-	 * only when the PHPSTAN_GUARD_NW diagnostic is enabled, so the pending-fiber
-	 * guard can tell a real AST node (a genuine gap) from a node a rule built
-	 * during analysis (legitimately resolved on demand).
+	 * only when the PHPSTAN_GUARD_NW diagnostic is enabled, so the guards can
+	 * tell a real AST node from a node a rule built during analysis (which
+	 * legitimately resolves on demand). Static so MutatingScope can read it.
 	 *
 	 * @var array<int, true>
 	 */
-	protected array $guardRealExprIds = [];
+	public static array $guardRealExprIds = [];
+
+	/**
+	 * spl_object_id => true of every Expr already processed by processExprNode
+	 * in the current file. Used by the MutatingScope::getType guard to detect a
+	 * real AST node whose type is asked before it was processed.
+	 *
+	 * @var array<int, true>
+	 */
+	public static array $guardProcessedExprIds = [];
 
 	/**
 	 * @param string[][] $earlyTerminatingMethodCalls className(string) => methods(string[])
@@ -282,6 +294,8 @@ class NodeScopeResolver
 			}
 		}
 		$this->earlyTerminatingMethodNames = $earlyTerminatingMethodNames;
+
+		self::$guardNewWorld = getenv('PHPSTAN_GUARD_NW') === '1';
 	}
 
 	/**
@@ -304,10 +318,11 @@ class NodeScopeResolver
 		callable $nodeCallback,
 	): void
 	{
-		if (getenv('PHPSTAN_GUARD_NW') === '1') {
-			$this->guardRealExprIds = [];
+		if (self::$guardNewWorld) {
+			self::$guardRealExprIds = [];
+			self::$guardProcessedExprIds = [];
 			foreach ((new NodeFinder())->findInstanceOf($nodes, Expr::class) as $realExpr) {
-				$this->guardRealExprIds[spl_object_id($realExpr)] = true;
+				self::$guardRealExprIds[spl_object_id($realExpr)] = true;
 			}
 		}
 
@@ -410,6 +425,9 @@ class NodeScopeResolver
 
 	public function storeExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
+		if (self::$guardNewWorld) {
+			self::$guardProcessedExprIds[spl_object_id($expr)] = true;
+		}
 		// converted handlers (no TypeResolvingExprHandler) are answered from
 		// stored results in both worlds - storing must not depend on fibers
 		$storage->storeExpressionResult($expr, $expressionResult);
