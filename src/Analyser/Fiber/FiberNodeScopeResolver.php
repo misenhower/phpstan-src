@@ -15,7 +15,10 @@ use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\ShouldNotHappenException;
 use function array_pop;
 use function count;
+use function get_class;
 use function get_debug_type;
+use function getenv;
+use function sprintf;
 
 #[AutowiredService(as: FiberNodeScopeResolver::class)]
 final class FiberNodeScopeResolver extends NodeScopeResolver
@@ -112,6 +115,19 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 
 			if ($expressionResult !== null) {
 				throw new ShouldNotHappenException('Pending fibers at the end should be about synthetic nodes');
+			}
+
+			// Only synthetic nodes (built during analysis, no source position)
+			// should reach the on-demand path here. A real AST node left pending
+			// means a rule asked about its type but it was never processed and
+			// stored during natural traversal - a gap to fix at the producing
+			// handler. Guard kept dormant; enable with PHPSTAN_GUARD_NW=1.
+			if (getenv('PHPSTAN_GUARD_NW') === '1' && $request->expr->getStartLine() !== -1) {
+				throw new ShouldNotHappenException(sprintf(
+					'Pending fiber about non-synthetic node %s on line %d - it should have been processed and its result stored during natural traversal.',
+					get_class($request->expr),
+					$request->expr->getStartLine(),
+				));
 			}
 
 			unset($storage->pendingFibers[$key]);
