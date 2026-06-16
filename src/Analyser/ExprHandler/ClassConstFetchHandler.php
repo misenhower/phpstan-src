@@ -10,12 +10,10 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
-use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Reflection\InitializerExprTypeResolver;
@@ -24,15 +22,16 @@ use PHPStan\Type\Type;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<ClassConstFetch>
+ * @implements ExprHandler<ClassConstFetch>
  */
 #[AutowiredService]
-final class ClassConstFetchHandler implements TypeResolvingExprHandler
+final class ClassConstFetchHandler implements ExprHandler
 {
 
 	public function __construct(
 		private InitializerExprTypeResolver $initializerExprTypeResolver,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -40,20 +39,6 @@ final class ClassConstFetchHandler implements TypeResolvingExprHandler
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof ClassConstFetch;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		if (!$expr->name instanceof Identifier) {
-			return new MixedType();
-		}
-
-		return $this->initializerExprTypeResolver->getClassConstFetchTypeByReflection(
-			$expr->class,
-			$expr->name->name,
-			$scope->isInClass() ? $scope->getClassReflection() : null,
-			static fn (Expr $e): Type => $scope->getType($e),
-		);
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -64,6 +49,7 @@ final class ClassConstFetchHandler implements TypeResolvingExprHandler
 		$impurePoints = [];
 		$isAlwaysTerminating = false;
 
+		$classResult = null;
 		if ($expr->class instanceof Expr) {
 			$classResult = $nodeScopeResolver->processExprNode($stmt, $expr->class, $scope, $storage, $nodeCallback, $context->enterDeep());
 			$scope = $classResult->getScope();
@@ -94,12 +80,24 @@ final class ClassConstFetchHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-		);
-	}
+			typeCallback: function (MutatingScope $scope) use ($expr, $classResult): Type {
+				if (!$expr->name instanceof Identifier) {
+					return new MixedType();
+				}
 
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+				return $this->initializerExprTypeResolver->getClassConstFetchTypeByReflection(
+					$expr->class,
+					$expr->name->name,
+					$scope->isInClass() ? $scope->getClassReflection() : null,
+					// getClassConstFetchTypeByReflection only invokes this for $expr->class
+					// when it is an Expr, which is exactly when $classResult exists
+					static fn (Expr $e): Type => $classResult !== null && $e === $expr->class
+						? $classResult->getTypeForScope($scope)
+						: $scope->getType($e),
+				);
+			},
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+		);
 	}
 
 }
