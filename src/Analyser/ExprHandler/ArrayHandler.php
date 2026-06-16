@@ -19,6 +19,7 @@ use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\LiteralArrayItem;
 use PHPStan\Node\LiteralArrayNode;
 use PHPStan\Reflection\InitializerExprTypeResolver;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\CallableType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
@@ -98,9 +99,7 @@ final class ArrayHandler implements ExprHandler
 							: $itemResults[$id]->getType();
 					}
 
-					// getArrayType only asks about item keys and values - guarded
-					// legacy bridge just in case
-					return $s->getType($inner);
+					throw new ShouldNotHappenException();
 				});
 
 				if (
