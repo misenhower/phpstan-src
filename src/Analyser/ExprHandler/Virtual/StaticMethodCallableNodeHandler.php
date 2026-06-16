@@ -8,12 +8,10 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
-use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\StaticMethodCallableNode;
@@ -22,13 +20,16 @@ use PHPStan\Type\Type;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<StaticMethodCallableNode>
+ * @implements ExprHandler<StaticMethodCallableNode>
  */
 #[AutowiredService]
-final class StaticMethodCallableNodeHandler implements TypeResolvingExprHandler
+final class StaticMethodCallableNodeHandler implements ExprHandler
 {
 
-	public function __construct(private ExpressionResultFactory $expressionResultFactory)
+	public function __construct(
+		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
+	)
 	{
 	}
 
@@ -69,19 +70,11 @@ final class StaticMethodCallableNodeHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			// in practice the type of the first-class callable is resolved
+			// by FirstClassCallableStaticCallHandler
+			typeCallback: static fn (MutatingScope $scope): Type => new MixedType(),
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		// in practice the type of the first-class callable is resolved
-		// by FirstClassCallableStaticCallHandler
-		return new MixedType();
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
