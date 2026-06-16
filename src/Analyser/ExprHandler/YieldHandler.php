@@ -10,14 +10,12 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
-use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Type\ErrorType;
@@ -26,35 +24,22 @@ use PHPStan\Type\Type;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<Yield_>
+ * @implements ExprHandler<Yield_>
  */
 #[AutowiredService]
-final class YieldHandler implements TypeResolvingExprHandler
+final class YieldHandler implements ExprHandler
 {
 
-	public function __construct(private ExpressionResultFactory $expressionResultFactory)
+	public function __construct(
+		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
+	)
 	{
 	}
 
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof Yield_;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$functionReflection = $scope->getFunction();
-		if ($functionReflection === null) {
-			return new MixedType();
-		}
-
-		$returnType = $functionReflection->getReturnType();
-		$generatorSendType = $returnType->getTemplateType(Generator::class, 'TSend');
-		if ($generatorSendType instanceof ErrorType) {
-			return new MixedType();
-		}
-
-		return $generatorSendType;
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -96,12 +81,22 @@ final class YieldHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-		);
-	}
+			typeCallback: static function (MutatingScope $scope): Type {
+				$functionReflection = $scope->getFunction();
+				if ($functionReflection === null) {
+					return new MixedType();
+				}
 
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+				$returnType = $functionReflection->getReturnType();
+				$generatorSendType = $returnType->getTemplateType(Generator::class, 'TSend');
+				if ($generatorSendType instanceof ErrorType) {
+					return new MixedType();
+				}
+
+				return $generatorSendType;
+			},
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+		);
 	}
 
 }
