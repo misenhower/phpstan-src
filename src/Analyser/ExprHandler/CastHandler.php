@@ -15,28 +15,29 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Reflection\InitializerExprTypeResolver;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\NullType;
 use PHPStan\Type\Type;
 
 /**
- * @implements TypeResolvingExprHandler<Cast>
+ * @implements ExprHandler<Cast>
  */
 #[AutowiredService]
-final class CastHandler implements TypeResolvingExprHandler
+final class CastHandler implements ExprHandler
 {
 
 	public function __construct(
 		private InitializerExprTypeResolver $initializerExprTypeResolver,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -60,45 +61,50 @@ final class CastHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
+			typeCallback: function (MutatingScope $s) use ($expr, $exprResult): Type {
+				if ($expr instanceof Cast\Unset_) {
+					return new NullType();
+				}
+
+				return $this->initializerExprTypeResolver->getCastType($expr, static function (Expr $e) use ($s, $expr, $exprResult): Type {
+					if ($e === $expr->expr) {
+						return $exprResult->getTypeForScope($s);
+					}
+
+					throw new ShouldNotHappenException();
+				});
+			},
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+				if ($expr instanceof Cast\Bool_) {
+					return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+						$s,
+						new Equal($expr->expr, new ConstFetch(new FullyQualified('true'))),
+						null,
+						$context,
+					)->setRootExpr($expr);
+				}
+
+				if ($expr instanceof Cast\Int_) {
+					return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+						$s,
+						new NotEqual($expr->expr, new Int_(0)),
+						null,
+						$context,
+					)->setRootExpr($expr);
+				}
+
+				if ($expr instanceof Cast\Double) {
+					return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+						$s,
+						new NotEqual($expr->expr, new Float_(0.0)),
+						null,
+						$context,
+					)->setRootExpr($expr);
+				}
+
+				return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+			},
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		if ($expr instanceof Cast\Unset_) {
-			return new NullType();
-		}
-
-		return $this->initializerExprTypeResolver->getCastType($expr, static fn (Expr $expr): Type => $scope->getType($expr));
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		if ($expr instanceof Cast\Bool_) {
-			return $typeSpecifier->specifyTypesInCondition(
-				$scope,
-				new Equal($expr->expr, new ConstFetch(new FullyQualified('true'))),
-				$context,
-			)->setRootExpr($expr);
-		}
-
-		if ($expr instanceof Cast\Int_) {
-			return $typeSpecifier->specifyTypesInCondition(
-				$scope,
-				new NotEqual($expr->expr, new Int_(0)),
-				$context,
-			)->setRootExpr($expr);
-		}
-
-		if ($expr instanceof Cast\Double) {
-			return $typeSpecifier->specifyTypesInCondition(
-				$scope,
-				new NotEqual($expr->expr, new Float_(0.0)),
-				$context,
-			)->setRootExpr($expr);
-		}
-
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
