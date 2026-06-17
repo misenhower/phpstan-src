@@ -28,6 +28,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExpressionTypeHolder;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
@@ -36,7 +37,6 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -86,10 +86,10 @@ use function is_int;
 use function is_string;
 
 /**
- * @implements TypeResolvingExprHandler<Assign|AssignRef>
+ * @implements ExprHandler<Assign|AssignRef>
  */
 #[AutowiredService]
-final class AssignHandler implements TypeResolvingExprHandler
+final class AssignHandler implements ExprHandler
 {
 
 	public function __construct(
@@ -106,189 +106,6 @@ final class AssignHandler implements TypeResolvingExprHandler
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof Assign || $expr instanceof AssignRef;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		return $scope->getType($expr->expr);
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		if (!$expr instanceof Assign) {
-			return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
-		}
-
-		if (!$scope instanceof MutatingScope) {
-			throw new ShouldNotHappenException();
-		}
-
-		if ($context->null()) {
-			$specifiedTypes = $typeSpecifier->specifyTypesInCondition($scope->exitFirstLevelStatements(), $expr->expr, $context)->setRootExpr($expr);
-			$specifiedTypes = $specifiedTypes->removeExpr($this->exprPrinter->printExpr($expr->var));
-		} else {
-			$specifiedTypes = $typeSpecifier->specifyTypesInCondition($scope->exitFirstLevelStatements(), $expr->var, $context)->setRootExpr($expr);
-		}
-
-		// infer $arr[$key] after $key = array_key_first/last($arr)
-		if (
-			$expr->expr instanceof FuncCall
-			&& $expr->expr->name instanceof Name
-			&& !$expr->expr->isFirstClassCallable()
-			&& in_array($expr->expr->name->toLowerString(), ['array_key_first', 'array_key_last'], true)
-			&& count($expr->expr->getArgs()) >= 1
-		) {
-			$arrayArg = $expr->expr->getArgs()[0]->value;
-			$arrayType = $scope->getType($arrayArg);
-
-			if ($arrayType->isArray()->yes()) {
-				if ($context->true()) {
-					$specifiedTypes = $specifiedTypes->unionWith(
-						$typeSpecifier->create($arrayArg, new NonEmptyArrayType(), TypeSpecifierContext::createTrue(), $scope),
-					);
-					$isNonEmpty = true;
-				} else {
-					$isNonEmpty = $arrayType->isIterableAtLeastOnce()->yes();
-				}
-
-				if ($isNonEmpty) {
-					$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
-					$specifiedTypes = $specifiedTypes->unionWith(
-						$typeSpecifier->create($dimFetch, $arrayType->getIterableValueType(), TypeSpecifierContext::createTrue(), $scope),
-					);
-				} elseif ($expr->var instanceof Expr\Variable && is_string($expr->var->name)) {
-					$keyType = $scope->getType($expr->expr);
-					$nonNullKeyType = TypeCombinator::removeNull($keyType);
-					if (!$nonNullKeyType instanceof NeverType) {
-						$specifiedTypes = $specifiedTypes->unionWith(
-							$this->createArrayDimFetchConditionalExpressionHolder($expr->var, $arrayArg, $nonNullKeyType, $arrayType->getIterableValueType()),
-						);
-					}
-				}
-			}
-		}
-
-		// infer $arr[$key] after $key = array_search($needle, $arr) or $key = array_find_key($arr, $callback)
-		if (
-			$expr->expr instanceof FuncCall
-			&& $expr->expr->name instanceof Name
-			&& !$expr->expr->isFirstClassCallable()
-			&& count($expr->expr->getArgs()) >= 2
-		) {
-			$funcName = $expr->expr->name->toLowerString();
-			$arrayArg = null;
-			$sentinelType = null;
-			$isStrictArraySearch = false;
-
-			if ($funcName === 'array_search') {
-				$arrayArg = $expr->expr->getArgs()[1]->value;
-				$sentinelType = new ConstantBooleanType(false);
-				$isStrictArraySearch = count($expr->expr->getArgs()) >= 3 && $scope->getType($expr->expr->getArgs()[2]->value)->isTrue()->yes();
-			} elseif ($funcName === 'array_find_key') {
-				$arrayArg = $expr->expr->getArgs()[0]->value;
-				$sentinelType = new NullType();
-			}
-
-			if ($arrayArg !== null) {
-				$arrayType = $scope->getType($arrayArg);
-
-				if ($arrayType->isArray()->yes()) {
-					if ($context->true()) {
-						$specifiedTypes = $specifiedTypes->unionWith(
-							$typeSpecifier->create($arrayArg, new NonEmptyArrayType(), TypeSpecifierContext::createTrue(), $scope),
-						);
-
-						$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
-
-						if ($isStrictArraySearch) {
-							$needleType = $scope->getType($expr->expr->getArgs()[0]->value);
-							$dimFetchType = TypeCombinator::intersect($needleType, $arrayType->getIterableValueType());
-						} else {
-							$dimFetchType = $arrayType->getIterableValueType();
-						}
-
-						$specifiedTypes = $specifiedTypes->unionWith(
-							$typeSpecifier->create($dimFetch, $dimFetchType, TypeSpecifierContext::createTrue(), $scope),
-						);
-					} elseif ($expr->var instanceof Expr\Variable && is_string($expr->var->name)) {
-						$keyType = $scope->getType($expr->expr);
-						$narrowedKeyType = TypeCombinator::remove($keyType, $sentinelType);
-						if (!$narrowedKeyType instanceof NeverType) {
-							if ($isStrictArraySearch) {
-								$needleType = $scope->getType($expr->expr->getArgs()[0]->value);
-								$dimFetchType = TypeCombinator::intersect($needleType, $arrayType->getIterableValueType());
-							} else {
-								$dimFetchType = $arrayType->getIterableValueType();
-							}
-							$specifiedTypes = $specifiedTypes->unionWith(
-								$this->createArrayDimFetchConditionalExpressionHolder($expr->var, $arrayArg, $narrowedKeyType, $dimFetchType),
-							);
-						}
-					}
-				}
-			}
-		}
-
-		if ($context->null()) {
-			// infer $arr[$key] after $key = array_rand($arr)
-			if (
-				$expr->expr instanceof FuncCall
-				&& $expr->expr->name instanceof Name
-				&& !$expr->expr->isFirstClassCallable()
-				&& in_array($expr->expr->name->toLowerString(), ['array_rand'], true)
-				&& count($expr->expr->getArgs()) >= 1
-			) {
-				$numArg = null;
-				$args = $expr->expr->getArgs();
-				$arrayArg = $args[0]->value;
-				if (count($args) > 1) {
-					$numArg = $args[1]->value;
-				}
-				$one = new ConstantIntegerType(1);
-				$arrayType = $scope->getType($arrayArg);
-
-				if (
-					$arrayType->isArray()->yes()
-					&& $arrayType->isIterableAtLeastOnce()->yes()
-					&& ($numArg === null || $one->isSuperTypeOf($scope->getType($numArg))->yes())
-				) {
-					$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
-
-					return $specifiedTypes->unionWith(
-						$typeSpecifier->create($dimFetch, $arrayType->getIterableValueType(), TypeSpecifierContext::createTrue(), $scope),
-					);
-				}
-			}
-
-			// infer $list[$count] after $count = count($list) - 1
-			if (
-				$expr->expr instanceof Expr\BinaryOp\Minus
-				&& $expr->expr->left instanceof FuncCall
-				&& $expr->expr->left->name instanceof Name
-				&& !$expr->expr->left->isFirstClassCallable()
-				&& $expr->expr->right instanceof Node\Scalar\Int_
-				&& $expr->expr->right->value === 1
-				&& in_array($expr->expr->left->name->toLowerString(), ['count', 'sizeof'], true)
-				&& count($expr->expr->left->getArgs()) >= 1
-			) {
-				$arrayArg = $expr->expr->left->getArgs()[0]->value;
-				$arrayType = $scope->getType($arrayArg);
-				if (
-					$arrayType->isList()->yes()
-					&& $arrayType->isIterableAtLeastOnce()->yes()
-				) {
-					$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
-
-					return $specifiedTypes->unionWith(
-						$typeSpecifier->create($dimFetch, $arrayType->getIterableValueType(), TypeSpecifierContext::createTrue(), $scope),
-					);
-				}
-			}
-
-			return $specifiedTypes;
-		}
-
-		return $specifiedTypes;
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -404,7 +221,8 @@ final class AssignHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $result->isAlwaysTerminating(),
 			throwPoints: $result->getThrowPoints(),
 			impurePoints: $result->getImpurePoints(),
-			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($expr) : null,
+			typeCallback: static fn (MutatingScope $s): Type => $assignedExprResult !== null ? $assignedExprResult->getTypeForScope($s) : $s->getType($expr->expr),
+			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($expr, $assignedExprResult) : null,
 			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult) : null,
 		);
 	}
@@ -437,14 +255,15 @@ final class AssignHandler implements TypeResolvingExprHandler
 	 *
 	 * @return Closure(MutatingScope, TypeSpecifierContext): SpecifiedTypes
 	 */
-	private function createSpecifyTypesCallback(Assign $expr): Closure
+	private function createSpecifyTypesCallback(Assign $expr, ?ExpressionResult $assignedExprResult): Closure
 	{
-		return function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+		return function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $assignedExprResult): SpecifiedTypes {
 			if ($context->null()) {
-				return (new SpecifiedTypes([], []))->setRootExpr($expr);
+				$specifiedTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($s->exitFirstLevelStatements(), $expr->expr, $assignedExprResult, $context)->setRootExpr($expr);
+				$specifiedTypes = $specifiedTypes->removeExpr($this->exprPrinter->printExpr($expr->var));
+			} else {
+				$specifiedTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr->var, $context)->setRootExpr($expr);
 			}
-
-			$specifiedTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr->var, $context)->setRootExpr($expr);
 
 			// infer $arr[$key] after $key = array_key_first/last($arr)
 			if (
@@ -541,6 +360,63 @@ final class AssignHandler implements TypeResolvingExprHandler
 								);
 							}
 						}
+					}
+				}
+			}
+
+			if ($context->null()) {
+				// infer $arr[$key] after $key = array_rand($arr)
+				if (
+					$expr->expr instanceof FuncCall
+					&& $expr->expr->name instanceof Name
+					&& !$expr->expr->isFirstClassCallable()
+					&& in_array($expr->expr->name->toLowerString(), ['array_rand'], true)
+					&& count($expr->expr->getArgs()) >= 1
+				) {
+					$numArg = null;
+					$args = $expr->expr->getArgs();
+					$arrayArg = $args[0]->value;
+					if (count($args) > 1) {
+						$numArg = $args[1]->value;
+					}
+					$one = new ConstantIntegerType(1);
+					$arrayType = $s->getType($arrayArg);
+
+					if (
+						$arrayType->isArray()->yes()
+						&& $arrayType->isIterableAtLeastOnce()->yes()
+						&& ($numArg === null || $one->isSuperTypeOf($s->getType($numArg))->yes())
+					) {
+						$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
+
+						return $specifiedTypes->unionWith(
+							$this->defaultNarrowingHelper->createSubjectTypes($s, $dimFetch, null, $arrayType->getIterableValueType(), TypeSpecifierContext::createTrue()),
+						);
+					}
+				}
+
+				// infer $list[$count] after $count = count($list) - 1
+				if (
+					$expr->expr instanceof Expr\BinaryOp\Minus
+					&& $expr->expr->left instanceof FuncCall
+					&& $expr->expr->left->name instanceof Name
+					&& !$expr->expr->left->isFirstClassCallable()
+					&& $expr->expr->right instanceof Node\Scalar\Int_
+					&& $expr->expr->right->value === 1
+					&& in_array($expr->expr->left->name->toLowerString(), ['count', 'sizeof'], true)
+					&& count($expr->expr->left->getArgs()) >= 1
+				) {
+					$arrayArg = $expr->expr->left->getArgs()[0]->value;
+					$arrayType = $s->getType($arrayArg);
+					if (
+						$arrayType->isList()->yes()
+						&& $arrayType->isIterableAtLeastOnce()->yes()
+					) {
+						$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
+
+						return $specifiedTypes->unionWith(
+							$this->defaultNarrowingHelper->createSubjectTypes($s, $dimFetch, null, $arrayType->getIterableValueType(), TypeSpecifierContext::createTrue()),
+						);
 					}
 				}
 			}
