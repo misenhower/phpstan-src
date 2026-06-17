@@ -11,30 +11,31 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Reflection\InitializerExprTypeResolver;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Type;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<Cast\String_>
+ * @implements ExprHandler<Cast\String_>
  */
 #[AutowiredService]
-final class CastStringHandler implements TypeResolvingExprHandler
+final class CastStringHandler implements ExprHandler
 {
 
 	public function __construct(
 		private InitializerExprTypeResolver $initializerExprTypeResolver,
 		private ImplicitToStringCallHelper $implicitToStringCallHelper,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -65,21 +66,20 @@ final class CastStringHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			typeCallback: fn (MutatingScope $s): Type => $this->initializerExprTypeResolver->getCastType($expr, static function (Expr $e) use ($s, $expr, $exprResult): Type {
+				if ($e === $expr->expr) {
+					return $exprResult->getTypeForScope($s);
+				}
+
+					throw new ShouldNotHappenException();
+			}),
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+				$s,
+				new NotEqual($expr->expr, new String_('')),
+				null,
+				$context,
+			)->setRootExpr($expr),
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		return $this->initializerExprTypeResolver->getCastType($expr, static fn (Expr $expr): Type => $scope->getType($expr));
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyTypesInCondition(
-			$scope,
-			new NotEqual($expr->expr, new String_('')),
-			$context,
-		)->setRootExpr($expr);
 	}
 
 }
