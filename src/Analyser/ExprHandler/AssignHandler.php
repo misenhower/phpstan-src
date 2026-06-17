@@ -637,6 +637,7 @@ final class AssignHandler implements ExprHandler
 						isAlwaysTerminating: false,
 						throwPoints: [],
 						impurePoints: [],
+						typeCallback: static fn (): Type => new NeverType(),
 					));
 
 				} else {
@@ -654,6 +655,7 @@ final class AssignHandler implements ExprHandler
 						isAlwaysTerminating: false,
 						throwPoints: [],
 						impurePoints: [],
+						typeCallback: static fn (MutatingScope $s): Type => $s->getType($dimFetch->var)->getOffsetValueType($s->getType($dimExpr)),
 					));
 					$result = $nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, $nodeCallback, $context->enterDeep());
 					$hasYield = $hasYield || $result->hasYield();
