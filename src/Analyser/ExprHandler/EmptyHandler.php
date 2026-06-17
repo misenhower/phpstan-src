@@ -10,30 +10,29 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
-use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\BooleanType;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\Type;
 
 /**
- * @implements TypeResolvingExprHandler<Empty_>
+ * @implements ExprHandler<Empty_>
  */
 #[AutowiredService]
-final class EmptyHandler implements TypeResolvingExprHandler
+final class EmptyHandler implements ExprHandler
 {
 
 	public function __construct(
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
+		private TypeSpecifier $typeSpecifier,
 	)
 	{
 	}
@@ -41,48 +40,6 @@ final class EmptyHandler implements TypeResolvingExprHandler
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof Empty_;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$result = $scope->issetCheck($expr->expr, static function (Type $type): ?bool {
-			$isNull = $type->isNull();
-			$isFalsey = $type->toBoolean()->isFalse();
-			if ($isNull->maybe()) {
-				return null;
-			}
-			if ($isFalsey->maybe()) {
-				return null;
-			}
-
-			if ($isNull->yes()) {
-				return $isFalsey->no();
-			}
-
-			return !$isFalsey->yes();
-		});
-		if ($result === null) {
-			return new BooleanType();
-		}
-
-		return new ConstantBooleanType(!$result);
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		if (!$scope instanceof MutatingScope) {
-			throw new ShouldNotHappenException();
-		}
-
-		$isset = $scope->issetCheck($expr->expr, static fn () => true);
-		if ($isset === false) {
-			return new SpecifiedTypes();
-		}
-
-		return $typeSpecifier->specifyTypesInCondition($scope, new BooleanOr(
-			new Expr\BooleanNot(new Expr\Isset_([$expr->expr])),
-			new Expr\BooleanNot($expr->expr),
-		), $context)->setRootExpr($expr);
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -103,6 +60,25 @@ final class EmptyHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
+			typeCallback: static function (MutatingScope $s) use ($exprResult): Type {
+				$result = $exprResult->empty($s);
+				if ($result === null) {
+					return new BooleanType();
+				}
+
+				return new ConstantBooleanType(!$result);
+			},
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult): SpecifiedTypes {
+				$isset = $exprResult->issetCheck($s, static fn () => true);
+				if ($isset === false) {
+					return new SpecifiedTypes();
+				}
+
+				return $this->typeSpecifier->specifyTypesInCondition($s, new BooleanOr(
+					new Expr\BooleanNot(new Expr\Isset_([$expr->expr])),
+					new Expr\BooleanNot($expr->expr),
+				), $context)->setRootExpr($expr);
+			},
 		);
 	}
 
