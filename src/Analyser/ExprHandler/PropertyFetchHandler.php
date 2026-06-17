@@ -11,14 +11,12 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler\Helper\NullsafeShortCircuitingHelper;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Php\PhpVersion;
@@ -32,16 +30,17 @@ use function array_merge;
 use function count;
 
 /**
- * @implements TypeResolvingExprHandler<PropertyFetch>
+ * @implements ExprHandler<PropertyFetch>
  */
 #[AutowiredService]
-final class PropertyFetchHandler implements TypeResolvingExprHandler
+final class PropertyFetchHandler implements ExprHandler
 {
 
 	public function __construct(
 		private PhpVersion $phpVersion,
 		private PropertyReflectionFinder $propertyReflectionFinder,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -61,6 +60,7 @@ final class PropertyFetchHandler implements TypeResolvingExprHandler
 		$impurePoints = $varResult->getImpurePoints();
 		$isAlwaysTerminating = $varResult->isAlwaysTerminating();
 		$scope = $varResult->getScope();
+		$nameResult = null;
 		if ($expr->name instanceof Identifier) {
 			$propertyName = $expr->name->toString();
 			$propertyHolderType = $scopeBeforeVar->getType($expr->var);
@@ -93,52 +93,56 @@ final class PropertyFetchHandler implements TypeResolvingExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
+			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $nameResult): Type {
+				// a fetch on a nullsafe chain whose receiver is currently nullable
+				// short-circuits to null - the receiver result carries whether the
+				// chain contains a ?-> (a plain nullable receiver does not propagate)
+				$shortCircuit = static fn (Type $type): Type => $varResult->containsNullsafe() && TypeCombinator::containsNull($varResult->getTypeForScope($s))
+					? TypeCombinator::addNull($type)
+					: $type;
+
+				if ($expr->name instanceof Identifier) {
+					if ($s->nativeTypesPromoted) {
+						$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s);
+						if ($propertyReflection === null) {
+							return new ErrorType();
+						}
+
+						if (!$propertyReflection->hasNativeType()) {
+							return new MixedType();
+						}
+
+						return $shortCircuit($propertyReflection->getNativeType());
+					}
+
+					$returnType = $this->propertyFetchType(
+						$s,
+						$varResult->getTypeForScope($s),
+						$expr->name->name,
+						$expr,
+					);
+					if ($returnType === null) {
+						$returnType = new ErrorType();
+					}
+
+					return $shortCircuit($returnType);
+				}
+
+				$nameType = $nameResult !== null ? $nameResult->getTypeForScope($s) : $s->getType($expr->name);
+				if (count($nameType->getConstantStrings()) > 0) {
+					return TypeCombinator::union(
+						...array_map(static fn ($constantString) => $constantString->getValue() === '' ? new ErrorType() : $s
+							->filterByTruthyValue(new Expr\BinaryOp\Identical($expr->name, new String_($constantString->getValue())))
+							->getType(
+								new PropertyFetch($expr->var, new Identifier($constantString->getValue())),
+							), $nameType->getConstantStrings()),
+					);
+				}
+
+				return new MixedType();
+			},
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		if ($expr->name instanceof Identifier) {
-			if ($scope->nativeTypesPromoted) {
-				$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $scope);
-				if ($propertyReflection === null) {
-					return new ErrorType();
-				}
-
-				if (!$propertyReflection->hasNativeType()) {
-					return new MixedType();
-				}
-
-				$nativeType = $propertyReflection->getNativeType();
-
-				return NullsafeShortCircuitingHelper::getType($scope, $expr->var, $nativeType);
-			}
-
-			$returnType = $this->propertyFetchType(
-				$scope,
-				$scope->getType($expr->var),
-				$expr->name->name,
-				$expr,
-			);
-			if ($returnType === null) {
-				$returnType = new ErrorType();
-			}
-
-			return NullsafeShortCircuitingHelper::getType($scope, $expr->var, $returnType);
-		}
-
-		$nameType = $scope->getType($expr->name);
-		if (count($nameType->getConstantStrings()) > 0) {
-			return TypeCombinator::union(
-				...array_map(static fn ($constantString) => $constantString->getValue() === '' ? new ErrorType() : $scope
-					->filterByTruthyValue(new Expr\BinaryOp\Identical($expr->name, new String_($constantString->getValue())))
-					->getType(
-						new PropertyFetch($expr->var, new Identifier($constantString->getValue())),
-					), $nameType->getConstantStrings()),
-			);
-		}
-
-		return new MixedType();
 	}
 
 	private function propertyFetchType(MutatingScope $scope, Type $fetchedOnType, string $propertyName, PropertyFetch $propertyFetch): ?Type
@@ -153,11 +157,6 @@ final class PropertyFetchHandler implements TypeResolvingExprHandler
 		}
 
 		return $propertyReflection->getReadableType();
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
