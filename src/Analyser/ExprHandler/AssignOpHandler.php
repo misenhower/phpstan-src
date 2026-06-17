@@ -13,14 +13,13 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Reflection\InitializerExprTypeResolver;
@@ -34,10 +33,10 @@ use function is_string;
 use function sprintf;
 
 /**
- * @implements TypeResolvingExprHandler<AssignOp>
+ * @implements ExprHandler<AssignOp>
  */
 #[AutowiredService]
-final class AssignOpHandler implements TypeResolvingExprHandler
+final class AssignOpHandler implements ExprHandler
 {
 
 	public function __construct(
@@ -45,6 +44,7 @@ final class AssignOpHandler implements TypeResolvingExprHandler
 		private InitializerExprTypeResolver $initializerExprTypeResolver,
 		private ImplicitToStringCallHelper $implicitToStringCallHelper,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -57,6 +57,81 @@ final class AssignOpHandler implements TypeResolvingExprHandler
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		$beforeScope = $scope;
+
+		$typeCallback = function (MutatingScope $s) use ($expr): Type {
+			$getType = static fn (Expr $e): Type => $s->getType($e);
+
+			if ($expr instanceof Expr\AssignOp\Coalesce) {
+				return $s->getType(new BinaryOp\Coalesce($expr->var, $expr->expr, $expr->getAttributes()));
+			}
+
+			if ($expr instanceof Expr\AssignOp\Concat) {
+				return $this->initializerExprTypeResolver->getConcatType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\BitwiseAnd) {
+				return $this->initializerExprTypeResolver->getBitwiseAndType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\BitwiseOr) {
+				return $this->initializerExprTypeResolver->getBitwiseOrType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\BitwiseXor) {
+				return $this->initializerExprTypeResolver->getBitwiseXorType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\Div) {
+				return $this->initializerExprTypeResolver->getDivType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\Mod) {
+				return $this->initializerExprTypeResolver->getModType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\Plus) {
+				return $this->initializerExprTypeResolver->getPlusType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\Minus) {
+				return $this->initializerExprTypeResolver->getMinusType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\Mul) {
+				return $this->initializerExprTypeResolver->getMulType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\Pow) {
+				return $this->initializerExprTypeResolver->getPowType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\ShiftLeft) {
+				return $this->initializerExprTypeResolver->getShiftLeftType($expr->var, $expr->expr, $getType);
+			}
+
+			if ($expr instanceof Expr\AssignOp\ShiftRight) {
+				return $this->initializerExprTypeResolver->getShiftRightType($expr->var, $expr->expr, $getType);
+			}
+
+			throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
+		};
+		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+
+		// processAssignVar asks getType($expr) for the value to assign; store this
+		// result first so it resolves from the typeCallback above rather than
+		// re-processing the node on demand (which would recurse).
+		$nodeScopeResolver->storeExpressionResult($storage, $expr, $this->expressionResultFactory->create(
+			$scope,
+			beforeScope: $beforeScope,
+			expr: $expr,
+			hasYield: false,
+			isAlwaysTerminating: false,
+			throwPoints: [],
+			impurePoints: [],
+			typeCallback: $typeCallback,
+			specifyTypesCallback: $specifyTypesCallback,
+		));
+
 		$assignResult = $this->assignHandler->processAssignVar(
 			$nodeScopeResolver,
 			$scope,
@@ -122,71 +197,9 @@ final class AssignOpHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $assignResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			typeCallback: $typeCallback,
+			specifyTypesCallback: $specifyTypesCallback,
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$getType = static fn (Expr $expr): Type => $scope->getType($expr);
-
-		if ($expr instanceof Expr\AssignOp\Coalesce) {
-			return $scope->getType(new BinaryOp\Coalesce($expr->var, $expr->expr, $expr->getAttributes()));
-		}
-
-		if ($expr instanceof Expr\AssignOp\Concat) {
-			return $this->initializerExprTypeResolver->getConcatType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\BitwiseAnd) {
-			return $this->initializerExprTypeResolver->getBitwiseAndType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\BitwiseOr) {
-			return $this->initializerExprTypeResolver->getBitwiseOrType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\BitwiseXor) {
-			return $this->initializerExprTypeResolver->getBitwiseXorType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\Div) {
-			return $this->initializerExprTypeResolver->getDivType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\Mod) {
-			return $this->initializerExprTypeResolver->getModType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\Plus) {
-			return $this->initializerExprTypeResolver->getPlusType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\Minus) {
-			return $this->initializerExprTypeResolver->getMinusType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\Mul) {
-			return $this->initializerExprTypeResolver->getMulType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\Pow) {
-			return $this->initializerExprTypeResolver->getPowType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\ShiftLeft) {
-			return $this->initializerExprTypeResolver->getShiftLeftType($expr->var, $expr->expr, $getType);
-		}
-
-		if ($expr instanceof Expr\AssignOp\ShiftRight) {
-			return $this->initializerExprTypeResolver->getShiftRightType($expr->var, $expr->expr, $getType);
-		}
-
-		throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
