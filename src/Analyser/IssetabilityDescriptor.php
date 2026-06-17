@@ -207,22 +207,12 @@ final class IssetabilityDescriptor
 	 */
 	private function checkInner(ExpressionResult $inner, MutatingScope $scope, callable $typeCallback, ?bool $result): ?bool
 	{
-		$innerDescriptor = $inner->getIssetabilityDescriptor();
-		if ($innerDescriptor !== null) {
-			return $innerDescriptor->check($scope, $typeCallback, $result);
-		}
-
-		return $result ?? $typeCallback($inner->getTypeForScope($scope));
+		return $inner->issetCheck($scope, $typeCallback, $result);
 	}
 
 	private function checkUndefinedInner(ExpressionResult $inner, MutatingScope $scope): ?bool
 	{
-		$innerDescriptor = $inner->getIssetabilityDescriptor();
-		if ($innerDescriptor !== null) {
-			return $innerDescriptor->checkUndefined($scope);
-		}
-
-		return null;
+		return $inner->issetCheckUndefined($scope);
 	}
 
 }

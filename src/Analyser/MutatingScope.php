@@ -1222,11 +1222,8 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		$storage = $this->expressionResultStorageStack->getCurrent();
 		if ($storage !== null) {
 			$exprResult = $storage->findExpressionResult($expr);
-			if ($exprResult !== null) {
-				$descriptor = $exprResult->getIssetabilityDescriptor();
-				if ($descriptor !== null) {
-					return $descriptor->check($this, $typeCallback, $result);
-				}
+			if ($exprResult !== null && $exprResult->getIssetabilityDescriptor() !== null) {
+				return $exprResult->issetCheck($this, $typeCallback, $result);
 			}
 		}
 

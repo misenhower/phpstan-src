@@ -106,6 +106,63 @@ final class ExpressionResult
 	}
 
 	/**
+	 * Whether isset($expr) holds: folds the isset/empty/?? chain descriptor, or
+	 * applies the leaf type check when the expression is not a chain link.
+	 *
+	 * @param callable(Type): ?bool $typeCallback
+	 */
+	public function issetCheck(MutatingScope $scope, callable $typeCallback, ?bool $result = null): ?bool
+	{
+		if ($this->issetabilityDescriptor !== null) {
+			return $this->issetabilityDescriptor->check($scope, $typeCallback, $result);
+		}
+
+		return $result ?? $typeCallback($this->getTypeForScope($scope));
+	}
+
+	public function issetCheckUndefined(MutatingScope $scope): ?bool
+	{
+		return $this->issetabilityDescriptor?->checkUndefined($scope);
+	}
+
+	/** Whether isset($expr) is definitely true/false (null = maybe). */
+	public function isset(MutatingScope $scope): ?bool
+	{
+		return $this->issetCheck($scope, static function (Type $type): ?bool {
+			$isNull = $type->isNull();
+			if ($isNull->maybe()) {
+				return null;
+			}
+
+			return !$isNull->yes();
+		});
+	}
+
+	/**
+	 * Whether $expr is definitely set-and-non-falsey (i.e. the negation of
+	 * empty($expr)); null = maybe. EmptyHandler negates the result.
+	 */
+	public function empty(MutatingScope $scope): ?bool
+	{
+		return $this->issetCheck($scope, static function (Type $type): ?bool {
+			$isNull = $type->isNull();
+			$isFalsey = $type->toBoolean()->isFalse();
+			if ($isNull->maybe()) {
+				return null;
+			}
+			if ($isFalsey->maybe()) {
+				return null;
+			}
+
+			if ($isNull->yes()) {
+				return $isFalsey->no();
+			}
+
+			return !$isFalsey->yes();
+		});
+	}
+
+	/**
 	 * @return InternalThrowPoint[]
 	 */
 	public function getThrowPoints(): array
