@@ -53,7 +53,7 @@ final class CoalesceHandler implements ExprHandler
 	 */
 	private function getFalseySpecifiedTypes(MutatingScope $s, Expr $expr, ExpressionResult $condResult, TypeSpecifierContext $context): SpecifiedTypes
 	{
-		$isset = $s->issetCheck($expr->left, static fn () => true);
+		$isset = $condResult->issetCheck($s, static fn () => true);
 
 		if ($isset !== true) {
 			return new SpecifiedTypes();
@@ -93,7 +93,7 @@ final class CoalesceHandler implements ExprHandler
 			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $rightScope): Type {
 				$issetLeftExpr = new Expr\Isset_([$expr->left]);
 
-				$result = $s->issetCheck($expr->left, static function (Type $type): ?bool {
+				$result = $condResult->issetCheck($s, static function (Type $type): ?bool {
 					$isNull = $type->isNull();
 					if ($isNull->maybe()) {
 						return null;
