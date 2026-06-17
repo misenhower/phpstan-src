@@ -18,13 +18,12 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -49,16 +48,17 @@ use function strtolower;
 use const SORT_NUMERIC;
 
 /**
- * @implements TypeResolvingExprHandler<Match_>
+ * @implements ExprHandler<Match_>
  */
 #[AutowiredService]
-final class MatchHandler implements TypeResolvingExprHandler
+final class MatchHandler implements ExprHandler
 {
 
 	public function __construct(
 		#[AutowiredParameter]
 		private bool $treatPhpDocTypesAsCertain,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -66,16 +66,6 @@ final class MatchHandler implements TypeResolvingExprHandler
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof Match_;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$types = [];
-		foreach ($this->getArmScopesAndTypes($scope, $expr) as [$armScope, $armType]) {
-			$types[] = $armType;
-		}
-
-		return TypeCombinator::union(...$types);
 	}
 
 	/**
@@ -226,6 +216,16 @@ final class MatchHandler implements TypeResolvingExprHandler
 		$arms = $expr->arms;
 		$armCondsToSkip = [];
 		$armBodyScopes = [];
+		// Capture, for each reachable arm, the body's already-computed
+		// ExpressionResult together with the scope it was processed on and the
+		// body node itself. The typeCallback unions these inside-out instead of
+		// re-walking the arms (which getArmScopesAndTypes/the old resolveType
+		// did). The set of contributing arms mirrors getArmScopesAndTypes
+		// exactly. The body node is kept so the keepVoid projection (the only
+		// caller is getKeepVoidType, via a synthetic clone of the match) can be
+		// computed for it.
+		/** @var list<array{ExpressionResult, MutatingScope, Expr}> $armTypeResults */
+		$armTypeResults = [];
 		if ($condType->isEnum()->yes()) {
 			// enum match analysis would work even without this if branch
 			// but would be much slower
@@ -367,6 +367,7 @@ final class MatchHandler implements TypeResolvingExprHandler
 					$hasYield = $hasYield || $armResult->hasYield();
 					$throwPoints = array_merge($throwPoints, $armResult->getThrowPoints());
 					$impurePoints = array_merge($impurePoints, $armResult->getImpurePoints());
+					$armTypeResults[] = [$armResult, $matchArmBodyScope, $arm->body];
 
 					unset($arms[$i]);
 				}
@@ -393,6 +394,7 @@ final class MatchHandler implements TypeResolvingExprHandler
 		foreach ($arms as $i => $arm) {
 			if ($arm->conds === null) {
 				$hasDefaultCond = true;
+				$defaultArmBodyScope = $matchScope;
 				$matchArmBody = new MatchExpressionArmBody($matchScope, $arm->body);
 				$armNodes[$i] = new MatchExpressionArm($matchArmBody, [], $arm->getStartLine());
 				$armResult = $nodeScopeResolver->processExprNode($stmt, $arm->body, $matchScope, $storage, $nodeCallback, ExpressionContext::createTopLevel());
@@ -403,6 +405,7 @@ final class MatchHandler implements TypeResolvingExprHandler
 				if (!$armResult->isAlwaysTerminating()) {
 					$armBodyScopes[] = $matchScope;
 				}
+				$armTypeResults[] = [$armResult, $defaultArmBodyScope, $arm->body];
 				continue;
 			}
 
@@ -459,6 +462,13 @@ final class MatchHandler implements TypeResolvingExprHandler
 			$hasYield = $hasYield || $armResult->hasYield();
 			$throwPoints = array_merge($throwPoints, $armResult->getThrowPoints());
 			$impurePoints = array_merge($impurePoints, $armResult->getImpurePoints());
+			// Mirror getArmScopesAndTypes: an arm whose filtering expression is
+			// always false is unreachable and does not contribute to the result
+			// type.
+			$filteringExprType = $matchScope->getType($filteringExpr);
+			if (!$filteringExprType->isFalse()->yes()) {
+				$armTypeResults[] = [$armResult, $bodyScope, $arm->body];
+			}
 			$matchScope = $armCondScope->filterByFalseyValue($filteringExpr);
 		}
 
@@ -512,6 +522,30 @@ final class MatchHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			// Each arm body was already processed on the scope where the subject
+			// is narrowed to that arm's condition - those captured scopes are the
+			// evaluation points, so the result type is just the union of the arm
+			// body types, no re-walk of the arms needed.
+			typeCallback: static function (MutatingScope $s) use ($expr, $armTypeResults): Type {
+				$keepVoid = $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME) === true;
+				$types = [];
+				foreach ($armTypeResults as [$armResult, $bodyScope, $armBody]) {
+					if ($s->nativeTypesPromoted) {
+						$bodyScope = $bodyScope->doNotTreatPhpDocTypesAsCertain();
+					}
+					if ($keepVoid) {
+						// The only caller is getKeepVoidType (via a synthetic
+						// clone of the match) - it keeps void in the arm bodies
+						// instead of transforming it to null.
+						$types[] = $bodyScope->getKeepVoidType($armBody);
+					} else {
+						$types[] = $armResult->getTypeForScope($bodyScope);
+					}
+				}
+
+				return TypeCombinator::union(...$types);
+			},
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 
@@ -588,11 +622,6 @@ final class MatchHandler implements TypeResolvingExprHandler
 		}
 
 		return false;
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
