@@ -9,11 +9,11 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -22,13 +22,17 @@ use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\Type;
 
 /**
- * @implements TypeResolvingExprHandler<BooleanNot>
+ * @implements ExprHandler<BooleanNot>
  */
 #[AutowiredService]
-final class BooleanNotHandler implements TypeResolvingExprHandler
+final class BooleanNotHandler implements ExprHandler
 {
 
-	public function __construct(private ExpressionResultFactory $expressionResultFactory)
+	public function __construct(
+		private ExpressionResultFactory $expressionResultFactory,
+		private TypeSpecifier $typeSpecifier,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
+	)
 	{
 	}
 
@@ -51,26 +55,25 @@ final class BooleanNotHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
+			typeCallback: static function (MutatingScope $s) use ($exprResult): Type {
+				$exprBooleanType = $exprResult->getTypeForScope($s)->toBoolean();
+				if ($exprBooleanType->isTrue()->yes()) {
+					return new ConstantBooleanType(false);
+				}
+				if ($exprBooleanType->isFalse()->yes()) {
+					return new ConstantBooleanType(true);
+				}
+
+				return new BooleanType();
+			},
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+				if ($context->null()) {
+					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+				}
+
+				return $this->typeSpecifier->specifyTypesInCondition($s, $expr->expr, $context->negate())->setRootExpr($expr);
+			},
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$exprBooleanType = $scope->getType($expr->expr)->toBoolean();
-		if ($exprBooleanType instanceof ConstantBooleanType) {
-			return new ConstantBooleanType(!$exprBooleanType->getValue());
-		}
-
-		return new BooleanType();
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		if ($context->null()) {
-			return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
-		}
-
-		return $typeSpecifier->specifyTypesInCondition($scope, $expr->expr, $context->negate())->setRootExpr($expr);
 	}
 
 }
