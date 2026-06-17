@@ -345,7 +345,16 @@ final class AssignHandler implements TypeResolvingExprHandler
 					$scope = $scope->exitExpressionAssign($expr->expr);
 				}
 
-				return $this->expressionResultFactory->create($scope, $beforeScope, $expr->expr, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints);
+				return $this->expressionResultFactory->create(
+					$scope,
+					beforeScope: $beforeScope,
+					expr: $expr->expr,
+					hasYield: $hasYield,
+					isAlwaysTerminating: $isAlwaysTerminating,
+					throwPoints: $throwPoints,
+					impurePoints: $impurePoints,
+					typeCallback: static fn ($scope) => $result->getTypeForScope($scope),
+				);
 			},
 			true,
 		);
@@ -558,18 +567,6 @@ final class AssignHandler implements TypeResolvingExprHandler
 	): ExpressionResult
 	{
 		$beforeScope = $scope;
-		$nodeScopeResolver->storeExpressionResult($storage, $var, $this->expressionResultFactory->create(
-			$scope,
-			beforeScope: $scope,
-			expr: $var,
-			hasYield: false,
-			isAlwaysTerminating: false,
-			throwPoints: [],
-			impurePoints: [],
-			// VariableHandler no longer implements TypeResolvingExprHandler -
-			// type questions about the target node are answered from this result
-			typeCallback: $var instanceof Variable ? VariableHandler::createTypeCallback($var) : null,
-		));
 		$nodeScopeResolver->callNodeCallback($nodeCallback, $var, $enterExpressionAssign ? $scope->enterExpressionAssign($var) : $scope, $storage);
 		$hasYield = false;
 		$throwPoints = [];
