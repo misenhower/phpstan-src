@@ -1159,9 +1159,13 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			return null;
 		}
 
+		// re-evaluate on the asking scope, not the stored beforeScope: a handler
+		// (e.g. isset/empty via NonNullabilityHelper) may have processed the
+		// inner expression on a scope that strips null, so the cached type would
+		// be stale for the narrowing the caller is applying
 		return [
-			$result->getType(),
-			$result->getNativeType(),
+			$result->getTypeForScope($this),
+			$result->getNativeTypeForScope($this),
 		];
 	}
 

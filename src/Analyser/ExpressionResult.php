@@ -322,4 +322,15 @@ final class ExpressionResult
 		return $scope->getType($this->expr);
 	}
 
+	/** Native counterpart of getTypeForScope(). */
+	public function getNativeTypeForScope(MutatingScope $scope): Type
+	{
+		$nativeScope = $scope->doNotTreatPhpDocTypesAsCertain();
+		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($nativeScope)) {
+			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($nativeScope, $this->expr));
+		}
+
+		return $scope->getNativeType($this->expr);
+	}
+
 }
