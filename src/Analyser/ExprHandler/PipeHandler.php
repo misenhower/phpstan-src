@@ -13,12 +13,11 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Printer\ExprPrinter;
@@ -27,40 +26,22 @@ use PHPStan\Type\Type;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<Pipe>
+ * @implements ExprHandler<Pipe>
  */
 #[AutowiredService]
-final class PipeHandler implements TypeResolvingExprHandler
+final class PipeHandler implements ExprHandler
 {
 
-	public function __construct(private ExpressionResultFactory $expressionResultFactory)
+	public function __construct(
+		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
+	)
 	{
 	}
 
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof Pipe;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		if ($expr->right instanceof FuncCall && $expr->right->isFirstClassCallable()) {
-			return $scope->getType(new FuncCall($expr->right->name, [
-				new Arg($expr->left),
-			]));
-		} elseif ($expr->right instanceof MethodCall && $expr->right->isFirstClassCallable()) {
-			return $scope->getType(new MethodCall($expr->right->var, $expr->right->name, [
-				new Arg($expr->left),
-			]));
-		} elseif ($expr->right instanceof StaticCall && $expr->right->isFirstClassCallable()) {
-			return $scope->getType(new StaticCall($expr->right->class, $expr->right->name, [
-				new Arg($expr->left),
-			]));
-		}
-
-		return $scope->getType(new FuncCall($expr->right, [
-			new Arg($expr->left),
-		]));
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -116,12 +97,10 @@ final class PipeHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $callResult->isAlwaysTerminating(),
 			throwPoints: $callResult->getThrowPoints(),
 			impurePoints: $callResult->getImpurePoints(),
+			// the pipe evaluates to its rewritten call - read that child's result
+			typeCallback: static fn (MutatingScope $s): Type => $callResult->getTypeForScope($s),
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
