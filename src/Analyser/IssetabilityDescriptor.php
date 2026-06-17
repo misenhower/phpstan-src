@@ -184,12 +184,12 @@ final class IssetabilityDescriptor
 			}
 
 			$type = $varResult->getTypeForScope($scope);
-			$dimType = $dimResult->getTypeForScope($scope);
-			$hasOffsetValue = $type->hasOffsetValueType($dimType);
 			if (!$type->isOffsetAccessible()->yes()) {
 				return $this->checkUndefinedInner($varResult, $scope);
 			}
 
+			$dimType = $dimResult->getTypeForScope($scope);
+			$hasOffsetValue = $type->hasOffsetValueType($dimType);
 			if (!$hasOffsetValue->no()) {
 				return $this->checkUndefinedInner($varResult, $scope);
 			}
