@@ -13,70 +13,38 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
-use PHPStan\Analyser\ExprHandler\Helper\NullsafeShortCircuitingHelper;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\TypeExpr;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
+use PHPStan\Type\TypeCombinator;
 use function array_merge;
 
 /**
- * @implements TypeResolvingExprHandler<ArrayDimFetch>
+ * @implements ExprHandler<ArrayDimFetch>
  */
 #[AutowiredService]
-final class ArrayDimFetchHandler implements TypeResolvingExprHandler
+final class ArrayDimFetchHandler implements ExprHandler
 {
 
-	public function __construct(private ExpressionResultFactory $expressionResultFactory)
+	public function __construct(
+		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
+	)
 	{
 	}
 
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof ArrayDimFetch;
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		if ($expr->dim === null) {
-			return new NeverType();
-		}
-
-		$offsetAccessibleType = $scope->getType($expr->var);
-		if (
-			!$offsetAccessibleType->isArray()->yes()
-			&& (new ObjectType(ArrayAccess::class))->isSuperTypeOf($offsetAccessibleType)->yes()
-		) {
-			return NullsafeShortCircuitingHelper::getType(
-				$scope,
-				$expr->var,
-				$scope->getType(
-					new MethodCall(
-						$expr->var,
-						new Identifier('offsetGet'),
-						[
-							new Arg($expr->dim),
-						],
-					),
-				),
-			);
-		}
-
-		$offsetType = $scope->getType($expr->dim);
-		return NullsafeShortCircuitingHelper::getType(
-			$scope,
-			$expr->var,
-			$offsetAccessibleType->getOffsetValueType($offsetType),
-		);
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -95,6 +63,9 @@ final class ArrayDimFetchHandler implements TypeResolvingExprHandler
 				throwPoints: $varResult->getThrowPoints(),
 				impurePoints: $varResult->getImpurePoints(),
 				containsNullsafe: $varResult->containsNullsafe(),
+				// `$arr[]` only appears as an assignment target; reading it is a NeverType
+				typeCallback: static fn (): Type => new NeverType(),
+				specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 			);
 		}
 
@@ -125,12 +96,31 @@ final class ArrayDimFetchHandler implements TypeResolvingExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
-		);
-	}
+			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $dimResult): Type {
+				$offsetAccessibleType = $varResult->getTypeForScope($s);
+				$shortCircuit = static fn (Type $type): Type => $varResult->containsNullsafe() && TypeCombinator::containsNull($offsetAccessibleType)
+					? TypeCombinator::addNull($type)
+					: $type;
 
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+				if (
+					!$offsetAccessibleType->isArray()->yes()
+					&& (new ObjectType(ArrayAccess::class))->isSuperTypeOf($offsetAccessibleType)->yes()
+				) {
+					return $shortCircuit($s->getType(
+						new MethodCall(
+							$expr->var,
+							new Identifier('offsetGet'),
+							[
+								new Arg($expr->dim),
+							],
+						),
+					));
+				}
+
+				return $shortCircuit($offsetAccessibleType->getOffsetValueType($dimResult->getTypeForScope($s)));
+			},
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+		);
 	}
 
 }
