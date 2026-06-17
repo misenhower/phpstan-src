@@ -1149,9 +1149,12 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 * applySpecifiedTypes() needs to intersect with or subtract from but that
 	 * is not tracked in the scope. Old-world filterBySpecifiedTypes() asked
 	 * Scope::getType() here; pricing from the stored ExpressionResult answers
-	 * through the typeCallback for converted handlers and keeps the legacy
-	 * resolution as a bridge for the rest. Returns null for nodes the analysis
-	 * in progress never processed (synthetic ones).
+	 * through the typeCallback for converted handlers. A synthetic node the
+	 * analysis never processed - e.g. the plain-chain variant a nullsafe
+	 * narrowing emits ($a->b() alongside $a?->b()) - is priced on demand,
+	 * mirroring resolveTypeOfNewWorldHandlerNode(); its real subnodes answer
+	 * from stored results so the on-demand walk terminates. Returns null only
+	 * when there is no analysis in progress to price against.
 	 *
 	 * @return array{Type, Type}|null
 	 */
@@ -1164,7 +1167,19 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		$result = $storage->findExpressionResult($expr);
 		if ($result === null) {
-			return null;
+			// a synthetic node - price it on demand, see
+			// resolveTypeOfNewWorldHandlerNode()
+			$scope = $this->toMutatingScope();
+			$result = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
+				$expr,
+				$scope,
+				$storage->duplicate(),
+			);
+
+			return [
+				$result->getTypeForScope($scope),
+				$result->getNativeTypeForScope($scope),
+			];
 		}
 
 		// re-evaluate on the asking scope, not the stored beforeScope: a handler
