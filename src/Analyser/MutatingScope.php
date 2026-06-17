@@ -1219,6 +1219,17 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	public function issetCheck(Expr $expr, callable $typeCallback, ?bool $result = null): ?bool
 	{
 		// mirrored in PHPStan\Rules\IssetCheck
+		$storage = $this->expressionResultStorageStack->getCurrent();
+		if ($storage !== null) {
+			$exprResult = $storage->findExpressionResult($expr);
+			if ($exprResult !== null) {
+				$descriptor = $exprResult->getIssetabilityDescriptor();
+				if ($descriptor !== null) {
+					return $descriptor->check($this, $typeCallback, $result);
+				}
+			}
+		}
+
 		if ($expr instanceof Node\Expr\Variable && is_string($expr->name)) {
 			$hasVariable = $this->hasVariableType($expr->name);
 			if ($hasVariable->maybe()) {

@@ -14,12 +14,14 @@ use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\InternalThrowPoint;
+use PHPStan\Analyser\IssetabilityDescriptor;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Php\PhpVersion;
+use PHPStan\Rules\Properties\FoundPropertyReflection;
 use PHPStan\Rules\Properties\PropertyReflectionFinder;
 use PHPStan\Type\ErrorType;
 use PHPStan\Type\MixedType;
@@ -93,6 +95,7 @@ final class PropertyFetchHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
+			issetabilityDescriptor: IssetabilityDescriptor::property($varResult, fn (MutatingScope $s): ?FoundPropertyReflection => $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s), $expr),
 			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $nameResult): Type {
 				// a fetch on a nullsafe chain whose receiver is currently nullable
 				// short-circuits to null - the receiver result carries whether the

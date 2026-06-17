@@ -54,6 +54,7 @@ final class ExpressionResult
 		private array $throwPoints,
 		private array $impurePoints,
 		private bool $containsNullsafe = false,
+		private ?IssetabilityDescriptor $issetabilityDescriptor = null,
 		?callable $truthyScopeCallback = null,
 		?callable $falseyScopeCallback = null,
 		?callable $typeCallback = null,
@@ -92,6 +93,16 @@ final class ExpressionResult
 	public function containsNullsafe(): bool
 	{
 		return $this->containsNullsafe;
+	}
+
+	/**
+	 * The isset/empty/?? chain descriptor for this expression, or null when the
+	 * expression is not a variable / array dim fetch / property fetch chain link
+	 * (in which case isset() falls back to the leaf type check).
+	 */
+	public function getIssetabilityDescriptor(): ?IssetabilityDescriptor
+	{
+		return $this->issetabilityDescriptor;
 	}
 
 	/**

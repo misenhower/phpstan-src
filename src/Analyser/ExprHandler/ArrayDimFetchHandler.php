@@ -15,6 +15,7 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\IssetabilityDescriptor;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
@@ -96,6 +97,7 @@ final class ArrayDimFetchHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
+			issetabilityDescriptor: IssetabilityDescriptor::offset($varResult, $dimResult),
 			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $dimResult): Type {
 				$offsetAccessibleType = $varResult->getTypeForScope($s);
 				$shortCircuit = static fn (Type $type): Type => $varResult->containsNullsafe() && TypeCombinator::containsNull($offsetAccessibleType)

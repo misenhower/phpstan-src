@@ -16,11 +16,13 @@ use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ImpurePoint;
+use PHPStan\Analyser\IssetabilityDescriptor;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Rules\Properties\FoundPropertyReflection;
 use PHPStan\Rules\Properties\PropertyReflectionFinder;
 use PHPStan\Type\ErrorType;
 use PHPStan\Type\MixedType;
@@ -93,6 +95,7 @@ final class StaticPropertyFetchHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			containsNullsafe: $classResult !== null && $classResult->containsNullsafe(),
+			issetabilityDescriptor: IssetabilityDescriptor::property($classResult, fn (MutatingScope $s): ?FoundPropertyReflection => $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s), $expr),
 			typeCallback: function (MutatingScope $s) use ($expr, $classResult, $nameResult): Type {
 				$shortCircuit = static fn (Type $type): Type => $classResult !== null && $classResult->containsNullsafe() && TypeCombinator::containsNull($classResult->getTypeForScope($s))
 					? TypeCombinator::addNull($type)

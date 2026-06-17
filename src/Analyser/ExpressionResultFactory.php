@@ -26,6 +26,7 @@ interface ExpressionResultFactory
 		array $throwPoints,
 		array $impurePoints,
 		bool $containsNullsafe = false,
+		?IssetabilityDescriptor $issetabilityDescriptor = null,
 		?callable $truthyScopeCallback = null,
 		?callable $falseyScopeCallback = null,
 		?callable $typeCallback = null,
