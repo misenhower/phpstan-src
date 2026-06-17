@@ -92,6 +92,7 @@ final class PropertyFetchHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			containsNullsafe: $varResult->containsNullsafe(),
 		);
 	}
 

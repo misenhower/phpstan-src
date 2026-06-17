@@ -105,6 +105,7 @@ final class NullsafePropertyFetchHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
+			containsNullsafe: true,
 		);
 	}
 

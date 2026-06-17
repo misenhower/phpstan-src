@@ -210,6 +210,7 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			containsNullsafe: $varResult->containsNullsafe(),
 		);
 
 		$calledOnType = $originalScope->getType($expr->var);
