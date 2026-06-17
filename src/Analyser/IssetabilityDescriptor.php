@@ -4,6 +4,8 @@ namespace PHPStan\Analyser;
 
 use Closure;
 use PhpParser\Node\Expr;
+use PhpParser\Node\Expr\PropertyFetch;
+use PhpParser\Node\Expr\StaticPropertyFetch;
 use PHPStan\Rules\Properties\FoundPropertyReflection;
 use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Type;
@@ -29,6 +31,7 @@ final class IssetabilityDescriptor
 
 	/**
 	 * @param Closure(MutatingScope): ?FoundPropertyReflection|null $reflectionResolver
+	 * @param PropertyFetch|StaticPropertyFetch|null $propertyFetch
 	 */
 	private function __construct(
 		private string $kind,
@@ -54,10 +57,63 @@ final class IssetabilityDescriptor
 
 	/**
 	 * @param Closure(MutatingScope): ?FoundPropertyReflection $reflectionResolver
+	 * @param PropertyFetch|StaticPropertyFetch $propertyFetch
 	 */
 	public static function property(?ExpressionResult $innerResult, Closure $reflectionResolver, Expr $propertyFetch): self
 	{
 		return new self(self::KIND_PROPERTY, innerResult: $innerResult, reflectionResolver: $reflectionResolver, propertyFetch: $propertyFetch);
+	}
+
+	public function isVariable(): bool
+	{
+		return $this->kind === self::KIND_VARIABLE;
+	}
+
+	public function isOffset(): bool
+	{
+		return $this->kind === self::KIND_OFFSET;
+	}
+
+	public function isProperty(): bool
+	{
+		return $this->kind === self::KIND_PROPERTY;
+	}
+
+	public function getVariableName(): ?string
+	{
+		return $this->variableName;
+	}
+
+	public function getVarResult(): ?ExpressionResult
+	{
+		return $this->varResult;
+	}
+
+	public function getDimResult(): ?ExpressionResult
+	{
+		return $this->dimResult;
+	}
+
+	public function getInnerResult(): ?ExpressionResult
+	{
+		return $this->innerResult;
+	}
+
+	public function resolvePropertyReflection(MutatingScope $scope): ?FoundPropertyReflection
+	{
+		if ($this->reflectionResolver === null) {
+			throw new ShouldNotHappenException();
+		}
+
+		return ($this->reflectionResolver)($scope);
+	}
+
+	/**
+	 * @return PropertyFetch|StaticPropertyFetch|null
+	 */
+	public function getPropertyFetch(): ?Expr
+	{
+		return $this->propertyFetch;
 	}
 
 	/**

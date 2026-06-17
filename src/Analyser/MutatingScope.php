@@ -1218,6 +1218,35 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	}
 
 	/**
+	 * The isset/empty/?? chain descriptor PHPStan\Rules\IssetCheck folds. Reads
+	 * it from the current expression-result storage; when the rule asks before
+	 * the engine has stored the expression's result (the rule callback fires
+	 * before the chain-link handlers run), the expression is processed on demand
+	 * just like resolveTypeOfNewWorldHandlerNode().
+	 *
+	 * @internal
+	 */
+	public function getIssetabilityDescriptor(Expr $expr): ?IssetabilityDescriptor
+	{
+		$scope = $this->toMutatingScope();
+		$storage = $this->expressionResultStorageStack->getCurrent();
+		if ($storage !== null) {
+			$result = $storage->findExpressionResult($expr);
+			if ($result !== null) {
+				return $result->getIssetabilityDescriptor();
+			}
+		}
+
+		$onDemandResult = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
+			$expr,
+			$scope,
+			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
+		);
+
+		return $onDemandResult->getIssetabilityDescriptor();
+	}
+
+	/**
 	 * @param callable(Type): ?bool $typeCallback
 	 */
 	public function issetCheck(Expr $expr, callable $typeCallback, ?bool $result = null): ?bool

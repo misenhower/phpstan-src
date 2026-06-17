@@ -74,6 +74,11 @@ final class ExpressionResult
 		return $this->scope;
 	}
 
+	public function getExpr(): Expr
+	{
+		return $this->expr;
+	}
+
 	public function getBeforeScope(): MutatingScope
 	{
 		return $this->beforeScope;
