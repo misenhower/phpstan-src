@@ -1083,6 +1083,14 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			return $expressionType;
 		}
 
+		// NodeScopeResolver intercepts a first-class callable CallLike before the
+		// ExprHandler dispatch - no handler supports the original node, its closure
+		// type lives on the stored result's typeCallback (see the *CallableNode
+		// handlers), mirroring TypeSpecifier::specifyTypesInCondition().
+		if ($node instanceof Expr\CallLike && $node->isFirstClassCallable()) {
+			return $this->resolveTypeOfNewWorldHandlerNode($node);
+		}
+
 		$exprHandler = ExprHandlerRegistry::resolve($node, $this->container);
 		if ($exprHandler !== null) {
 			if ($exprHandler instanceof TypeResolvingExprHandler) {

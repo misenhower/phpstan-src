@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler\Virtual;
 
+use Closure;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
@@ -15,7 +16,9 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\FunctionCallableNode;
-use PHPStan\Type\MixedType;
+use PHPStan\Reflection\InitializerExprContext;
+use PHPStan\Reflection\InitializerExprTypeResolver;
+use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
 
 /**
@@ -28,6 +31,7 @@ final class FunctionCallableNodeHandler implements ExprHandler
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private InitializerExprTypeResolver $initializerExprTypeResolver,
 	)
 	{
 	}
@@ -61,11 +65,28 @@ final class FunctionCallableNodeHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			// in practice the type of the first-class callable is resolved
-			// by FirstClassCallableFuncCallHandler
-			typeCallback: static fn (MutatingScope $scope): Type => new MixedType(),
+			typeCallback: fn (MutatingScope $scope): Type => $this->resolveType($scope, $expr),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
+	}
+
+	private function resolveType(MutatingScope $scope, FunctionCallableNode $expr): Type
+	{
+		$originalNode = $expr->getOriginalNode();
+		if ($originalNode->name instanceof Expr) {
+			$callableType = $scope->getType($originalNode->name);
+			if (!$callableType->isCallable()->yes()) {
+				return new ObjectType(Closure::class);
+			}
+
+			return $this->initializerExprTypeResolver->createFirstClassCallable(
+				null,
+				$callableType->getCallableParametersAcceptors($scope),
+				$scope->nativeTypesPromoted,
+			);
+		}
+
+		return $this->initializerExprTypeResolver->getFirstClassCallableType($originalNode, InitializerExprContext::fromScope($scope), $scope->nativeTypesPromoted);
 	}
 
 }

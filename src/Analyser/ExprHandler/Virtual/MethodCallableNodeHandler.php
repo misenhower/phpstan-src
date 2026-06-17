@@ -2,7 +2,9 @@
 
 namespace PHPStan\Analyser\ExprHandler\Virtual;
 
+use Closure;
 use PhpParser\Node\Expr;
+use PhpParser\Node\Identifier;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
@@ -15,7 +17,8 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\MethodCallableNode;
-use PHPStan\Type\MixedType;
+use PHPStan\Reflection\InitializerExprTypeResolver;
+use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
 use function array_merge;
 
@@ -29,6 +32,7 @@ final class MethodCallableNodeHandler implements ExprHandler
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private InitializerExprTypeResolver $initializerExprTypeResolver,
 	)
 	{
 	}
@@ -64,10 +68,28 @@ final class MethodCallableNodeHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			// in practice the type of the first-class callable is resolved
-			// by FirstClassCallableMethodCallHandler
-			typeCallback: static fn (MutatingScope $scope): Type => new MixedType(),
+			typeCallback: fn (MutatingScope $scope): Type => $this->resolveType($scope, $expr),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+		);
+	}
+
+	private function resolveType(MutatingScope $scope, MethodCallableNode $expr): Type
+	{
+		$originalNode = $expr->getOriginalNode();
+		if (!$originalNode->name instanceof Identifier) {
+			return new ObjectType(Closure::class);
+		}
+
+		$varType = $scope->getType($originalNode->var);
+		$method = $scope->getMethodReflection($varType, $originalNode->name->toString());
+		if ($method === null) {
+			return new ObjectType(Closure::class);
+		}
+
+		return $this->initializerExprTypeResolver->createFirstClassCallable(
+			$method,
+			$method->getVariants(),
+			$scope->nativeTypesPromoted,
 		);
 	}
 

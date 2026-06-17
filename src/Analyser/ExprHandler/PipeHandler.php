@@ -20,7 +20,10 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Node\FunctionCallableNode;
+use PHPStan\Node\MethodCallableNode;
 use PHPStan\Node\Printer\ExprPrinter;
+use PHPStan\Node\StaticMethodCallableNode;
 use PHPStan\Parser\ReversePipeTransformerVisitor;
 use PHPStan\Type\Type;
 use function array_merge;
@@ -50,32 +53,34 @@ final class PipeHandler implements ExprHandler
 		unset($rightAttributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
 		$argAttributes = $expr->getAttribute(ReversePipeTransformerVisitor::ARG_ATTRIBUTES_NAME, []);
 
-		$isRightFirstClassCallable = false;
+		$firstClassCallableNode = null;
 		if ($expr->right instanceof FuncCall && $expr->right->isFirstClassCallable()) {
 			$callExpr = new FuncCall($expr->right->name, [
 				new Arg($expr->left, attributes: $argAttributes),
 			], $rightAttributes);
-			$isRightFirstClassCallable = true;
+			$firstClassCallableNode = new FunctionCallableNode($expr->right->name, $expr->right);
 		} elseif ($expr->right instanceof MethodCall && $expr->right->isFirstClassCallable()) {
 			$callExpr = new MethodCall($expr->right->var, $expr->right->name, [
 				new Arg($expr->left, attributes: $argAttributes),
 			], $rightAttributes);
-			$isRightFirstClassCallable = true;
+			$firstClassCallableNode = new MethodCallableNode($expr->right->var, $expr->right->name, $expr->right);
 		} elseif ($expr->right instanceof StaticCall && $expr->right->isFirstClassCallable()) {
 			$callExpr = new StaticCall($expr->right->class, $expr->right->name, [
 				new Arg($expr->left, attributes: $argAttributes),
 			], $rightAttributes);
-			$isRightFirstClassCallable = true;
+			$firstClassCallableNode = new StaticMethodCallableNode($expr->right->class, $expr->right->name, $expr->right);
 		} else {
 			$callExpr = new FuncCall($expr->right, [
 				new Arg($expr->left, attributes: $argAttributes),
 			], $rightAttributes);
 		}
 
-		if ($isRightFirstClassCallable) {
+		if ($firstClassCallableNode !== null) {
 			// the original first-class callable node is not processed through
 			// processExprNode - store its result so that node callbacks asking
-			// about its type can be resumed
+			// about its type can be resumed. Its closure type lives on the
+			// matching *CallableNode, resolved on demand by its handler.
+			$callableNode = $firstClassCallableNode;
 			$nodeScopeResolver->storeExpressionResult($storage, $expr->right, $this->expressionResultFactory->create(
 				$scope,
 				beforeScope: $scope,
@@ -84,6 +89,7 @@ final class PipeHandler implements ExprHandler
 				isAlwaysTerminating: false,
 				throwPoints: [],
 				impurePoints: [],
+				typeCallback: static fn (MutatingScope $s): Type => $s->getType($callableNode),
 			));
 		}
 

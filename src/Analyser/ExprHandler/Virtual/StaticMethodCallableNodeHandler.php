@@ -15,7 +15,8 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\StaticMethodCallableNode;
-use PHPStan\Type\MixedType;
+use PHPStan\Reflection\InitializerExprContext;
+use PHPStan\Reflection\InitializerExprTypeResolver;
 use PHPStan\Type\Type;
 use function array_merge;
 
@@ -29,6 +30,7 @@ final class StaticMethodCallableNodeHandler implements ExprHandler
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private InitializerExprTypeResolver $initializerExprTypeResolver,
 	)
 	{
 	}
@@ -70,9 +72,7 @@ final class StaticMethodCallableNodeHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			// in practice the type of the first-class callable is resolved
-			// by FirstClassCallableStaticCallHandler
-			typeCallback: static fn (MutatingScope $scope): Type => new MixedType(),
+			typeCallback: fn (MutatingScope $scope): Type => $this->initializerExprTypeResolver->getFirstClassCallableType($expr->getOriginalNode(), InitializerExprContext::fromScope($scope), $scope->nativeTypesPromoted),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

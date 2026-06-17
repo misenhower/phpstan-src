@@ -2962,6 +2962,9 @@ class NodeScopeResolver
 				isAlwaysTerminating: $newExprResult->isAlwaysTerminating(),
 				throwPoints: $newExprResult->getThrowPoints(),
 				impurePoints: $newExprResult->getImpurePoints(),
+				// the first-class callable closure type lives on the *CallableNode
+				// result; delegate so getType() of the original CallLike answers from it
+				typeCallback: static fn (MutatingScope $s): Type => $newExprResult->getTypeForScope($s),
 			);
 			$this->storeExpressionResult($storage, $expr, $expressionResult);
 			return $expressionResult;
