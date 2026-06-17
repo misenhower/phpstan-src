@@ -130,19 +130,6 @@ final class ExpressionResult
 		return $this->issetabilityDescriptor?->checkUndefined($scope);
 	}
 
-	/** Whether isset($expr) is definitely true/false (null = maybe). */
-	public function isset(MutatingScope $scope): ?bool
-	{
-		return $this->issetCheck($scope, static function (Type $type): ?bool {
-			$isNull = $type->isNull();
-			if ($isNull->maybe()) {
-				return null;
-			}
-
-			return !$isNull->yes();
-		});
-	}
-
 	/**
 	 * Whether $expr is definitely set-and-non-falsey (i.e. the negation of
 	 * empty($expr)); null = maybe. EmptyHandler negates the result.

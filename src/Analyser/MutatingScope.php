@@ -1253,17 +1253,27 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	{
 		$scope = $this->toMutatingScope();
 		$storage = $this->expressionResultStorageStack->getCurrent();
+		$onDemandStorage = $storage !== null ? $storage->duplicate() : new ExpressionResultStorage();
 		if ($storage !== null) {
 			$result = $storage->findExpressionResult($expr);
 			if ($result !== null) {
-				return $result->getIssetabilityDescriptor();
+				$descriptor = $result->getIssetabilityDescriptor();
+				if ($descriptor !== null) {
+					return $descriptor;
+				}
+
+				// a placeholder result (e.g. the var of `$x['k'] ??= …`, stored
+				// as an assignment target) carries no descriptor; re-process on a
+				// fresh storage so the placeholder doesn't shadow the real one
+				// (processExprOnDemand returns stored results, incl. the placeholder)
+				$onDemandStorage = new ExpressionResultStorage();
 			}
 		}
 
 		$onDemandResult = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
 			$expr,
 			$scope,
-			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
+			$onDemandStorage,
 		);
 
 		return $onDemandResult->getIssetabilityDescriptor();
