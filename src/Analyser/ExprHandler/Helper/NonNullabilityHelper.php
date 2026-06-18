@@ -11,7 +11,7 @@ use PhpParser\Node\Expr\StaticPropertyFetch;
 use PHPStan\Analyser\EnsuredNonNullabilityResult;
 use PHPStan\Analyser\EnsuredNonNullabilityResultExpression;
 use PHPStan\Analyser\MutatingScope;
-use PHPStan\Analyser\Scope;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\TrinaryLogic;
 use PHPStan\Type\TypeCombinator;
@@ -20,9 +20,12 @@ use PHPStan\Type\TypeCombinator;
 final class NonNullabilityHelper
 {
 
-	public function ensureShallowNonNullability(MutatingScope $scope, Scope $originalScope, Expr $exprToSpecify): EnsuredNonNullabilityResult
+	public function ensureShallowNonNullability(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, MutatingScope $originalScope, Expr $exprToSpecify): EnsuredNonNullabilityResult
 	{
-		$exprType = $scope->getType($exprToSpecify);
+		// the expression has not been processed into the storage yet (this runs
+		// before processExprNode), so read its type from the stored result or
+		// price it on demand instead of re-walking via Scope::getType().
+		$exprType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $scope);
 		$isNull = $exprType->isNull();
 		if ($isNull->yes()) {
 			return new EnsuredNonNullabilityResult($scope, []);
@@ -32,9 +35,9 @@ final class NonNullabilityHelper
 
 		$exprTypeWithoutNull = TypeCombinator::removeNull($exprType);
 		if ($exprType->equals($exprTypeWithoutNull)) {
-			$originalExprType = $originalScope->getType($exprToSpecify);
+			$originalExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $originalScope);
 			if (!$originalExprType->equals($exprTypeWithoutNull)) {
-				$originalNativeType = $originalScope->getNativeType($exprToSpecify);
+				$originalNativeType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $originalScope->doNotTreatPhpDocTypesAsCertain());
 
 				return new EnsuredNonNullabilityResult($scope, [
 					new EnsuredNonNullabilityResultExpression($exprToSpecify, $originalExprType, $originalNativeType, $hasExpressionType),
@@ -52,8 +55,8 @@ final class NonNullabilityHelper
 			$parentExpr = $exprToSpecify->var;
 			$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression(
 				$parentExpr,
-				$scope->getType($parentExpr),
-				$scope->getNativeType($parentExpr),
+				$nodeScopeResolver->readStoredOrPriceOnDemand($parentExpr, $scope),
+				$nodeScopeResolver->readStoredOrPriceOnDemand($parentExpr, $scope->doNotTreatPhpDocTypesAsCertain()),
 				$originalScope->hasExpressionType($parentExpr),
 			);
 		}
@@ -64,7 +67,7 @@ final class NonNullabilityHelper
 			$certainty = $hasExpressionType;
 		}
 
-		$nativeType = $scope->getNativeType($exprToSpecify);
+		$nativeType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $scope->doNotTreatPhpDocTypesAsCertain());
 		$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression($exprToSpecify, $exprType, $nativeType, $certainty);
 		$scope = $scope->specifyExpressionType(
 			$exprToSpecify,
@@ -79,12 +82,12 @@ final class NonNullabilityHelper
 		);
 	}
 
-	public function ensureNonNullability(MutatingScope $scope, Expr $expr): EnsuredNonNullabilityResult
+	public function ensureNonNullability(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr): EnsuredNonNullabilityResult
 	{
 		$specifiedExpressions = [];
 		$originalScope = $scope;
-		$scope = $this->lookForExpressionCallback($scope, $expr, function ($scope, $expr) use (&$specifiedExpressions, $originalScope) {
-			$result = $this->ensureShallowNonNullability($scope, $originalScope, $expr);
+		$scope = $this->lookForExpressionCallback($scope, $expr, function ($scope, $expr) use (&$specifiedExpressions, $originalScope, $nodeScopeResolver) {
+			$result = $this->ensureShallowNonNullability($nodeScopeResolver, $scope, $originalScope, $expr);
 			foreach ($result->getSpecifiedExpressions() as $specifiedExpression) {
 				$specifiedExpressions[] = $specifiedExpression;
 			}

@@ -1160,7 +1160,7 @@ class NodeScopeResolver
 				$result = $this->processExprNode($stmt, $echoExpr, $scope, $storage, $nodeCallback, ExpressionContext::createDeep());
 				$throwPoints = array_merge($throwPoints, $result->getThrowPoints());
 				$impurePoints = array_merge($impurePoints, $result->getImpurePoints());
-				$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($echoExpr, $scope);
+				$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($this, $echoExpr, $scope);
 				$throwPoints = array_merge($throwPoints, $toStringResult->getThrowPoints());
 				$impurePoints = array_merge($impurePoints, $toStringResult->getImpurePoints());
 				$scope = $result->getScope();

@@ -10,7 +10,7 @@ use PhpParser\Node\Expr\BinaryOp\LogicalOr;
 use PHPStan\Analyser\ConditionalExpressionHolder;
 use PHPStan\Analyser\ExpressionTypeHolder;
 use PHPStan\Analyser\MutatingScope;
-use PHPStan\Analyser\Scope;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
@@ -37,6 +37,7 @@ final class ConditionalExpressionHolderHelper
 	}
 
 	public function augmentDisjunctionTypes(
+		NodeScopeResolver $nodeScopeResolver,
 		MutatingScope $scope,
 		MutatingScope $rightScope,
 		SpecifiedTypes $leftNormalized,
@@ -88,9 +89,11 @@ final class ConditionalExpressionHolderHelper
 				continue;
 			}
 
-			$originalType = $scope->getType($targetExpr);
-			$leftType = $leftFilteredScope->getType($targetExpr);
-			$rightType = $rightFilteredScope->getType($targetExpr);
+			// the operands were processed during processExpr; read their stored
+			// results on these filtered scopes instead of re-walking via getType().
+			$originalType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $scope);
+			$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $leftFilteredScope);
+			$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $rightFilteredScope);
 
 			if ($leftType->equals($originalType) || !$originalType->isSuperTypeOf($leftType)->yes()) {
 				continue;
@@ -141,7 +144,7 @@ final class ConditionalExpressionHolderHelper
 	/**
 	 * @return array<string, ConditionalExpressionHolder[]>
 	 */
-	public function processBooleanConditionalTypes(Scope $scope, SpecifiedTypes $conditionSpecifiedTypes, SpecifiedTypes $holderSpecifiedTypes, bool $holdersFromSureTypes, bool $holderSideIsNegated, Scope $rightScope, ?Expr $holderSideExpr = null): array
+	public function processBooleanConditionalTypes(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, SpecifiedTypes $conditionSpecifiedTypes, SpecifiedTypes $holderSpecifiedTypes, bool $holdersFromSureTypes, bool $holderSideIsNegated, MutatingScope $rightScope, ?Expr $holderSideExpr = null): array
 	{
 		// The condition side asserts that its sub-expression evaluates truthy.
 		// When that sub-expression is itself a compound boolean (e.g. `$a && $b`),
@@ -157,7 +160,7 @@ final class ConditionalExpressionHolderHelper
 				continue;
 			}
 
-			$scopeType = $scope->getType($expr);
+			$scopeType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
 			$conditionType = TypeCombinator::remove($scopeType, $type);
 			if ($scopeType->equals($conditionType)) {
 				$droppedNoOpConditions[$exprString] = true;
@@ -174,7 +177,7 @@ final class ConditionalExpressionHolderHelper
 				continue;
 			}
 
-			$scopeType = $scope->getType($expr);
+			$scopeType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
 			$conditionType = TypeCombinator::intersect($scopeType, $type);
 			if ($scopeType->equals($conditionType)) {
 				$droppedNoOpConditions[$exprString] = true;
@@ -231,7 +234,7 @@ final class ConditionalExpressionHolderHelper
 				}
 
 				$targetScope = $expr instanceof Expr\Variable ? $scope : $rightScope;
-				$targetType = $targetScope->getType($expr);
+				$targetType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $targetScope);
 				$holderType = $holdersFromSureTypes
 					? TypeCombinator::intersect($targetType, $type)
 					: TypeCombinator::remove($targetType, $type);
@@ -240,7 +243,7 @@ final class ConditionalExpressionHolderHelper
 				// holder must allow the values it excluded, or it over-narrows when
 				// only the remaining conditions hold. So union back the complement.
 				if ($droppedSelfCondition !== null) {
-					$complement = TypeCombinator::remove($scope->getType($expr), $droppedSelfCondition->getType());
+					$complement = TypeCombinator::remove($nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope), $droppedSelfCondition->getType());
 					if (!$complement instanceof NeverType) {
 						$holderType = TypeCombinator::union($holderType, $complement);
 					}

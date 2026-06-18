@@ -223,7 +223,7 @@ final class StaticCallHandler implements TypeResolvingExprHandler
 		$scopeFunction = $scope->getFunction();
 
 		if ($methodReflection !== null) {
-			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context);
+			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context, $scope->getType($normalizedExpr));
 			if ($methodThrowPoint !== null) {
 				$throwPoints[] = $methodThrowPoint;
 			}

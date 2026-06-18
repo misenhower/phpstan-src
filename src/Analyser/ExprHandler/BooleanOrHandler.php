@@ -191,7 +191,7 @@ final class BooleanOrHandler implements ExprHandler
 						$rightNormalized = $rightTypes->normalize($rightScope);
 						$types = $leftNormalized->intersectWith($rightNormalized);
 						$types = $this->augmentBooleanOrTruthyWithConditionalHolders($nodeScopeResolver, $s, $rightScope, $expr, $types);
-						$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($s, $rightScope, $leftNormalized, $rightNormalized, $expr->left, $expr->right, true, $types);
+						$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $rightScope, $leftNormalized, $rightNormalized, $expr->left, $expr->right, true, $types);
 					}
 				} else {
 					$types = $leftTypes->unionWith($rightTypes);
@@ -206,10 +206,10 @@ final class BooleanOrHandler implements ExprHandler
 						$result = $result->setAlwaysOverwriteTypes();
 					}
 					return $result->setNewConditionalExpressionHolders($this->conditionalExpressionHolderHelper->mergeConditionalHolders([
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($s, $leftTypes, $rightTypes, false, false, $rightScope, $expr->right),
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($s, $rightTypes, $leftTypes, false, false, $s, $expr->left),
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($s, $leftTypes, $rightTypes, true, false, $rightScope, $expr->right),
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($s, $rightTypes, $leftTypes, true, false, $s, $expr->left),
+						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, false, false, $rightScope, $expr->right),
+						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $rightTypes, $leftTypes, false, false, $s, $expr->left),
+						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, true, false, $rightScope, $expr->right),
+						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $rightTypes, $leftTypes, true, false, $s, $expr->left),
 					]))->setRootExpr($expr);
 				}
 

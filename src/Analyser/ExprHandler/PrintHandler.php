@@ -48,7 +48,7 @@ final class PrintHandler implements ExprHandler
 		$throwPoints = $exprResult->getThrowPoints();
 		$impurePoints = $exprResult->getImpurePoints();
 
-		$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($expr->expr, $scope);
+		$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->expr, $scope);
 		$throwPoints = array_merge($throwPoints, $toStringResult->getThrowPoints());
 		$impurePoints = array_merge($impurePoints, $toStringResult->getImpurePoints());
 

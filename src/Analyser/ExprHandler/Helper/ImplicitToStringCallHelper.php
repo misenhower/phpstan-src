@@ -9,6 +9,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Php\PhpVersion;
 use function sprintf;
@@ -25,12 +26,14 @@ final class ImplicitToStringCallHelper
 	{
 	}
 
-	public function processImplicitToStringCall(Expr $expr, MutatingScope $scope): ExpressionResult
+	public function processImplicitToStringCall(NodeScopeResolver $nodeScopeResolver, Expr $expr, MutatingScope $scope): ExpressionResult
 	{
 		$throwPoints = [];
 		$impurePoints = [];
 
-		$exprType = $scope->getType($expr);
+		// the expression was processed before this call; read its stored result
+		// or price it on demand instead of re-walking via Scope::getType().
+		$exprType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
 
 		$toStringMethod = null;
 		if (!$exprType->isObject()->no()) {
@@ -59,12 +62,16 @@ final class ImplicitToStringCallHelper
 		}
 
 		if ($this->phpVersion->throwsOnStringCast()) {
+			// the __toString() call is a synthetic node - price it on demand to
+			// resolve its return type instead of re-walking via Scope::getType().
+			$toStringCall = new Expr\MethodCall($expr, new Identifier('__toString'));
 			$throwPoint = $this->methodThrowPointHelper->getThrowPoint(
 				$toStringMethod,
 				$toStringMethod->getOnlyVariant(),
-				new Expr\MethodCall($expr, new Identifier('__toString')),
+				$toStringCall,
 				$scope,
 				ExpressionContext::createDeep(),
+				$nodeScopeResolver->priceSyntheticOnDemand($toStringCall, $scope),
 			);
 			if ($throwPoint !== null) {
 				$throwPoints[] = $throwPoint;

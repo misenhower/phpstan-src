@@ -55,7 +55,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		$beforeScope = $scope;
 		$scopeBeforeNullsafe = $scope;
 
-		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($scope, $scope, $expr->var);
+		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($nodeScopeResolver, $scope, $scope, $expr->var);
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafeMethodCall' => true]);
 		unset($attributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
 		$methodCall = new MethodCall(

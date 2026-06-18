@@ -353,7 +353,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 		$nonNullabilityResults = [];
 		$isAlwaysTerminating = false;
 		foreach ($expr->vars as $var) {
-			$nonNullabilityResult = $this->nonNullabilityHelper->ensureNonNullability($scope, $var);
+			$nonNullabilityResult = $this->nonNullabilityHelper->ensureNonNullability($nodeScopeResolver, $scope, $var);
 			$scope = $nodeScopeResolver->lookForSetAllowedUndefinedExpressions($nonNullabilityResult->getScope(), $var);
 			$varResult = $nodeScopeResolver->processExprNode($stmt, $var, $scope, $storage, $nodeCallback, $context->enterDeep());
 			$scope = $varResult->getScope();
