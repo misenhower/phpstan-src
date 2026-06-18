@@ -77,10 +77,12 @@ final class MatchHandler implements ExprHandler
 	 *
 	 * @return list<array{MutatingScope, Type}>
 	 */
-	public function getArmScopesAndTypes(MutatingScope $scope, Match_ $expr): array
+	public function getArmScopesAndTypes(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Match_ $expr): array
 	{
 		$cond = $expr->cond;
-		$condType = $scope->getType($cond);
+		// the subject was processed before this shadow walk runs; read its stored
+		// result on the incoming scope instead of re-walking via Scope::getType().
+		$condType = $nodeScopeResolver->readStoredOrPriceOnDemand($cond, $scope);
 		$armScopesAndTypes = [];
 
 		$matchScope = $scope;
@@ -142,7 +144,10 @@ final class MatchHandler implements ExprHandler
 						$cond,
 						$conditionCaseType,
 					);
-					$armScopesAndTypes[] = [$armScope, $armScope->getType($arm->body)];
+					// the arm body is read on the subject-narrowed scope this shadow
+					// walk built; that (body, narrowed-scope) pair is not stored, so
+					// price the body on demand against the current storage.
+					$armScopesAndTypes[] = [$armScope, $nodeScopeResolver->priceSyntheticOnDemand($arm->body, $armScope)];
 					unset($arms[$i]);
 				}
 
@@ -171,7 +176,7 @@ final class MatchHandler implements ExprHandler
 				if ($expr->hasAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME)) {
 					$arm->body->setAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME, $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME));
 				}
-				$armScopesAndTypes[] = [$matchScope, $matchScope->getType($arm->body)];
+				$armScopesAndTypes[] = [$matchScope, $nodeScopeResolver->priceSyntheticOnDemand($arm->body, $matchScope)];
 				continue;
 			}
 
@@ -181,14 +186,16 @@ final class MatchHandler implements ExprHandler
 
 			$filteringExpr = $this->getFilteringExprForMatchArm($expr, $arm->conds);
 
-			$filteringExprType = $matchScope->getType($filteringExpr);
+			// the filtering expression is synthetic - price it on demand against the
+			// current storage instead of re-walking via Scope::getType().
+			$filteringExprType = $nodeScopeResolver->priceSyntheticOnDemand($filteringExpr, $matchScope);
 
 			if (!$filteringExprType->isFalse()->yes()) {
 				$truthyScope = $matchScope->filterByTruthyValue($filteringExpr);
 				if ($expr->hasAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME)) {
 					$arm->body->setAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME, $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME));
 				}
-				$armScopesAndTypes[] = [$truthyScope, $truthyScope->getType($arm->body)];
+				$armScopesAndTypes[] = [$truthyScope, $nodeScopeResolver->priceSyntheticOnDemand($arm->body, $truthyScope)];
 			}
 
 			$matchScope = $matchScope->filterByFalseyValue($filteringExpr);
@@ -201,9 +208,11 @@ final class MatchHandler implements ExprHandler
 	{
 		$beforeScope = $scope;
 		$deepContext = $context->enterDeep();
-		$condType = $scope->getType($expr->cond);
-		$condNativeType = $scope->getNativeType($expr->cond);
 		$condResult = $nodeScopeResolver->processExprNode($stmt, $expr->cond, $scope, $storage, $nodeCallback, $deepContext);
+		// the subject was just processed on this scope; read its result instead of
+		// re-walking via Scope::getType().
+		$condType = $condResult->getTypeForScope($scope);
+		$condNativeType = $condResult->getNativeTypeForScope($scope);
 		$scope = $condResult->getScope();
 		$hasYield = $condResult->hasYield();
 		$throwPoints = $condResult->getThrowPoints();
@@ -429,7 +438,11 @@ final class MatchHandler implements ExprHandler
 				$impurePoints = array_merge($impurePoints, $armCondResult->getImpurePoints());
 				$armCondExpr = new BinaryOp\Identical($expr->cond, $armCond);
 				$armCondResultScope = $armCondResult->getScope();
-				$armCondType = $this->treatPhpDocTypesAsCertain ? $armCondResultScope->getType($armCondExpr) : $armCondResultScope->getNativeType($armCondExpr);
+				// the `subject === cond` comparison is synthetic - price it on demand
+				// against the current storage instead of re-walking via Scope::getType().
+				$armCondType = $this->treatPhpDocTypesAsCertain
+					? $nodeScopeResolver->priceSyntheticOnDemand($armCondExpr, $armCondResultScope)
+					: $nodeScopeResolver->priceSyntheticOnDemand($armCondExpr, $armCondResultScope->doNotTreatPhpDocTypesAsCertain());
 				if ($armCondType->isTrue()->yes()) {
 					$hasAlwaysTrueCond = true;
 				}
@@ -464,8 +477,9 @@ final class MatchHandler implements ExprHandler
 			$impurePoints = array_merge($impurePoints, $armResult->getImpurePoints());
 			// Mirror getArmScopesAndTypes: an arm whose filtering expression is
 			// always false is unreachable and does not contribute to the result
-			// type.
-			$filteringExprType = $matchScope->getType($filteringExpr);
+			// type. The filtering expression is synthetic - price it on demand
+			// against the current storage instead of re-walking via Scope::getType().
+			$filteringExprType = $nodeScopeResolver->priceSyntheticOnDemand($filteringExpr, $matchScope);
 			if (!$filteringExprType->isFalse()->yes()) {
 				$armTypeResults[] = [$armResult, $bodyScope, $arm->body];
 			}
@@ -483,7 +497,9 @@ final class MatchHandler implements ExprHandler
 
 		$isExhaustive = $hasDefaultCond || $hasAlwaysTrueCond;
 		if (!$isExhaustive) {
-			$remainingType = $matchScope->getType($expr->cond);
+			// the subject was processed above; read its stored result on the
+			// arm-narrowed scope instead of re-walking via Scope::getType().
+			$remainingType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->cond, $matchScope);
 			if ($remainingType instanceof NeverType) {
 				$isExhaustive = true;
 			}

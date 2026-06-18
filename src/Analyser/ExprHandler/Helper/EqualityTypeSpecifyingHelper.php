@@ -10,6 +10,7 @@ use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\Instanceof_;
 use PhpParser\Node\Name;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifier;
@@ -67,9 +68,9 @@ final class EqualityTypeSpecifyingHelper
 	{
 	}
 
-	public function specifyTypesForEqual(Expr\BinaryOp\Equal $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
+	public function specifyTypesForEqual(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Equal $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
 	{
-		$expressions = $this->findTypeExpressionsFromBinaryOperation($scope, $expr);
+		$expressions = $this->findTypeExpressionsFromBinaryOperation($nodeScopeResolver, $scope, $expr);
 		if ($expressions !== null) {
 			$exprNode = $expressions[0];
 			$constantType = $expressions[1];
@@ -181,8 +182,10 @@ final class EqualityTypeSpecifyingHelper
 			}
 		}
 
-		$leftType = $scope->getType($expr->left);
-		$rightType = $scope->getType($expr->right);
+		// the operands were processed during processExpr; read their stored results
+		// instead of re-walking via Scope::getType().
+		$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->left, $scope->toMutatingScope());
+		$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->right, $scope->toMutatingScope());
 
 		$leftBooleanType = $leftType->toBoolean();
 		if ($leftBooleanType instanceof ConstantBooleanType && $rightType->isBoolean()->yes()) {
@@ -249,19 +252,19 @@ final class EqualityTypeSpecifyingHelper
 			: $leftTypes->normalize($scope)->intersectWith($rightTypes->normalize($scope));
 	}
 
-	public function specifyTypesForIdentical(Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
+	public function specifyTypesForIdentical(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
 	{
 		$leftExpr = $expr->left;
 		$rightExpr = $expr->right;
 
 		// Normalize to: fn() === expr
 		if ($rightExpr instanceof FuncCall && !$leftExpr instanceof FuncCall) {
-			$specifiedTypes = $this->specifyTypesForNormalizedIdentical(new Expr\BinaryOp\Identical(
+			$specifiedTypes = $this->specifyTypesForNormalizedIdentical($nodeScopeResolver, new Expr\BinaryOp\Identical(
 				$rightExpr,
 				$leftExpr,
 			), $scope, $context);
 		} else {
-			$specifiedTypes = $this->specifyTypesForNormalizedIdentical(new Expr\BinaryOp\Identical(
+			$specifiedTypes = $this->specifyTypesForNormalizedIdentical($nodeScopeResolver, new Expr\BinaryOp\Identical(
 				$leftExpr,
 				$rightExpr,
 			), $scope, $context);
@@ -270,7 +273,7 @@ final class EqualityTypeSpecifyingHelper
 		// merge result of fn1() === fn2() and fn2() === fn1()
 		if ($rightExpr instanceof FuncCall && $leftExpr instanceof FuncCall) {
 			return $specifiedTypes->unionWith(
-				$this->specifyTypesForNormalizedIdentical(new Expr\BinaryOp\Identical(
+				$this->specifyTypesForNormalizedIdentical($nodeScopeResolver, new Expr\BinaryOp\Identical(
 					$rightExpr,
 					$leftExpr,
 				), $scope, $context),
@@ -280,7 +283,7 @@ final class EqualityTypeSpecifyingHelper
 		return $specifiedTypes;
 	}
 
-	private function specifyTypesForNormalizedIdentical(Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
+	private function specifyTypesForNormalizedIdentical(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
 	{
 		$leftExpr = $expr->left;
 		$rightExpr = $expr->right;
@@ -294,7 +297,11 @@ final class EqualityTypeSpecifyingHelper
 			$unwrappedRightExpr = $rightExpr->getExpr();
 		}
 
-		$rightType = $scope->getType($rightExpr);
+		// the operands and their subexpressions were processed during processExpr;
+		// read their stored results instead of re-walking via Scope::getType().
+		$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope->toMutatingScope());
+
+		$rightType = $getType($rightExpr);
 
 		// (count($a) === $expr)
 		if (
@@ -315,16 +322,16 @@ final class EqualityTypeSpecifyingHelper
 				&& in_array($unwrappedRightExpr->name->toLowerString(), ['count', 'sizeof'], true)
 				&& count($unwrappedRightExpr->getArgs()) >= 1
 			) {
-				$argType = $scope->getType($unwrappedRightExpr->getArgs()[0]->value);
-				$sizeType = $scope->getType($leftExpr);
+				$argType = $getType($unwrappedRightExpr->getArgs()[0]->value);
+				$sizeType = $getType($leftExpr);
 
 				$specifiedTypes = $this->typeSpecifier->specifyTypesForCountFuncCall($unwrappedRightExpr, $argType, $sizeType, $context, $scope, $expr);
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes;
 				}
 
-				$leftArrayType = $scope->getType($unwrappedLeftExpr->getArgs()[0]->value);
-				$rightArrayType = $scope->getType($unwrappedRightExpr->getArgs()[0]->value);
+				$leftArrayType = $getType($unwrappedLeftExpr->getArgs()[0]->value);
+				$rightArrayType = $getType($unwrappedRightExpr->getArgs()[0]->value);
 				if (
 					$leftArrayType->isArray()->yes()
 					&& $rightArrayType->isArray()->yes()
@@ -342,7 +349,7 @@ final class EqualityTypeSpecifyingHelper
 				return $this->typeSpecifier->create($unwrappedLeftExpr->getArgs()[0]->value, new NeverType(), $context, $scope)->setRootExpr($expr);
 			}
 
-			$argType = $scope->getType($unwrappedLeftExpr->getArgs()[0]->value);
+			$argType = $getType($unwrappedLeftExpr->getArgs()[0]->value);
 			$isZero = (new ConstantIntegerType(0))->isSuperTypeOf($rightType);
 			if ($isZero->yes()) {
 				$funcTypes = $this->typeSpecifier->create($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
@@ -405,7 +412,7 @@ final class EqualityTypeSpecifyingHelper
 			}
 
 			if ($context->truthy() && IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($rightType)->yes()) {
-				$argType = $scope->getType($unwrappedLeftExpr->getArgs()[0]->value);
+				$argType = $getType($unwrappedLeftExpr->getArgs()[0]->value);
 				if ($argType->isString()->yes()) {
 					$funcTypes = $this->typeSpecifier->create($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
 
@@ -435,7 +442,7 @@ final class EqualityTypeSpecifyingHelper
 			$notNullOnly = $funcName === 'array_find_key';
 			if ($bothDirections || $notNullOnly) {
 				$args = $unwrappedLeftExpr->getArgs();
-				$argType = $scope->getType($args[0]->value);
+				$argType = $getType($args[0]->value);
 				if ($argType->isArray()->yes()) {
 					if ($bothDirections) {
 						return $this->typeSpecifier->create($args[0]->value, new NonEmptyArrayType(), $context->negate(), $scope)->setRootExpr($expr);
@@ -503,7 +510,7 @@ final class EqualityTypeSpecifyingHelper
 			&& isset($unwrappedLeftExpr->getArgs()[0])
 			&& $rightType->isNonEmptyString()->yes()
 		) {
-			$argType = $scope->getType($unwrappedLeftExpr->getArgs()[0]->value);
+			$argType = $getType($unwrappedLeftExpr->getArgs()[0]->value);
 
 			if ($argType->isString()->yes()) {
 				$specifiedTypes = new SpecifiedTypes();
@@ -545,7 +552,7 @@ final class EqualityTypeSpecifyingHelper
 		if ($rightType->isString()->yes()) {
 			$types = null;
 			foreach ($rightType->getConstantStrings() as $constantString) {
-				$specifiedType = $this->specifyTypesForConstantStringBinaryExpression($unwrappedLeftExpr, $constantString, $context, $scope, $expr);
+				$specifiedType = $this->specifyTypesForConstantStringBinaryExpression($nodeScopeResolver, $unwrappedLeftExpr, $constantString, $context, $scope, $expr);
 
 				if ($specifiedType === null) {
 					continue;
@@ -566,7 +573,7 @@ final class EqualityTypeSpecifyingHelper
 			}
 		}
 
-		$expressions = $this->findTypeExpressionsFromBinaryOperation($scope, $expr);
+		$expressions = $this->findTypeExpressionsFromBinaryOperation($nodeScopeResolver, $scope, $expr);
 		if ($expressions !== null) {
 			$exprNode = $expressions[0];
 			$constantType = $expressions[1];
@@ -617,7 +624,7 @@ final class EqualityTypeSpecifyingHelper
 			}
 		}
 
-		$leftType = $scope->getType($leftExpr);
+		$leftType = $getType($leftExpr);
 
 		// 'Foo' === $a::class
 		if (
@@ -651,7 +658,7 @@ final class EqualityTypeSpecifyingHelper
 		}
 
 		if ($context->false()) {
-			$identicalType = $scope->getType($expr);
+			$identicalType = $getType($expr);
 			if ($identicalType instanceof ConstantBooleanType) {
 				$never = new NeverType();
 				$contextForTypes = $identicalType->getValue() ? $context->negate() : $context;
@@ -760,10 +767,12 @@ final class EqualityTypeSpecifyingHelper
 	/**
 	 * @return array{Expr, ConstantScalarType, Type}|null
 	 */
-	private function findTypeExpressionsFromBinaryOperation(Scope $scope, Node\Expr\BinaryOp $binaryOperation): ?array
+	private function findTypeExpressionsFromBinaryOperation(NodeScopeResolver $nodeScopeResolver, Scope $scope, Node\Expr\BinaryOp $binaryOperation): ?array
 	{
-		$leftType = $scope->getType($binaryOperation->left);
-		$rightType = $scope->getType($binaryOperation->right);
+		// the operands were processed during processExpr; read their stored results
+		// instead of re-walking via Scope::getType().
+		$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($binaryOperation->left, $scope->toMutatingScope());
+		$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($binaryOperation->right, $scope->toMutatingScope());
 
 		$rightExpr = $binaryOperation->right;
 		if ($rightExpr instanceof AlwaysRememberedExpr) {
@@ -828,6 +837,7 @@ final class EqualityTypeSpecifyingHelper
 	}
 
 	private function specifyTypesForConstantStringBinaryExpression(
+		NodeScopeResolver $nodeScopeResolver,
 		Expr $exprNode,
 		Type $constantType,
 		TypeSpecifierContext $context,
@@ -889,7 +899,9 @@ final class EqualityTypeSpecifyingHelper
 			&& strtolower((string) $exprNode->name) === 'get_parent_class'
 			&& isset($exprNode->getArgs()[0])
 		) {
-			$argType = $scope->getType($exprNode->getArgs()[0]->value);
+			// the argument was processed during processExpr; read its stored result
+			// instead of re-walking via Scope::getType().
+			$argType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprNode->getArgs()[0]->value, $scope->toMutatingScope());
 			$objectType = new ObjectType($constantStringValue);
 			$classStringType = new GenericClassStringType($objectType);
 
@@ -932,7 +944,9 @@ final class EqualityTypeSpecifyingHelper
 			&& $constantStringValue === ''
 		) {
 			$argValue = $exprNode->getArgs()[0]->value;
-			$argType = $scope->getType($argValue);
+			// the argument was processed during processExpr; read its stored result
+			// instead of re-walking via Scope::getType().
+			$argType = $nodeScopeResolver->readStoredOrPriceOnDemand($argValue, $scope->toMutatingScope());
 			if ($argType->isString()->yes()) {
 				return $this->typeSpecifier->create(
 					$argValue,

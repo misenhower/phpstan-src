@@ -94,7 +94,9 @@ final class BinaryOpHandler implements ExprHandler
 		$impurePoints = array_merge($leftResult->getImpurePoints(), $rightResult->getImpurePoints());
 		if (
 			($expr instanceof BinaryOp\Div || $expr instanceof BinaryOp\Mod) &&
-			!$leftResult->getScope()->getType($expr->right)->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
+			// the right operand was just processed on $leftResult's scope; read its
+			// result instead of re-walking via Scope::getType().
+			!$rightResult->getTypeForScope($leftResult->getScope())->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
 		) {
 			$throwPoints[] = InternalThrowPoint::createExplicit($leftResult->getScope(), new ObjectType(DivisionByZeroError::class), $expr, false);
 		}
@@ -114,34 +116,38 @@ final class BinaryOpHandler implements ExprHandler
 			isAlwaysTerminating: $leftResult->isAlwaysTerminating() || $rightResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (MutatingScope $scope) use ($expr): Type {
-				$getType = static fn (Expr $expr): Type => $scope->getType($expr);
+			typeCallback: function (MutatingScope $scope) use ($expr, $nodeScopeResolver): Type {
+				// the operands were processed during processExpr; read their stored
+				// results instead of re-walking via Scope::getType(). Synthetic
+				// nodes the resolver builds (e.g. getDivType's Mod) are priced on
+				// demand by the same helper.
+				$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
 
 				if ($expr instanceof BinaryOp\Smaller) {
-					return $scope->getType($expr->left)->isSmallerThan($scope->getType($expr->right), $this->phpVersion)->toBooleanType();
+					return $getType($expr->left)->isSmallerThan($getType($expr->right), $this->phpVersion)->toBooleanType();
 				}
 
 				if ($expr instanceof BinaryOp\SmallerOrEqual) {
-					return $scope->getType($expr->left)->isSmallerThanOrEqual($scope->getType($expr->right), $this->phpVersion)->toBooleanType();
+					return $getType($expr->left)->isSmallerThanOrEqual($getType($expr->right), $this->phpVersion)->toBooleanType();
 				}
 
 				if ($expr instanceof BinaryOp\Greater) {
-					return $scope->getType($expr->right)->isSmallerThan($scope->getType($expr->left), $this->phpVersion)->toBooleanType();
+					return $getType($expr->right)->isSmallerThan($getType($expr->left), $this->phpVersion)->toBooleanType();
 				}
 
 				if ($expr instanceof BinaryOp\GreaterOrEqual) {
-					return $scope->getType($expr->right)->isSmallerThanOrEqual($scope->getType($expr->left), $this->phpVersion)->toBooleanType();
+					return $getType($expr->right)->isSmallerThanOrEqual($getType($expr->left), $this->phpVersion)->toBooleanType();
 				}
 
 				if ($expr instanceof BinaryOp\Equal) {
-					return $this->resolveEqualType($scope, $expr);
+					return $this->resolveEqualType($nodeScopeResolver, $scope, $expr);
 				}
 
 				if ($expr instanceof BinaryOp\NotEqual) {
 					// negation of the Equal result - direct computation avoids
 					// synthesizing a BooleanNot node (which would route through
 					// on-demand re-processing once BooleanNot is migrated)
-					$equalType = $this->resolveEqualType($scope, new BinaryOp\Equal($expr->left, $expr->right))->toBoolean();
+					$equalType = $this->resolveEqualType($nodeScopeResolver, $scope, new BinaryOp\Equal($expr->left, $expr->right))->toBoolean();
 					if ($equalType->isTrue()->yes()) {
 						return new ConstantBooleanType(false);
 					}
@@ -161,8 +167,8 @@ final class BinaryOpHandler implements ExprHandler
 				}
 
 				if ($expr instanceof BinaryOp\LogicalXor) {
-					$leftBooleanType = $scope->getType($expr->left)->toBoolean();
-					$rightBooleanType = $scope->getType($expr->right)->toBoolean();
+					$leftBooleanType = $getType($expr->left)->toBoolean();
+					$rightBooleanType = $getType($expr->right)->toBoolean();
 
 					if (
 						$leftBooleanType instanceof ConstantBooleanType
@@ -230,9 +236,9 @@ final class BinaryOpHandler implements ExprHandler
 
 				throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
 			},
-			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $nodeScopeResolver): SpecifiedTypes {
 				if ($expr instanceof BinaryOp\Identical) {
-					return $this->equalityTypeSpecifyingHelper->specifyTypesForIdentical($expr, $scope, $context);
+					return $this->equalityTypeSpecifyingHelper->specifyTypesForIdentical($nodeScopeResolver, $expr, $scope, $context);
 				}
 
 				if ($expr instanceof BinaryOp\NotIdentical) {
@@ -252,7 +258,7 @@ final class BinaryOpHandler implements ExprHandler
 				}
 
 				if ($expr instanceof BinaryOp\Equal) {
-					return $this->equalityTypeSpecifyingHelper->specifyTypesForEqual($expr, $scope, $context);
+					return $this->equalityTypeSpecifyingHelper->specifyTypesForEqual($nodeScopeResolver, $expr, $scope, $context);
 				}
 
 				if ($expr instanceof BinaryOp\NotEqual) {
@@ -302,7 +308,11 @@ final class BinaryOpHandler implements ExprHandler
 
 					$orEqual = $expr instanceof BinaryOp\SmallerOrEqual;
 					$offset = $orEqual ? 0 : 1;
-					$leftType = $scope->getType($expr->left);
+					// the operands and their subexpressions were processed during
+					// processExpr; read their stored results instead of re-walking
+					// via Scope::getType().
+					$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+					$leftType = $getType($expr->left);
 					$result = (new SpecifiedTypes([], []))->setRootExpr($expr);
 
 					if (
@@ -314,7 +324,7 @@ final class BinaryOpHandler implements ExprHandler
 						&& count($expr->right->getArgs()) >= 1
 						&& $leftType->isInteger()->yes()
 					) {
-						$argType = $scope->getType($expr->right->getArgs()[0]->value);
+						$argType = $getType($expr->right->getArgs()[0]->value);
 
 						$sizeType = null;
 						if ($leftType instanceof ConstantIntegerType) {
@@ -421,8 +431,8 @@ final class BinaryOpHandler implements ExprHandler
 						&& $leftType->isInteger()->yes()
 						&& IntegerRangeType::fromInterval(0, null)->isSuperTypeOf($leftType)->yes()
 					) {
-						$countArgType = $scope->getType($expr->right->left->getArgs()[0]->value);
-						$subtractedType = $scope->getType($expr->right->right);
+						$countArgType = $getType($expr->right->left->getArgs()[0]->value);
+						$subtractedType = $getType($expr->right->right);
 						if (
 							$countArgType->isList()->yes()
 							&& $this->typeSpecifier->isNormalCountCall($expr->right->left, $countArgType, $scope)->yes()
@@ -467,7 +477,7 @@ final class BinaryOpHandler implements ExprHandler
 							$context->true() && (IntegerRangeType::createAllGreaterThanOrEqualTo(1 - $offset)->isSuperTypeOf($leftType)->yes())
 							|| ($context->false() && (new ConstantIntegerType(1 - $offset))->isSuperTypeOf($leftType)->yes())
 						) {
-							$argType = $scope->getType($expr->right->getArgs()[0]->value);
+							$argType = $getType($expr->right->getArgs()[0]->value);
 							if ($argType->isString()->yes()) {
 								$accessory = new AccessoryNonEmptyStringType();
 
@@ -505,7 +515,7 @@ final class BinaryOpHandler implements ExprHandler
 						}
 					}
 
-					$rightType = $scope->getType($expr->right);
+					$rightType = $getType($expr->right);
 					if ($rightType instanceof ConstantIntegerType) {
 						if ($expr->left instanceof Expr\PostInc) {
 							$result = $result->unionWith($this->createRangeTypes(
@@ -595,7 +605,7 @@ final class BinaryOpHandler implements ExprHandler
 	 * The boolean result of a `==` comparison, including the same-variable
 	 * special case. Shared by the Equal and NotEqual type callbacks.
 	 */
-	private function resolveEqualType(MutatingScope $scope, BinaryOp\Equal $expr): Type
+	private function resolveEqualType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, BinaryOp\Equal $expr): Type
 	{
 		if (
 			$expr->left instanceof Variable
@@ -607,8 +617,10 @@ final class BinaryOpHandler implements ExprHandler
 			return new ConstantBooleanType(true);
 		}
 
-		$leftType = $scope->getType($expr->left);
-		$rightType = $scope->getType($expr->right);
+		// the operands were processed during processExpr; read their stored
+		// results instead of re-walking via Scope::getType().
+		$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->left, $scope);
+		$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->right, $scope);
 
 		return $this->initializerExprTypeResolver->resolveEqualType($leftType, $rightType)->type;
 	}
