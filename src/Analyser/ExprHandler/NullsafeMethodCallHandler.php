@@ -115,7 +115,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 					new NullType(),
 				);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall, $nodeScopeResolver): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
@@ -130,7 +130,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 				)->setRootExpr($expr);
 
 				$nullSafeTypes = $this->typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $s);
-				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s)->intersectWith($nullSafeTypes->normalize($s));
+				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s, $nodeScopeResolver)->intersectWith($nullSafeTypes->normalize($s, $nodeScopeResolver));
 			},
 		);
 	}

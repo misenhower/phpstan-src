@@ -218,13 +218,18 @@ final class SpecifiedTypes
 		return $result->setRootExpr($rootExpr);
 	}
 
-	public function normalize(Scope $scope): self
+	public function normalize(Scope $scope, ?NodeScopeResolver $nodeScopeResolver = null): self
 	{
 		$sureTypes = $this->sureTypes;
 
 		foreach ($this->sureNotTypes as $exprString => [$exprNode, $sureNotType]) {
 			if (!isset($sureTypes[$exprString])) {
-				$sureTypes[$exprString] = [$exprNode, TypeCombinator::remove($scope->getType($exprNode), $sureNotType)];
+				// $nodeScopeResolver is passed from inside-out callbacks so the expr
+				// type is read from its ExpressionResult instead of Scope::getType().
+				$exprType = $nodeScopeResolver !== null
+					? $nodeScopeResolver->readStoredOrPriceOnDemand($exprNode, $scope->toMutatingScope())
+					: $scope->getType($exprNode);
+				$sureTypes[$exprString] = [$exprNode, TypeCombinator::remove($exprType, $sureNotType)];
 				continue;
 			}
 

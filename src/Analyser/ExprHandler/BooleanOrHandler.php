@@ -180,15 +180,15 @@ final class BooleanOrHandler implements ExprHandler
 					if (
 						$leftResult->getTypeForScope($s)->toBoolean()->isFalse()->yes()
 					) {
-						$types = $rightTypes->normalize($rightScope);
+						$types = $rightTypes->normalize($rightScope, $nodeScopeResolver);
 					} elseif (
 						$leftResult->getTypeForScope($s)->toBoolean()->isTrue()->yes()
 						|| $rightResult->getTypeForScope($s)->toBoolean()->isFalse()->yes()
 					) {
-						$types = $leftTypes->normalize($s);
+						$types = $leftTypes->normalize($s, $nodeScopeResolver);
 					} else {
-						$leftNormalized = $leftTypes->normalize($s);
-						$rightNormalized = $rightTypes->normalize($rightScope);
+						$leftNormalized = $leftTypes->normalize($s, $nodeScopeResolver);
+						$rightNormalized = $rightTypes->normalize($rightScope, $nodeScopeResolver);
 						$types = $leftNormalized->intersectWith($rightNormalized);
 						$types = $this->augmentBooleanOrTruthyWithConditionalHolders($nodeScopeResolver, $s, $rightScope, $expr, $types);
 						$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $rightScope, $leftNormalized, $rightNormalized, $expr->left, $expr->right, true, $types);

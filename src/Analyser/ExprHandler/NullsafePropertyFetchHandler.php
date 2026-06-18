@@ -92,7 +92,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 					new NullType(),
 				);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $propertyFetch): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $propertyFetch, $nodeScopeResolver): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
@@ -107,7 +107,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 				)->setRootExpr($expr);
 
 				$nullSafeTypes = $this->typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $s);
-				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s)->intersectWith($nullSafeTypes->normalize($s));
+				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s, $nodeScopeResolver)->intersectWith($nullSafeTypes->normalize($s, $nodeScopeResolver));
 			},
 		);
 	}

@@ -128,8 +128,8 @@ final class BooleanAndHandler implements ExprHandler
 				if ($context->true()) {
 					$types = $leftTypes->unionWith($rightTypes);
 				} else {
-					$leftNormalized = $leftTypes->normalize($s);
-					$rightNormalized = $rightTypes->normalize($rightScope);
+					$leftNormalized = $leftTypes->normalize($s, $nodeScopeResolver);
+					$rightNormalized = $rightTypes->normalize($rightScope, $nodeScopeResolver);
 					$types = $leftNormalized->intersectWith($rightNormalized);
 					$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $rightScope, $leftNormalized, $rightNormalized, $expr->left, $expr->right, false, $types);
 				}
