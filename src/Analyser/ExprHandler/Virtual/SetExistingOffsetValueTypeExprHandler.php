@@ -8,22 +8,18 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
-use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
-use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\SetExistingOffsetValueTypeExpr;
 use PHPStan\Type\Type;
 
 /**
- * @implements TypeResolvingExprHandler<SetExistingOffsetValueTypeExpr>
+ * @implements ExprHandler<SetExistingOffsetValueTypeExpr>
  */
 #[AutowiredService]
-final class SetExistingOffsetValueTypeExprHandler implements TypeResolvingExprHandler
+final class SetExistingOffsetValueTypeExprHandler implements ExprHandler
 {
 
 	public function __construct(private ExpressionResultFactory $expressionResultFactory)
@@ -37,9 +33,9 @@ final class SetExistingOffsetValueTypeExprHandler implements TypeResolvingExprHa
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
-		// because this is a virtual node handler, the caller will only be interested in the type
-		// we don't need to process the inner expr
-
+		// virtual node: callers only read the type, computed lazily by the
+		// typeCallback. A null specifyTypesCallback falls back to default
+		// narrowing in TypeSpecifier, matching the old specifyDefaultTypes().
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $scope,
@@ -48,21 +44,11 @@ final class SetExistingOffsetValueTypeExprHandler implements TypeResolvingExprHa
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
+			typeCallback: static fn (MutatingScope $s): Type => $s->getType($expr->getVar())->setExistingOffsetValueType(
+				$s->getType($expr->getDim()),
+				$s->getType($expr->getValue()),
+			),
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		$varType = $scope->getType($expr->getVar());
-		return $varType->setExistingOffsetValueType(
-			$scope->getType($expr->getDim()),
-			$scope->getType($expr->getValue()),
-		);
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
