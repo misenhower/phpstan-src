@@ -63,7 +63,7 @@ final class InterpolatedStringHandler implements ExprHandler
 			$throwPoints = array_merge($throwPoints, $partResult->getThrowPoints());
 			$impurePoints = array_merge($impurePoints, $partResult->getImpurePoints());
 
-			$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $part, $scope);
+			$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $part, $scope, $partResult);
 			$throwPoints = array_merge($throwPoints, $toStringResult->getThrowPoints());
 			$impurePoints = array_merge($impurePoints, $toStringResult->getImpurePoints());
 

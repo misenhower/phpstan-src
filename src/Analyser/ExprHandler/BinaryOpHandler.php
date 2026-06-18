@@ -101,8 +101,8 @@ final class BinaryOpHandler implements ExprHandler
 			$throwPoints[] = InternalThrowPoint::createExplicit($leftResult->getScope(), new ObjectType(DivisionByZeroError::class), $expr, false);
 		}
 		if ($expr instanceof BinaryOp\Concat) {
-			$leftToStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->left, $scope);
-			$rightToStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->right, $leftResult->getScope());
+			$leftToStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->left, $scope, $leftResult);
+			$rightToStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->right, $leftResult->getScope(), $rightResult);
 			$throwPoints = array_merge($throwPoints, $leftToStringResult->getThrowPoints(), $rightToStringResult->getThrowPoints());
 			$impurePoints = array_merge($impurePoints, $leftToStringResult->getImpurePoints(), $rightToStringResult->getImpurePoints());
 		}
@@ -116,12 +116,21 @@ final class BinaryOpHandler implements ExprHandler
 			isAlwaysTerminating: $leftResult->isAlwaysTerminating() || $rightResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (MutatingScope $scope) use ($expr, $nodeScopeResolver): Type {
-				// the operands were processed during processExpr; read their stored
-				// results instead of re-walking via Scope::getType(). Synthetic
-				// nodes the resolver builds (e.g. getDivType's Mod) are priced on
-				// demand by the same helper.
-				$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+			typeCallback: function (MutatingScope $scope) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): Type {
+				// the operands were processed during processExpr; read their already
+				// computed results instead of re-walking via Scope::getType().
+				// Synthetic nodes the resolver builds (e.g. getDivType's Mod) are
+				// priced on demand by the same helper.
+				$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $scope, $nodeScopeResolver): Type {
+					if ($e === $expr->left) {
+						return $leftResult->getTypeForScope($scope);
+					}
+					if ($e === $expr->right) {
+						return $rightResult->getTypeForScope($scope);
+					}
+
+					return $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+				};
 
 				if ($expr instanceof BinaryOp\Smaller) {
 					return $getType($expr->left)->isSmallerThan($getType($expr->right), $this->phpVersion)->toBooleanType();
@@ -236,7 +245,7 @@ final class BinaryOpHandler implements ExprHandler
 
 				throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
 			},
-			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $nodeScopeResolver): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): SpecifiedTypes {
 				if ($expr instanceof BinaryOp\Identical) {
 					return $this->equalityTypeSpecifyingHelper->specifyTypesForIdentical($nodeScopeResolver, $expr, $scope, $context);
 				}
@@ -308,10 +317,20 @@ final class BinaryOpHandler implements ExprHandler
 
 					$orEqual = $expr instanceof BinaryOp\SmallerOrEqual;
 					$offset = $orEqual ? 0 : 1;
-					// the operands and their subexpressions were processed during
-					// processExpr; read their stored results instead of re-walking
-					// via Scope::getType().
-					$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+					// the operands were processed during processExpr; read their
+					// already computed results instead of re-walking via
+					// Scope::getType(). Their subexpressions (e.g. count() arguments)
+					// were also processed and are read from the stored result.
+					$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $scope, $nodeScopeResolver): Type {
+						if ($e === $expr->left) {
+							return $leftResult->getTypeForScope($scope);
+						}
+						if ($e === $expr->right) {
+							return $rightResult->getTypeForScope($scope);
+						}
+
+						return $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+					};
 					$leftType = $getType($expr->left);
 					$result = (new SpecifiedTypes([], []))->setRootExpr($expr);
 

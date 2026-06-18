@@ -52,7 +52,7 @@ final class CastStringHandler implements ExprHandler
 		$impurePoints = $exprResult->getImpurePoints();
 		$throwPoints = $exprResult->getThrowPoints();
 
-		$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->expr, $scope);
+		$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->expr, $scope, $exprResult);
 		$throwPoints = array_merge($throwPoints, $toStringResult->getThrowPoints());
 		$impurePoints = array_merge($impurePoints, $toStringResult->getImpurePoints());
 

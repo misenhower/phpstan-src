@@ -26,14 +26,21 @@ final class ImplicitToStringCallHelper
 	{
 	}
 
-	public function processImplicitToStringCall(NodeScopeResolver $nodeScopeResolver, Expr $expr, MutatingScope $scope): ExpressionResult
+	/**
+	 * @param ExpressionResult|null $exprResult the already-computed result of $expr,
+	 *     passed by callers that processed it on $scope so this helper reads its type
+	 *     directly instead of re-walking via Scope::getType(); callers that do not
+	 *     hold the result (only the Expr) pass null and the type is read from the
+	 *     stored result or priced on demand
+	 */
+	public function processImplicitToStringCall(NodeScopeResolver $nodeScopeResolver, Expr $expr, MutatingScope $scope, ?ExpressionResult $exprResult = null): ExpressionResult
 	{
 		$throwPoints = [];
 		$impurePoints = [];
 
-		// the expression was processed before this call; read its stored result
-		// or price it on demand instead of re-walking via Scope::getType().
-		$exprType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
+		$exprType = $exprResult !== null
+			? $exprResult->getTypeForScope($scope)
+			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
 
 		$toStringMethod = null;
 		if (!$exprType->isObject()->no()) {

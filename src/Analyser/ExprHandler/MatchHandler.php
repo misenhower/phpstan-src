@@ -497,9 +497,9 @@ final class MatchHandler implements ExprHandler
 
 		$isExhaustive = $hasDefaultCond || $hasAlwaysTrueCond;
 		if (!$isExhaustive) {
-			// the subject was processed above; read its stored result on the
+			// the subject was processed above ($condResult); read its type on the
 			// arm-narrowed scope instead of re-walking via Scope::getType().
-			$remainingType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->cond, $matchScope);
+			$remainingType = $condResult->getTypeForScope($matchScope);
 			if ($remainingType instanceof NeverType) {
 				$isExhaustive = true;
 			}
