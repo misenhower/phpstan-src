@@ -50,14 +50,14 @@ final class UnaryMinusHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
-			typeCallback: fn (MutatingScope $scope) => $this->initializerExprTypeResolver->getUnaryMinusType($expr->expr, static function (Expr $e) use ($scope, $expr, $exprResult): Type {
+			typeCallback: fn (MutatingScope $scope) => $this->initializerExprTypeResolver->getUnaryMinusType($expr->expr, static function (Expr $e) use ($scope, $expr, $exprResult, $nodeScopeResolver): Type {
 				if ($e === $expr->expr) {
 					return $exprResult->getTypeForScope($scope);
 				}
 
 				// a synthetic node ($expr->expr * -1, derived for an IntegerRangeType
-				// operand) - not a child result, resolved on demand
-				return $scope->getType($e);
+				// operand) created inside getUnaryMinusType - priced on demand
+				return $nodeScopeResolver->priceSyntheticOnDemand($e, $scope);
 			}),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
