@@ -2936,6 +2936,26 @@ class NodeScopeResolver
 		return $this->processExprOnDemand($expr, $scope, $current->duplicate())->getTypeForScope($scope);
 	}
 
+	/** Native counterpart of readStoredOrPriceOnDemand(). */
+	public function readStoredOrPriceOnDemandNative(Expr $expr, MutatingScope $scope): Type
+	{
+		$current = $scope->getCurrentExpressionResultStorage();
+		$result = $current?->findExpressionResult($expr);
+		if ($result !== null) {
+			return $result->getNativeTypeForScope($scope);
+		}
+
+		return $this->priceSyntheticOnDemandNative($expr, $scope);
+	}
+
+	/** Native counterpart of priceSyntheticOnDemand(). */
+	public function priceSyntheticOnDemandNative(Expr $expr, MutatingScope $scope): Type
+	{
+		$current = $scope->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage();
+
+		return $this->processExprOnDemand($expr, $scope, $current->duplicate())->getNativeTypeForScope($scope);
+	}
+
 	/**
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
 	 */
