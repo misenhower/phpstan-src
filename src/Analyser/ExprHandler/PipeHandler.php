@@ -76,11 +76,11 @@ final class PipeHandler implements ExprHandler
 		}
 
 		if ($firstClassCallableNode !== null) {
-			// the original first-class callable node is not processed through
-			// processExprNode - store its result so that node callbacks asking
-			// about its type can be resumed. Its closure type lives on the
-			// matching *CallableNode, resolved on demand by its handler.
-			$callableNode = $firstClassCallableNode;
+			// store a result for $expr->right so node callbacks asking about its
+			// type can be resumed. Its closure type lives on the matching
+			// *CallableNode, processed here (storage is available, so the result -
+			// not the storage - is captured) and read back in the typeCallback.
+			$callableNodeResult = $nodeScopeResolver->processExprOnDemand($firstClassCallableNode, $scope, $storage);
 			$nodeScopeResolver->storeExpressionResult($storage, $expr->right, $this->expressionResultFactory->create(
 				$scope,
 				beforeScope: $scope,
@@ -89,7 +89,7 @@ final class PipeHandler implements ExprHandler
 				isAlwaysTerminating: false,
 				throwPoints: [],
 				impurePoints: [],
-				typeCallback: static fn (MutatingScope $s): Type => $s->getType($callableNode),
+				typeCallback: static fn (MutatingScope $s): Type => $callableNodeResult->getTypeForScope($s),
 			));
 		}
 

@@ -77,6 +77,7 @@ final class ArrayDimFetchHandler implements ExprHandler
 		$scope = $varResult->getScope();
 
 		$varType = $varResult->getTypeForScope($scope);
+		$offsetGetResult = null;
 		if (!$varType->isArray()->yes() && !(new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
 			$throwPoints = array_merge($throwPoints, $nodeScopeResolver->processExprNode(
 				$stmt,
@@ -86,6 +87,15 @@ final class ArrayDimFetchHandler implements ExprHandler
 				new NoopNodeCallback(),
 				$context,
 			)->getThrowPoints());
+			// process the offsetGet here (storage is available, so the result is
+			// captured - not the storage - avoiding a reference cycle) so the
+			// typeCallback reads its result instead of Scope::getType(). Gated by
+			// the same maybe-ArrayAccess condition, so plain arrays never reach it.
+			$offsetGetResult = $nodeScopeResolver->processExprOnDemand(
+				new MethodCall($expr->var, new Identifier('offsetGet'), [new Arg($expr->dim)]),
+				$scope,
+				$storage,
+			);
 		}
 
 		return $this->expressionResultFactory->create(
@@ -98,25 +108,18 @@ final class ArrayDimFetchHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
 			issetabilityDescriptor: IssetabilityDescriptor::offset($varResult, $dimResult),
-			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $dimResult): Type {
+			typeCallback: static function (MutatingScope $s) use ($varResult, $dimResult, $offsetGetResult): Type {
 				$offsetAccessibleType = $varResult->getTypeForScope($s);
 				$shortCircuit = static fn (Type $type): Type => $varResult->containsNullsafe() && TypeCombinator::containsNull($offsetAccessibleType)
 					? TypeCombinator::addNull($type)
 					: $type;
 
 				if (
-					!$offsetAccessibleType->isArray()->yes()
+					$offsetGetResult !== null
+					&& !$offsetAccessibleType->isArray()->yes()
 					&& (new ObjectType(ArrayAccess::class))->isSuperTypeOf($offsetAccessibleType)->yes()
 				) {
-					return $shortCircuit($s->getType(
-						new MethodCall(
-							$expr->var,
-							new Identifier('offsetGet'),
-							[
-								new Arg($expr->dim),
-							],
-						),
-					));
+					return $shortCircuit($offsetGetResult->getTypeForScope($s));
 				}
 
 				return $shortCircuit($offsetAccessibleType->getOffsetValueType($dimResult->getTypeForScope($s)));
