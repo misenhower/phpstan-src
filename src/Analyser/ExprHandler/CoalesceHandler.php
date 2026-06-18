@@ -75,7 +75,7 @@ final class CoalesceHandler implements ExprHandler
 		// mid-processing would take the on-demand path and recurse
 		$rightScope = $scope->applySpecifiedTypes($this->getFalseySpecifiedTypes($scope, $expr, $condResult, TypeSpecifierContext::createFalsey()));
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $rightScope, $storage, $nodeCallback, $context->enterDeep());
-		$rightExprType = $scope->getType($expr->right);
+		$rightExprType = $rightResult->getTypeForScope($scope);
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
 			$scope = $scope->filterByTruthyValue(new Expr\Isset_([$expr->left]));
 		} else {
