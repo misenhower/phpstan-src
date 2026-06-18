@@ -1862,14 +1862,15 @@ class NodeScopeResolver
 			$bodyScope = $bodyScope->mergeWith($scope);
 			$bodyScopeMaybeRan = $bodyScope;
 			$storage = $originalStorage;
-			$bodyScope = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep())->getTruthyScope();
+			$bodyCondResult = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep());
+			$bodyScope = $bodyCondResult->getTruthyScope();
 			$finalScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, $nodeCallback, $context)->filterOutLoopExitPoints();
 			$finalScope = $finalScopeResult->getScope()->filterByFalseyValue($stmt->cond);
 
 			$alwaysIterates = false;
 			$neverIterates = false;
 			if ($context->isTopLevel()) {
-				$condBooleanType = ($this->treatPhpDocTypesAsCertain ? $this->readStoredOrPriceOnDemand($stmt->cond, $bodyScopeMaybeRan) : $this->readStoredOrPriceOnDemand($stmt->cond, $bodyScopeMaybeRan->doNotTreatPhpDocTypesAsCertain()))->toBoolean();
+				$condBooleanType = ($this->treatPhpDocTypesAsCertain ? $bodyCondResult->getTypeForScope($bodyScopeMaybeRan) : $bodyCondResult->getTypeForScope($bodyScopeMaybeRan->doNotTreatPhpDocTypesAsCertain()))->toBoolean();
 				$alwaysIterates = $condBooleanType->isTrue()->yes();
 				$neverIterates = $condBooleanType->isFalse()->yes();
 			}
