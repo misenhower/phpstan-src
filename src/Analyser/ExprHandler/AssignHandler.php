@@ -604,12 +604,12 @@ final class AssignHandler implements ExprHandler
 			if ($enterExpressionAssign) {
 				$scope = $scope->enterExpressionAssign($var, false);
 			}
-			$result = $nodeScopeResolver->processExprNode($stmt, $var, $scope, $storage, $nodeCallback, $context->enterDeep());
-			$hasYield = $result->hasYield();
-			$throwPoints = $result->getThrowPoints();
-			$impurePoints = $result->getImpurePoints();
-			$isAlwaysTerminating = $result->isAlwaysTerminating();
-			$scope = $result->getScope();
+			$varResult = $nodeScopeResolver->processExprNode($stmt, $var, $scope, $storage, $nodeCallback, $context->enterDeep());
+			$hasYield = $varResult->hasYield();
+			$throwPoints = $varResult->getThrowPoints();
+			$impurePoints = $varResult->getImpurePoints();
+			$isAlwaysTerminating = $varResult->isAlwaysTerminating();
+			$scope = $varResult->getScope();
 			if ($enterExpressionAssign) {
 				$scope = $scope->exitExpressionAssign($var);
 			}
@@ -690,8 +690,8 @@ final class AssignHandler implements ExprHandler
 			$isAlwaysTerminating = $isAlwaysTerminating || $result->isAlwaysTerminating();
 			$scope = $result->getScope();
 
-			$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($var, $scope);
-			$varNativeType = $nodeScopeResolver->readStoredOrPriceOnDemandNative($var, $scope);
+			$varType = $varResult->getTypeForScope($scope);
+			$varNativeType = $varResult->getNativeTypeForScope($scope);
 
 			// 4. compose types
 			$isImplicitArrayCreation = $this->isImplicitArrayCreation($dimFetchStack, $scope);
@@ -819,7 +819,7 @@ final class AssignHandler implements ExprHandler
 				$throwPoints[] = InternalThrowPoint::createImplicit($scope, $var);
 			}
 
-			$propertyHolderType = $nodeScopeResolver->readStoredOrPriceOnDemand($var->var, $scope);
+			$propertyHolderType = $objectResult->getTypeForScope($scope);
 			if ($propertyName !== null && $propertyHolderType->hasInstanceProperty($propertyName)->yes()) {
 				$propertyReflection = $propertyHolderType->getInstanceProperty($propertyName, $scope);
 				$assignedExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
@@ -903,8 +903,8 @@ final class AssignHandler implements ExprHandler
 			if ($var->class instanceof Node\Name) {
 				$propertyHolderType = $scope->resolveTypeByName($var->class);
 			} else {
-				$nodeScopeResolver->processExprNode($stmt, $var->class, $scope, $storage, $nodeCallback, $context);
-				$propertyHolderType = $nodeScopeResolver->readStoredOrPriceOnDemand($var->class, $scope);
+				$classResult = $nodeScopeResolver->processExprNode($stmt, $var->class, $scope, $storage, $nodeCallback, $context);
+				$propertyHolderType = $classResult->getTypeForScope($scope);
 			}
 
 			$propertyName = null;
@@ -1035,21 +1035,21 @@ final class AssignHandler implements ExprHandler
 			// the chain is usually a clone of AST nodes already processed elsewhere
 			// (see Unset_ handling) - process it with a noop callback so that
 			// results for its nodes are stored without invoking rules twice
-			$nodeScopeResolver->processExprNode($stmt, $var, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
+			$varResult = $nodeScopeResolver->processExprNode($stmt, $var, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 
 			$offsetTypes = [];
 			$offsetNativeTypes = [];
 			foreach (array_reverse($dimFetchStack) as $dimFetch) {
 				$dimExpr = $dimFetch->getDim();
-				$nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
-				$offsetTypes[] = [$nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $scope), $dimFetch];
-				$offsetNativeTypes[] = [$nodeScopeResolver->readStoredOrPriceOnDemandNative($dimExpr, $scope), $dimFetch];
+				$dimResult = $nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
+				$offsetTypes[] = [$dimResult->getTypeForScope($scope), $dimFetch];
+				$offsetNativeTypes[] = [$dimResult->getNativeTypeForScope($scope), $dimFetch];
 			}
 
 			$valueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
 			$nativeValueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope);
-			$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($var, $scope);
-			$varNativeType = $nodeScopeResolver->readStoredOrPriceOnDemandNative($var, $scope);
+			$varType = $varResult->getTypeForScope($scope);
+			$varNativeType = $varResult->getNativeTypeForScope($scope);
 
 			$offsetValueType = $varType;
 			$offsetNativeValueType = $varNativeType;
