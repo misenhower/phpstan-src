@@ -113,7 +113,10 @@ final class ArrayHandler implements ExprHandler
 					);
 					if (
 						$s->hasExpressionType($isCallableCall)->yes()
-						&& $s->getType($isCallableCall)->isTrue()->yes()
+						// read the narrowed type from expressionTypes directly (the
+						// synthetic is_callable() call was never processed as a child),
+						// mirroring ConstFetchHandler's narrowed-constant lookup
+						&& $s->expressionTypes[$s->getNodeKey($isCallableCall)]->getType()->isTrue()->yes()
 					) {
 						$type = TypeCombinator::intersect($type, new CallableType());
 					}

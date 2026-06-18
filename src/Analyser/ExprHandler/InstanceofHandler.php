@@ -17,6 +17,7 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\BooleanType;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\MixedType;
@@ -103,9 +104,12 @@ final class InstanceofHandler implements ExprHandler
 						$classType = new ObjectType($className);
 					}
 				} else {
-					$classNameType = $classResult !== null
-						? $classResult->getTypeForScope($s)
-						: $s->getType($expr->class);
+					// this branch is only reached when $expr->class is an Expr,
+					// which is exactly when $classResult was set in processExpr
+					if ($classResult === null) {
+						throw new ShouldNotHappenException();
+					}
+					$classNameType = $classResult->getTypeForScope($s);
 					$result = $classNameType->toObjectTypeForInstanceofCheck();
 					$classType = $result->type;
 					$uncertainty = $result->uncertainty;
@@ -149,9 +153,12 @@ final class InstanceofHandler implements ExprHandler
 					return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 				}
 
-				$classNameType = $classResult !== null
-					? $classResult->getTypeForScope($s)
-					: $s->getType($expr->class);
+				// this branch is only reached when $expr->class is an Expr,
+				// which is exactly when $classResult was set in processExpr
+				if ($classResult === null) {
+					throw new ShouldNotHappenException();
+				}
+				$classNameType = $classResult->getTypeForScope($s);
 				$result = $classNameType->toObjectTypeForInstanceofCheck();
 				$type = $result->type;
 				$uncertainty = $result->uncertainty;

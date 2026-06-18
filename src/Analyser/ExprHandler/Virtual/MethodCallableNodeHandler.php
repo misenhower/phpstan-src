@@ -68,19 +68,21 @@ final class MethodCallableNodeHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: fn (MutatingScope $scope): Type => $this->resolveType($scope, $expr),
+			typeCallback: fn (MutatingScope $scope): Type => $this->resolveType($scope, $expr, $varResult),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 
-	private function resolveType(MutatingScope $scope, MethodCallableNode $expr): Type
+	private function resolveType(MutatingScope $scope, MethodCallableNode $expr, ExpressionResult $varResult): Type
 	{
 		$originalNode = $expr->getOriginalNode();
 		if (!$originalNode->name instanceof Identifier) {
 			return new ObjectType(Closure::class);
 		}
 
-		$varType = $scope->getType($originalNode->var);
+		// $originalNode->var is the same node as $expr->getVar(), processed in
+		// processExpr - read its ExpressionResult instead of Scope::getType()
+		$varType = $varResult->getTypeForScope($scope);
 		$method = $scope->getMethodReflection($varType, $originalNode->name->toString());
 		if ($method === null) {
 			return new ObjectType(Closure::class);

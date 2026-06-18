@@ -17,6 +17,7 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Reflection\InitializerExprTypeResolver;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\Type;
 use function array_merge;
@@ -91,9 +92,13 @@ final class ClassConstFetchHandler implements ExprHandler
 					$scope->isInClass() ? $scope->getClassReflection() : null,
 					// getClassConstFetchTypeByReflection only invokes this for $expr->class
 					// when it is an Expr, which is exactly when $classResult exists
-					static fn (Expr $e): Type => $classResult !== null && $e === $expr->class
-						? $classResult->getTypeForScope($scope)
-						: $scope->getType($e),
+					static function (Expr $e) use ($classResult, $scope): Type {
+						if ($classResult === null) {
+							throw new ShouldNotHappenException();
+						}
+
+						return $classResult->getTypeForScope($scope);
+					},
 				);
 			},
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),

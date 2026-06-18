@@ -18,6 +18,7 @@ use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\FunctionCallableNode;
 use PHPStan\Reflection\InitializerExprContext;
 use PHPStan\Reflection\InitializerExprTypeResolver;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
 
@@ -48,6 +49,7 @@ final class FunctionCallableNodeHandler implements ExprHandler
 		$impurePoints = [];
 		$hasYield = false;
 		$isAlwaysTerminating = false;
+		$nameResult = null;
 		if ($expr->getName() instanceof Expr) {
 			$nameResult = $nodeScopeResolver->processExprNode($stmt, $expr->getName(), $scope, $storage, $nodeCallback, ExpressionContext::createDeep());
 			$scope = $nameResult->getScope();
@@ -65,16 +67,21 @@ final class FunctionCallableNodeHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: fn (MutatingScope $scope): Type => $this->resolveType($scope, $expr),
+			typeCallback: fn (MutatingScope $scope): Type => $this->resolveType($scope, $expr, $nameResult),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 
-	private function resolveType(MutatingScope $scope, FunctionCallableNode $expr): Type
+	private function resolveType(MutatingScope $scope, FunctionCallableNode $expr, ?ExpressionResult $nameResult): Type
 	{
 		$originalNode = $expr->getOriginalNode();
 		if ($originalNode->name instanceof Expr) {
-			$callableType = $scope->getType($originalNode->name);
+			// $originalNode->name is the same node as $expr->getName(), processed
+			// in processExpr exactly in this branch - read its ExpressionResult
+			if ($nameResult === null) {
+				throw new ShouldNotHappenException();
+			}
+			$callableType = $nameResult->getTypeForScope($scope);
 			if (!$callableType->isCallable()->yes()) {
 				return new ObjectType(Closure::class);
 			}

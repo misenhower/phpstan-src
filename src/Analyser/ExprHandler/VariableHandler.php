@@ -22,6 +22,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\ErrorType;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\Type;
@@ -69,9 +70,12 @@ final class VariableHandler implements ExprHandler
 				return $s->getVariableType($expr->name);
 			}
 
-			$nameType = $nameResult !== null
-				? $nameResult->getTypeForScope($s)
-				: $s->getType($expr->name);
+			// this branch is only reached when $expr->name is an Expr, which is
+			// exactly when the caller (processExpr) set $nameResult
+			if ($nameResult === null) {
+				throw new ShouldNotHappenException();
+			}
+			$nameType = $nameResult->getTypeForScope($s);
 			if (count($nameType->getConstantStrings()) > 0) {
 				$types = [];
 				foreach ($nameType->getConstantStrings() as $constantString) {
