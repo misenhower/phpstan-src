@@ -34,8 +34,13 @@ final class ExistingArrayDimFetchHandler implements ExprHandler
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		// virtual node: callers only read the type, computed lazily by the
-		// typeCallback. A null specifyTypesCallback falls back to default
-		// narrowing in TypeSpecifier, matching the old specifyDefaultTypes().
+		// typeCallback. The plain array dim fetch is processed here (its real
+		// leaves are already stored by on-demand time) so the typeCallback reads
+		// its ExpressionResult instead of Scope::getType(). A null
+		// specifyTypesCallback falls back to default narrowing in TypeSpecifier,
+		// matching the old specifyDefaultTypes().
+		$arrayDimFetchResult = $nodeScopeResolver->processExprNode($stmt, new Expr\ArrayDimFetch($expr->getVar(), $expr->getDim()), $scope, $storage, $nodeCallback, $context);
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $scope,
@@ -44,7 +49,7 @@ final class ExistingArrayDimFetchHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $s): Type => $s->getType(new Expr\ArrayDimFetch($expr->getVar(), $expr->getDim())),
+			typeCallback: static fn (MutatingScope $s): Type => $arrayDimFetchResult->getTypeForScope($s),
 		);
 	}
 

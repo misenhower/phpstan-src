@@ -34,8 +34,16 @@ final class SetOffsetValueTypeExprHandler implements ExprHandler
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		// virtual node: callers only read the type, computed lazily by the
-		// typeCallback. A null specifyTypesCallback falls back to default
-		// narrowing in TypeSpecifier, matching the old specifyDefaultTypes().
+		// typeCallback. The (synthetic) sub-expressions are processed here so the
+		// typeCallback reads their ExpressionResults instead of Scope::getType().
+		// A null specifyTypesCallback falls back to default narrowing in
+		// TypeSpecifier, matching the old specifyDefaultTypes().
+		$varResult = $nodeScopeResolver->processExprNode($stmt, $expr->getVar(), $scope, $storage, $nodeCallback, $context);
+		$dimResult = $expr->getDim() !== null
+			? $nodeScopeResolver->processExprNode($stmt, $expr->getDim(), $scope, $storage, $nodeCallback, $context)
+			: null;
+		$valueResult = $nodeScopeResolver->processExprNode($stmt, $expr->getValue(), $scope, $storage, $nodeCallback, $context);
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $scope,
@@ -44,9 +52,9 @@ final class SetOffsetValueTypeExprHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $s): Type => $s->getType($expr->getVar())->setOffsetValueType(
-				$expr->getDim() !== null ? $s->getType($expr->getDim()) : null,
-				$s->getType($expr->getValue()),
+			typeCallback: static fn (MutatingScope $s): Type => $varResult->getTypeForScope($s)->setOffsetValueType(
+				$dimResult !== null ? $dimResult->getTypeForScope($s) : null,
+				$valueResult->getTypeForScope($s),
 			),
 		);
 	}
