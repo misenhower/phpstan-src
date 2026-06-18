@@ -16,10 +16,8 @@ use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
-use PHPStan\Node\Expr\OriginalPropertyTypeExpr;
 use PHPStan\Node\Expr\SetOffsetValueTypeExpr;
 use PHPStan\Type\Type;
-use PHPStan\Type\UnionType;
 
 /**
  * @implements TypeResolvingExprHandler<SetOffsetValueTypeExpr>
@@ -55,14 +53,7 @@ final class SetOffsetValueTypeExprHandler implements TypeResolvingExprHandler
 
 	public function resolveType(MutatingScope $scope, Expr $expr): Type
 	{
-		$varNode = $expr->getVar();
-		$varType = $scope->getType($varNode);
-		if ($varNode instanceof OriginalPropertyTypeExpr) {
-			$currentPropertyType = $scope->getType($varNode->getPropertyFetch());
-			if ($varType instanceof UnionType) {
-				$varType = $varType->filterTypes(static fn (Type $innerType) => !$innerType->isSuperTypeOf($currentPropertyType)->no());
-			}
-		}
+		$varType = $scope->getType($expr->getVar());
 		return $varType->setOffsetValueType(
 			$expr->getDim() !== null ? $scope->getType($expr->getDim()) : null,
 			$scope->getType($expr->getValue()),

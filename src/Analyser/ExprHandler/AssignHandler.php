@@ -43,7 +43,6 @@ use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\ExistingArrayDimFetch;
 use PHPStan\Node\Expr\GetOffsetValueTypeExpr;
 use PHPStan\Node\Expr\IntertwinedVariableByReferenceWithExpr;
-use PHPStan\Node\Expr\OriginalPropertyTypeExpr;
 use PHPStan\Node\Expr\SetExistingOffsetValueTypeExpr;
 use PHPStan\Node\Expr\SetOffsetValueTypeExpr;
 use PHPStan\Node\Expr\TypeExpr;
@@ -53,6 +52,7 @@ use PHPStan\Node\PropertyAssignNode;
 use PHPStan\Node\VariableAssignNode;
 use PHPStan\Node\VirtualNode;
 use PHPStan\Php\PhpVersion;
+use PHPStan\Rules\Properties\PropertyReflectionFinder;
 use PHPStan\ShouldNotHappenException;
 use PHPStan\TrinaryLogic;
 use PHPStan\Type\Accessory\AccessoryArrayListType;
@@ -74,6 +74,7 @@ use PHPStan\Type\StaticTypeFactory;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\TypeUtils;
+use PHPStan\Type\UnionType;
 use TypeError;
 use function array_key_last;
 use function array_merge;
@@ -99,6 +100,7 @@ final class AssignHandler implements ExprHandler
 		private MatchHandler $matchHandler,
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private PropertyReflectionFinder $propertyReflectionFinder,
 	)
 	{
 	}
@@ -572,7 +574,7 @@ final class AssignHandler implements ExprHandler
 			while ($var instanceof ArrayDimFetch) {
 				$varForSetOffsetValue = $var->var;
 				if ($varForSetOffsetValue instanceof PropertyFetch || $varForSetOffsetValue instanceof StaticPropertyFetch) {
-					$varForSetOffsetValue = new OriginalPropertyTypeExpr($varForSetOffsetValue);
+					$varForSetOffsetValue = new TypeExpr($this->getOriginalPropertyType($varForSetOffsetValue, $scope));
 				}
 
 				if (
@@ -1011,7 +1013,7 @@ final class AssignHandler implements ExprHandler
 			while ($var instanceof ExistingArrayDimFetch) {
 				$varForSetOffsetValue = $var->getVar();
 				if ($varForSetOffsetValue instanceof PropertyFetch || $varForSetOffsetValue instanceof StaticPropertyFetch) {
-					$varForSetOffsetValue = new OriginalPropertyTypeExpr($varForSetOffsetValue);
+					$varForSetOffsetValue = new TypeExpr($this->getOriginalPropertyType($varForSetOffsetValue, $scope));
 				}
 				$assignedPropertyExpr = new SetExistingOffsetValueTypeExpr(
 					$varForSetOffsetValue,
@@ -1667,6 +1669,22 @@ final class AssignHandler implements ExprHandler
 		}
 
 		return false;
+	}
+
+	/**
+	 * Returns the property's readable (declared) type, filtered down to the union
+	 * members that are not disjoint from the currently narrowed property type.
+	 */
+	private function getOriginalPropertyType(PropertyFetch|StaticPropertyFetch $propertyFetch, MutatingScope $scope): Type
+	{
+		$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNode($propertyFetch, $scope);
+		$originalPropertyType = $propertyReflection !== null ? $propertyReflection->getReadableType() : new ErrorType();
+		if ($originalPropertyType instanceof UnionType) {
+			$currentPropertyType = $scope->getType($propertyFetch);
+			$originalPropertyType = $originalPropertyType->filterTypes(static fn (Type $innerType) => !$innerType->isSuperTypeOf($currentPropertyType)->no());
+		}
+
+		return $originalPropertyType;
 	}
 
 }
