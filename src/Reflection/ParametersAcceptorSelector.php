@@ -4,6 +4,7 @@ namespace PHPStan\Reflection;
 
 use Closure;
 use PhpParser\Node;
+use PhpParser\Node\Expr;
 use PHPStan\Analyser\ArgumentsNormalizer;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\Scope;
@@ -80,383 +81,16 @@ final class ParametersAcceptorSelector
 	{
 		$types = [];
 		$unpack = false;
-		if (
-			count($args) > 0
-			&& count($parametersAcceptors) > 0
-		) {
-			$arrayMapArgs = $args[0]->value->getAttribute(ArrayMapArgVisitor::ATTRIBUTE_NAME);
-			if ($arrayMapArgs !== null) {
-				$callbackParameters = [];
-				$nativeCallbackParameters = [];
-				foreach ($arrayMapArgs as $arg) {
-					$argType = $scope->getType($arg->value);
-					$nativeArgType = $scope->getNativeType($arg->value);
-					if ($arg->unpack) {
-						$constantArrays = $argType->getConstantArrays();
-						if (count($constantArrays) > 0) {
-							foreach ($constantArrays as $constantArray) {
-								$valueTypes = $constantArray->getValueTypes();
-								foreach ($valueTypes as $valueType) {
-									$callbackParameters[] = new DummyParameter('item', $scope->getIterableValueType($valueType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
-								}
-							}
-						}
-						$nativeConstantArrays = $nativeArgType->getConstantArrays();
-						if (count($nativeConstantArrays) > 0) {
-							foreach ($nativeConstantArrays as $constantArray) {
-								$valueTypes = $constantArray->getValueTypes();
-								foreach ($valueTypes as $valueType) {
-									$nativeCallbackParameters[] = new DummyParameter('item', $scope->getIterableValueType($valueType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
-								}
-							}
-						}
-					} else {
-						$callbackParameters[] = new DummyParameter('item', $scope->getIterableValueType($argType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
-						$nativeCallbackParameters[] = new DummyParameter('item', $scope->getIterableValueType($nativeArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
-					}
-				}
-
-				$acceptor = $parametersAcceptors[0];
-				$parameters = $acceptor->getParameters();
-				if (isset($parameters[0])) {
-					$callableType = new UnionType([
-						new CallableType($callbackParameters, new MixedType(), false),
-						new NullType(),
-					]);
-					$nativeCallableType = new UnionType([
-						new CallableType($nativeCallbackParameters, new MixedType(), false),
-						new NullType(),
-					]);
-					$parameters[0] = self::overrideParameterType($parameters[0], $callableType, $nativeCallableType);
-					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
-				}
-			}
-
-			if (count($args) >= 3 && (bool) $args[0]->getAttribute(CurlSetOptArgVisitor::ATTRIBUTE_NAME)) {
-				$optType = $scope->getType($args[1]->value);
-
-				$valueTypes = [];
-				foreach ($optType->getConstantScalarValues() as $scalarValue) {
-					if (!is_int($scalarValue)) {
-						$valueTypes = [];
-						break;
-					}
-
-					$valueType = self::getCurlOptValueType($scalarValue);
-					if ($valueType === null) {
-						$valueTypes = [];
-						break;
-					}
-
-					$valueTypes[] = $valueType;
-				}
-
-				$acceptor = $parametersAcceptors[0];
-				$parameters = $acceptor->getParameters();
-				if (count($valueTypes) !== 0 && isset($parameters[2])) {
-					$parameters[2] = new NativeParameterReflection(
-						$parameters[2]->getName(),
-						$parameters[2]->isOptional(),
-						TypeCombinator::union(...$valueTypes),
-						$parameters[2]->passedByReference(),
-						$parameters[2]->isVariadic(),
-						$parameters[2]->getDefaultValue(),
-					);
-
-					$parametersAcceptors = [
-						new FunctionVariant(
-							$acceptor->getTemplateTypeMap(),
-							$acceptor->getResolvedTemplateTypeMap(),
-							$parameters,
-							$acceptor->isVariadic(),
-							$acceptor->getReturnType(),
-							$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
-						),
-					];
-				}
-			}
-
-			if (count($args) >= 2 && (bool) $args[1]->getAttribute(CurlSetOptArrayArgVisitor::ATTRIBUTE_NAME)) {
-				$optArrayType = $scope->getType($args[1]->value);
-
-				$hasTypes = false;
-				$builder = ConstantArrayTypeBuilder::createEmpty();
-				foreach ($optArrayType->getIterableKeyType()->getConstantScalarTypes() as $optType) {
-					$optValue = $optType->getValue();
-
-					if (!is_int($optValue)) {
-						$hasTypes = false;
-						break;
-					}
-
-					$optValueType = self::getCurlOptValueType($optValue);
-					if ($optValueType === null) {
-						$hasTypes = false;
-						break;
-					}
-
-					$hasTypes = true;
-					$builder->setOffsetValueType(
-						new ConstantIntegerType($optValue),
-						$optValueType,
-						!$optArrayType->hasOffsetValueType($optType)->yes(),
-					);
-				}
-
-				$acceptor = $parametersAcceptors[0];
-				$parameters = $acceptor->getParameters();
-				if ($hasTypes && isset($parameters[1])) {
-					$parameters[1] = new NativeParameterReflection(
-						$parameters[1]->getName(),
-						$parameters[1]->isOptional(),
-						$builder->getArray(),
-						$parameters[1]->passedByReference(),
-						$parameters[1]->isVariadic(),
-						$parameters[1]->getDefaultValue(),
-					);
-
-					$parametersAcceptors = [
-						new FunctionVariant(
-							$acceptor->getTemplateTypeMap(),
-							$acceptor->getResolvedTemplateTypeMap(),
-							$parameters,
-							$acceptor->isVariadic(),
-							$acceptor->getReturnType(),
-							$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
-						),
-					];
-				}
-			}
-
-			if ((bool) $args[0]->getAttribute(ArrayFilterArgVisitor::ATTRIBUTE_NAME)) {
-				$arrayFilterParameters = null;
-				$nativeArrayFilterParameters = null;
-				if (isset($args[2])) {
-					$mode = $scope->getType($args[2]->value);
-					if ($mode instanceof ConstantIntegerType) {
-						if ($mode->getValue() === ARRAY_FILTER_USE_KEY) {
-							$arrayFilterParameters = [
-								new DummyParameter('key', $scope->getIterableKeyType($scope->getType($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							];
-							$nativeArrayFilterParameters = [
-								new DummyParameter('key', $scope->getIterableKeyType($scope->getNativeType($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							];
-						} elseif ($mode->getValue() === ARRAY_FILTER_USE_BOTH) {
-							$arrayFilterParameters = [
-								new DummyParameter('item', $scope->getIterableValueType($scope->getType($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-								new DummyParameter('key', $scope->getIterableKeyType($scope->getType($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							];
-							$nativeArrayFilterParameters = [
-								new DummyParameter('item', $scope->getIterableValueType($scope->getNativeType($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-								new DummyParameter('key', $scope->getIterableKeyType($scope->getNativeType($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							];
-						}
-					}
-				}
-
-				$acceptor = $parametersAcceptors[0];
-				$parameters = $acceptor->getParameters();
-				if (isset($parameters[1])) {
-					$arrayArgType = $scope->getType($args[0]->value);
-					$callableType = new UnionType([
-						new CallableType(
-							$arrayFilterParameters ?? [
-								new DummyParameter('item', $scope->getIterableValueType($arrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							],
-							new BooleanType(),
-							false,
-						),
-						new NullType(),
-					]);
-					$nativeArrayArgType = $scope->getNativeType($args[0]->value);
-					$nativeCallableType = new UnionType([
-						new CallableType(
-							$nativeArrayFilterParameters ?? [
-								new DummyParameter('item', $scope->getIterableValueType($nativeArrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							],
-							new BooleanType(),
-							false,
-						),
-						new NullType(),
-					]);
-					$parameters[1] = self::overrideParameterType($parameters[1], $callableType, $nativeCallableType);
-					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
-				}
-			}
-
-			if (count($args) <= 2 && (bool) $args[0]->getAttribute(ImplodeArgVisitor::ATTRIBUTE_NAME)) {
-				$acceptor = $namedArgumentsVariants[0] ?? $parametersAcceptors[0];
-				$parameters = $acceptor->getParameters();
-				if (
-					(isset($args[1]) || ($args[0]->name !== null && $args[0]->name->name === 'array'))
-					&& isset($parameters[0]) && isset($parameters[1])
-				) {
-					$parameters = [
-						new NativeParameterReflection($parameters[0]->getName(), optional: false, type: new StringType(), passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-						new NativeParameterReflection($parameters[1]->getName(), optional: false, type: new ArrayType(new MixedType(), new MixedType()), passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-					];
-				} elseif (isset($parameters[0])) {
-					$parameters = [
-						new NativeParameterReflection($parameters[0]->getName(), optional: false, type: new ArrayType(new MixedType(), new MixedType()), passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-					];
-				}
-
-				$parametersAcceptors = [
-					new FunctionVariant(
-						$acceptor->getTemplateTypeMap(),
-						$acceptor->getResolvedTemplateTypeMap(),
-						$parameters,
-						$acceptor->isVariadic(),
-						$acceptor->getReturnType(),
-						$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
-					),
-				];
-			}
-
-			if ((bool) $args[0]->getAttribute(ArrayWalkArgVisitor::ATTRIBUTE_NAME)) {
-				$arrayArgType = $scope->getType($args[0]->value);
-				$nativeArrayArgType = $scope->getNativeType($args[0]->value);
-				$arrayWalkParameters = [
-					new DummyParameter('item', $scope->getIterableValueType($arrayArgType), optional: false, passedByReference: PassedByReference::createReadsArgument(), variadic: false, defaultValue: null),
-					new DummyParameter('key', $scope->getIterableKeyType($arrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-				];
-				$nativeArrayWalkParameters = [
-					new DummyParameter('item', $scope->getIterableValueType($nativeArrayArgType), optional: false, passedByReference: PassedByReference::createReadsArgument(), variadic: false, defaultValue: null),
-					new DummyParameter('key', $scope->getIterableKeyType($nativeArrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-				];
-				if (isset($args[2])) {
-					$arrayWalkParameters[] = new DummyParameter('arg', $scope->getType($args[2]->value), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
-					$nativeArrayWalkParameters[] = new DummyParameter('arg', $scope->getNativeType($args[2]->value), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
-				}
-
-				$acceptor = $parametersAcceptors[0];
-				$parameters = $acceptor->getParameters();
-				if (isset($parameters[1])) {
-					$callableType = new CallableType($arrayWalkParameters, new MixedType(), false);
-					$nativeCallableType = new CallableType($nativeArrayWalkParameters, new MixedType(), false);
-					$parameters[1] = self::overrideParameterType($parameters[1], $callableType, $nativeCallableType);
-					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
-				}
-			}
-
-			if ((bool) $args[0]->getAttribute(ArrayFindArgVisitor::ATTRIBUTE_NAME)) {
-				$acceptor = $parametersAcceptors[0];
-				$parameters = $acceptor->getParameters();
-				if (isset($parameters[1])) {
-					$argType = $scope->getType($args[0]->value);
-					$callableType = new CallableType(
-						[
-							new DummyParameter('value', $scope->getIterableValueType($argType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							new DummyParameter('key', $scope->getIterableKeyType($argType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-						],
-						new BooleanType(),
-						false,
-					);
-					$nativeArgType = $scope->getNativeType($args[0]->value);
-					$nativeCallableType = new CallableType(
-						[
-							new DummyParameter('value', $scope->getIterableValueType($nativeArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-							new DummyParameter('key', $scope->getIterableKeyType($nativeArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
-						],
-						new BooleanType(),
-						false,
-					);
-					$parameters[1] = self::overrideParameterType($parameters[1], $callableType, $nativeCallableType);
-					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
-				}
-			}
-
-			$closureBindToVar = $args[0]->getAttribute(ClosureBindToVarVisitor::ATTRIBUTE_NAME);
-			if (
-				$closureBindToVar instanceof Node\Expr\Variable
-				&& is_string($closureBindToVar->name)
-			) {
-				$varType = $scope->getType($closureBindToVar);
-				if ((new ObjectType(Closure::class))->isSuperTypeOf($varType)->yes()) {
-					$inFunction = $scope->getFunction();
-					if ($inFunction !== null) {
-						$closureThisParameters = [];
-						foreach ($inFunction->getParameters() as $parameter) {
-							if ($parameter->getClosureThisType() === null) {
-								continue;
-							}
-							$closureThisParameters[$parameter->getName()] = $parameter->getClosureThisType();
-						}
-						if (array_key_exists($closureBindToVar->name, $closureThisParameters)) {
-							if ($scope->hasExpressionType(new ParameterVariableOriginalValueExpr($closureBindToVar->name))->yes()) {
-								$acceptor = $parametersAcceptors[0];
-								$parameters = $acceptor->getParameters();
-								if (isset($parameters[0])) {
-									$parameters[0] = new NativeParameterReflection(
-										$parameters[0]->getName(),
-										$parameters[0]->isOptional(),
-										$closureThisParameters[$closureBindToVar->name],
-										$parameters[0]->passedByReference(),
-										$parameters[0]->isVariadic(),
-										$parameters[0]->getDefaultValue(),
-									);
-									$parametersAcceptors = [
-										new FunctionVariant(
-											$acceptor->getTemplateTypeMap(),
-											$acceptor->getResolvedTemplateTypeMap(),
-											$parameters,
-											$acceptor->isVariadic(),
-											$acceptor->getReturnType(),
-											$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
-										),
-									];
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if (
-				$args[0]->getAttribute(ClosureBindArgVisitor::ATTRIBUTE_NAME) !== null
-				&& $args[0]->value instanceof Node\Expr\Variable
-				&& is_string($args[0]->value->name)
-			) {
-				$closureVarName = $args[0]->value->name;
-				$inFunction = $scope->getFunction();
-				if ($inFunction !== null) {
-					$closureThisParameters = [];
-					foreach ($inFunction->getParameters() as $parameter) {
-						if ($parameter->getClosureThisType() === null) {
-							continue;
-						}
-						$closureThisParameters[$parameter->getName()] = $parameter->getClosureThisType();
-					}
-					if (array_key_exists($closureVarName, $closureThisParameters)) {
-						if ($scope->hasExpressionType(new ParameterVariableOriginalValueExpr($closureVarName))->yes()) {
-							$acceptor = $parametersAcceptors[0];
-							$parameters = $acceptor->getParameters();
-
-							if (isset($parameters[1])) {
-								$parameters[1] = new NativeParameterReflection(
-									$parameters[1]->getName(),
-									$parameters[1]->isOptional(),
-									$closureThisParameters[$closureVarName],
-									$parameters[1]->passedByReference(),
-									$parameters[1]->isVariadic(),
-									$parameters[1]->getDefaultValue(),
-								);
-								$parametersAcceptors = [
-									new FunctionVariant(
-										$acceptor->getTemplateTypeMap(),
-										$acceptor->getResolvedTemplateTypeMap(),
-										$parameters,
-										$acceptor->isVariadic(),
-										$acceptor->getReturnType(),
-										$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
-									),
-								];
-							}
-						}
-					}
-				}
-			}
-		}
+		$parametersAcceptors = self::applyIntrinsicArgOverrides(
+			$args,
+			$parametersAcceptors,
+			$namedArgumentsVariants,
+			$scope,
+			static fn (Expr $e): Type => $scope->getType($e),
+			static fn (Expr $e): Type => $scope->getNativeType($e),
+			static fn (Type $t): Type => $scope->getIterableValueType($t),
+			static fn (Type $t): Type => $scope->getIterableKeyType($t),
+		);
 
 		if (count($parametersAcceptors) === 1) {
 			$acceptor = $parametersAcceptors[0];
@@ -543,7 +177,413 @@ final class ParametersAcceptorSelector
 		return self::selectFromTypes($types, $parametersAcceptors, $unpack);
 	}
 
-	private static function hasAcceptorTemplateOrLateResolvableType(ParametersAcceptor $acceptor): bool
+	/**
+	 * @internal
+	 * @param Node\Arg[] $args
+	 * @param ParametersAcceptor[] $parametersAcceptors
+	 * @param ParametersAcceptor[]|null $namedArgumentsVariants
+	 * @param Closure(Expr): Type $typeGetter
+	 * @param Closure(Expr): Type $nativeTypeGetter
+	 * @param Closure(Type): Type $iterableValueTypeGetter
+	 * @param Closure(Type): Type $iterableKeyTypeGetter
+	 * @return ParametersAcceptor[]
+	 */
+	public static function applyIntrinsicArgOverrides(
+		array $args,
+		array $parametersAcceptors,
+		?array $namedArgumentsVariants,
+		Scope $scope,
+		Closure $typeGetter,
+		Closure $nativeTypeGetter,
+		Closure $iterableValueTypeGetter,
+		Closure $iterableKeyTypeGetter,
+	): array
+	{
+		if (
+			count($args) > 0
+			&& count($parametersAcceptors) > 0
+		) {
+			$arrayMapArgs = $args[0]->value->getAttribute(ArrayMapArgVisitor::ATTRIBUTE_NAME);
+			if ($arrayMapArgs !== null) {
+				$callbackParameters = [];
+				$nativeCallbackParameters = [];
+				foreach ($arrayMapArgs as $arg) {
+					$argType = ($typeGetter)($arg->value);
+					$nativeArgType = ($nativeTypeGetter)($arg->value);
+					if ($arg->unpack) {
+						$constantArrays = $argType->getConstantArrays();
+						if (count($constantArrays) > 0) {
+							foreach ($constantArrays as $constantArray) {
+								$valueTypes = $constantArray->getValueTypes();
+								foreach ($valueTypes as $valueType) {
+									$callbackParameters[] = new DummyParameter('item', ($iterableValueTypeGetter)($valueType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+								}
+							}
+						}
+						$nativeConstantArrays = $nativeArgType->getConstantArrays();
+						if (count($nativeConstantArrays) > 0) {
+							foreach ($nativeConstantArrays as $constantArray) {
+								$valueTypes = $constantArray->getValueTypes();
+								foreach ($valueTypes as $valueType) {
+									$nativeCallbackParameters[] = new DummyParameter('item', ($iterableValueTypeGetter)($valueType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+								}
+							}
+						}
+					} else {
+						$callbackParameters[] = new DummyParameter('item', ($iterableValueTypeGetter)($argType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+						$nativeCallbackParameters[] = new DummyParameter('item', ($iterableValueTypeGetter)($nativeArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+					}
+				}
+
+				$acceptor = $parametersAcceptors[0];
+				$parameters = $acceptor->getParameters();
+				if (isset($parameters[0])) {
+					$callableType = new UnionType([
+						new CallableType($callbackParameters, new MixedType(), false),
+						new NullType(),
+					]);
+					$nativeCallableType = new UnionType([
+						new CallableType($nativeCallbackParameters, new MixedType(), false),
+						new NullType(),
+					]);
+					$parameters[0] = self::overrideParameterType($parameters[0], $callableType, $nativeCallableType);
+					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
+				}
+			}
+
+			if (count($args) >= 3 && (bool) $args[0]->getAttribute(CurlSetOptArgVisitor::ATTRIBUTE_NAME)) {
+				$optType = ($typeGetter)($args[1]->value);
+
+				$valueTypes = [];
+				foreach ($optType->getConstantScalarValues() as $scalarValue) {
+					if (!is_int($scalarValue)) {
+						$valueTypes = [];
+						break;
+					}
+
+					$valueType = self::getCurlOptValueType($scalarValue);
+					if ($valueType === null) {
+						$valueTypes = [];
+						break;
+					}
+
+					$valueTypes[] = $valueType;
+				}
+
+				$acceptor = $parametersAcceptors[0];
+				$parameters = $acceptor->getParameters();
+				if (count($valueTypes) !== 0 && isset($parameters[2])) {
+					$parameters[2] = new NativeParameterReflection(
+						$parameters[2]->getName(),
+						$parameters[2]->isOptional(),
+						TypeCombinator::union(...$valueTypes),
+						$parameters[2]->passedByReference(),
+						$parameters[2]->isVariadic(),
+						$parameters[2]->getDefaultValue(),
+					);
+
+					$parametersAcceptors = [
+						new FunctionVariant(
+							$acceptor->getTemplateTypeMap(),
+							$acceptor->getResolvedTemplateTypeMap(),
+							$parameters,
+							$acceptor->isVariadic(),
+							$acceptor->getReturnType(),
+							$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+						),
+					];
+				}
+			}
+
+			if (count($args) >= 2 && (bool) $args[1]->getAttribute(CurlSetOptArrayArgVisitor::ATTRIBUTE_NAME)) {
+				$optArrayType = ($typeGetter)($args[1]->value);
+
+				$hasTypes = false;
+				$builder = ConstantArrayTypeBuilder::createEmpty();
+				foreach ($optArrayType->getIterableKeyType()->getConstantScalarTypes() as $optType) {
+					$optValue = $optType->getValue();
+
+					if (!is_int($optValue)) {
+						$hasTypes = false;
+						break;
+					}
+
+					$optValueType = self::getCurlOptValueType($optValue);
+					if ($optValueType === null) {
+						$hasTypes = false;
+						break;
+					}
+
+					$hasTypes = true;
+					$builder->setOffsetValueType(
+						new ConstantIntegerType($optValue),
+						$optValueType,
+						!$optArrayType->hasOffsetValueType($optType)->yes(),
+					);
+				}
+
+				$acceptor = $parametersAcceptors[0];
+				$parameters = $acceptor->getParameters();
+				if ($hasTypes && isset($parameters[1])) {
+					$parameters[1] = new NativeParameterReflection(
+						$parameters[1]->getName(),
+						$parameters[1]->isOptional(),
+						$builder->getArray(),
+						$parameters[1]->passedByReference(),
+						$parameters[1]->isVariadic(),
+						$parameters[1]->getDefaultValue(),
+					);
+
+					$parametersAcceptors = [
+						new FunctionVariant(
+							$acceptor->getTemplateTypeMap(),
+							$acceptor->getResolvedTemplateTypeMap(),
+							$parameters,
+							$acceptor->isVariadic(),
+							$acceptor->getReturnType(),
+							$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+						),
+					];
+				}
+			}
+
+			if ((bool) $args[0]->getAttribute(ArrayFilterArgVisitor::ATTRIBUTE_NAME)) {
+				$arrayFilterParameters = null;
+				$nativeArrayFilterParameters = null;
+				if (isset($args[2])) {
+					$mode = ($typeGetter)($args[2]->value);
+					if ($mode instanceof ConstantIntegerType) {
+						if ($mode->getValue() === ARRAY_FILTER_USE_KEY) {
+							$arrayFilterParameters = [
+								new DummyParameter('key', ($iterableKeyTypeGetter)(($typeGetter)($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							];
+							$nativeArrayFilterParameters = [
+								new DummyParameter('key', ($iterableKeyTypeGetter)(($nativeTypeGetter)($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							];
+						} elseif ($mode->getValue() === ARRAY_FILTER_USE_BOTH) {
+							$arrayFilterParameters = [
+								new DummyParameter('item', ($iterableValueTypeGetter)(($typeGetter)($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+								new DummyParameter('key', ($iterableKeyTypeGetter)(($typeGetter)($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							];
+							$nativeArrayFilterParameters = [
+								new DummyParameter('item', ($iterableValueTypeGetter)(($nativeTypeGetter)($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+								new DummyParameter('key', ($iterableKeyTypeGetter)(($nativeTypeGetter)($args[0]->value)), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							];
+						}
+					}
+				}
+
+				$acceptor = $parametersAcceptors[0];
+				$parameters = $acceptor->getParameters();
+				if (isset($parameters[1])) {
+					$arrayArgType = ($typeGetter)($args[0]->value);
+					$callableType = new UnionType([
+						new CallableType(
+							$arrayFilterParameters ?? [
+								new DummyParameter('item', ($iterableValueTypeGetter)($arrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							],
+							new BooleanType(),
+							false,
+						),
+						new NullType(),
+					]);
+					$nativeArrayArgType = ($nativeTypeGetter)($args[0]->value);
+					$nativeCallableType = new UnionType([
+						new CallableType(
+							$nativeArrayFilterParameters ?? [
+								new DummyParameter('item', ($iterableValueTypeGetter)($nativeArrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							],
+							new BooleanType(),
+							false,
+						),
+						new NullType(),
+					]);
+					$parameters[1] = self::overrideParameterType($parameters[1], $callableType, $nativeCallableType);
+					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
+				}
+			}
+
+			if (count($args) <= 2 && (bool) $args[0]->getAttribute(ImplodeArgVisitor::ATTRIBUTE_NAME)) {
+				$acceptor = $namedArgumentsVariants[0] ?? $parametersAcceptors[0];
+				$parameters = $acceptor->getParameters();
+				if (
+					(isset($args[1]) || ($args[0]->name !== null && $args[0]->name->name === 'array'))
+					&& isset($parameters[0]) && isset($parameters[1])
+				) {
+					$parameters = [
+						new NativeParameterReflection($parameters[0]->getName(), optional: false, type: new StringType(), passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+						new NativeParameterReflection($parameters[1]->getName(), optional: false, type: new ArrayType(new MixedType(), new MixedType()), passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+					];
+				} elseif (isset($parameters[0])) {
+					$parameters = [
+						new NativeParameterReflection($parameters[0]->getName(), optional: false, type: new ArrayType(new MixedType(), new MixedType()), passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+					];
+				}
+
+				$parametersAcceptors = [
+					new FunctionVariant(
+						$acceptor->getTemplateTypeMap(),
+						$acceptor->getResolvedTemplateTypeMap(),
+						$parameters,
+						$acceptor->isVariadic(),
+						$acceptor->getReturnType(),
+						$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+					),
+				];
+			}
+
+			if ((bool) $args[0]->getAttribute(ArrayWalkArgVisitor::ATTRIBUTE_NAME)) {
+				$arrayArgType = ($typeGetter)($args[0]->value);
+				$nativeArrayArgType = ($nativeTypeGetter)($args[0]->value);
+				$arrayWalkParameters = [
+					new DummyParameter('item', ($iterableValueTypeGetter)($arrayArgType), optional: false, passedByReference: PassedByReference::createReadsArgument(), variadic: false, defaultValue: null),
+					new DummyParameter('key', ($iterableKeyTypeGetter)($arrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+				];
+				$nativeArrayWalkParameters = [
+					new DummyParameter('item', ($iterableValueTypeGetter)($nativeArrayArgType), optional: false, passedByReference: PassedByReference::createReadsArgument(), variadic: false, defaultValue: null),
+					new DummyParameter('key', ($iterableKeyTypeGetter)($nativeArrayArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+				];
+				if (isset($args[2])) {
+					$arrayWalkParameters[] = new DummyParameter('arg', ($typeGetter)($args[2]->value), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+					$nativeArrayWalkParameters[] = new DummyParameter('arg', ($nativeTypeGetter)($args[2]->value), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+				}
+
+				$acceptor = $parametersAcceptors[0];
+				$parameters = $acceptor->getParameters();
+				if (isset($parameters[1])) {
+					$callableType = new CallableType($arrayWalkParameters, new MixedType(), false);
+					$nativeCallableType = new CallableType($nativeArrayWalkParameters, new MixedType(), false);
+					$parameters[1] = self::overrideParameterType($parameters[1], $callableType, $nativeCallableType);
+					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
+				}
+			}
+
+			if ((bool) $args[0]->getAttribute(ArrayFindArgVisitor::ATTRIBUTE_NAME)) {
+				$acceptor = $parametersAcceptors[0];
+				$parameters = $acceptor->getParameters();
+				if (isset($parameters[1])) {
+					$argType = ($typeGetter)($args[0]->value);
+					$callableType = new CallableType(
+						[
+							new DummyParameter('value', ($iterableValueTypeGetter)($argType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							new DummyParameter('key', ($iterableKeyTypeGetter)($argType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+						],
+						new BooleanType(),
+						false,
+					);
+					$nativeArgType = ($nativeTypeGetter)($args[0]->value);
+					$nativeCallableType = new CallableType(
+						[
+							new DummyParameter('value', ($iterableValueTypeGetter)($nativeArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+							new DummyParameter('key', ($iterableKeyTypeGetter)($nativeArgType), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null),
+						],
+						new BooleanType(),
+						false,
+					);
+					$parameters[1] = self::overrideParameterType($parameters[1], $callableType, $nativeCallableType);
+					$parametersAcceptors = [self::overrideAcceptorParameters($acceptor, $parameters)];
+				}
+			}
+
+			$closureBindToVar = $args[0]->getAttribute(ClosureBindToVarVisitor::ATTRIBUTE_NAME);
+			if (
+				$closureBindToVar instanceof Node\Expr\Variable
+				&& is_string($closureBindToVar->name)
+			) {
+				$varType = ($typeGetter)($closureBindToVar);
+				if ((new ObjectType(Closure::class))->isSuperTypeOf($varType)->yes()) {
+					$inFunction = $scope->getFunction();
+					if ($inFunction !== null) {
+						$closureThisParameters = [];
+						foreach ($inFunction->getParameters() as $parameter) {
+							if ($parameter->getClosureThisType() === null) {
+								continue;
+							}
+							$closureThisParameters[$parameter->getName()] = $parameter->getClosureThisType();
+						}
+						if (array_key_exists($closureBindToVar->name, $closureThisParameters)) {
+							if ($scope->hasExpressionType(new ParameterVariableOriginalValueExpr($closureBindToVar->name))->yes()) {
+								$acceptor = $parametersAcceptors[0];
+								$parameters = $acceptor->getParameters();
+								if (isset($parameters[0])) {
+									$parameters[0] = new NativeParameterReflection(
+										$parameters[0]->getName(),
+										$parameters[0]->isOptional(),
+										$closureThisParameters[$closureBindToVar->name],
+										$parameters[0]->passedByReference(),
+										$parameters[0]->isVariadic(),
+										$parameters[0]->getDefaultValue(),
+									);
+									$parametersAcceptors = [
+										new FunctionVariant(
+											$acceptor->getTemplateTypeMap(),
+											$acceptor->getResolvedTemplateTypeMap(),
+											$parameters,
+											$acceptor->isVariadic(),
+											$acceptor->getReturnType(),
+											$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+										),
+									];
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if (
+				$args[0]->getAttribute(ClosureBindArgVisitor::ATTRIBUTE_NAME) !== null
+				&& $args[0]->value instanceof Node\Expr\Variable
+				&& is_string($args[0]->value->name)
+			) {
+				$closureVarName = $args[0]->value->name;
+				$inFunction = $scope->getFunction();
+				if ($inFunction !== null) {
+					$closureThisParameters = [];
+					foreach ($inFunction->getParameters() as $parameter) {
+						if ($parameter->getClosureThisType() === null) {
+							continue;
+						}
+						$closureThisParameters[$parameter->getName()] = $parameter->getClosureThisType();
+					}
+					if (array_key_exists($closureVarName, $closureThisParameters)) {
+						if ($scope->hasExpressionType(new ParameterVariableOriginalValueExpr($closureVarName))->yes()) {
+							$acceptor = $parametersAcceptors[0];
+							$parameters = $acceptor->getParameters();
+
+							if (isset($parameters[1])) {
+								$parameters[1] = new NativeParameterReflection(
+									$parameters[1]->getName(),
+									$parameters[1]->isOptional(),
+									$closureThisParameters[$closureVarName],
+									$parameters[1]->passedByReference(),
+									$parameters[1]->isVariadic(),
+									$parameters[1]->getDefaultValue(),
+								);
+								$parametersAcceptors = [
+									new FunctionVariant(
+										$acceptor->getTemplateTypeMap(),
+										$acceptor->getResolvedTemplateTypeMap(),
+										$parameters,
+										$acceptor->isVariadic(),
+										$acceptor->getReturnType(),
+										$acceptor instanceof ExtendedParametersAcceptor ? $acceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+									),
+								];
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return $parametersAcceptors;
+	}
+
+	/**
+	 * @internal
+	 */
+	public static function hasAcceptorTemplateOrLateResolvableType(ParametersAcceptor $acceptor): bool
 	{
 		if ($acceptor->getReturnType()->hasTemplateOrLateResolvableType()) {
 			return true;
