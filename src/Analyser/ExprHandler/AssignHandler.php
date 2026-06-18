@@ -670,12 +670,14 @@ final class AssignHandler implements ExprHandler
 			}
 
 			// SKIPPED (single-pass inside-out invariant): these two reads must stay as
-			// Scope::getType()/getNativeType(). Unlike the non-caching helpers,
-			// Scope::getType() memoises the assigned expression's sub-expression types
-			// onto $scope (e.g. hasExpressionType() for the array-dim-fetch being
-			// written). produceArrayDimFetchAssignValueToWrite() below relies on that
-			// memoised state to keep a freshly-coalesced offset optional - replacing
-			// these with the helpers regresses bug-13623 ($x[...] ??= [] chains).
+			// Scope::getType()/getNativeType(). This is NOT a scope-state side effect
+			// (assignExpression cannot reproduce it): getType() returns its cached
+			// resolvedTypes value, computed during loop convergence when a `$x[...] ??=
+			// []` left side was still maybe-set, so the coalesced value keeps its
+			// optional array{} branch. The side-effect-free helpers re-price on the
+			// converged (definitely-set) scope, where CoalesceHandler drops the array{}
+			// branch (issetCheck === true) - which regresses bug-13623. The optionality
+			// lives in the loop history the converged scope no longer carries.
 			$valueToWrite = $scope->getType($assignedExpr);
 			$nativeValueToWrite = $scope->getNativeType($assignedExpr);
 			$scopeBeforeAssignEval = $scope;

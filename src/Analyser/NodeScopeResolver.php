@@ -2875,10 +2875,12 @@ class NodeScopeResolver
 			return $expr;
 		}
 
-		// Scope::getType() here memoises the expression's sub-expression types onto
-		// $scope (e.g. the array-dim-fetches of a `$x[...] ??= []` chain); the ??=
-		// offset detection relies on that memoised state, so the side-effect-free
-		// helpers would regress bug-13623. Kept as Scope::getType deliberately.
+		// Scope::getType() must stay here (not a scope-state side effect): for a
+		// `$x[...] ??= []` expression it returns getType()'s cached resolvedTypes
+		// value, computed during loop convergence when the left side was maybe-set
+		// (so the coalesced value keeps its optional array{} branch). The
+		// side-effect-free helpers re-price on the converged scope and drop that
+		// branch, regressing bug-13623. See AssignHandler::processAssignVar.
 		$exprType = $scope->getType($expr);
 		if ($exprType instanceof NeverType && $exprType->isExplicit()) {
 			return $expr;
