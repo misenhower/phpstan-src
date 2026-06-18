@@ -27,7 +27,7 @@ final class RicherScopeGetTypeHelper
 	/**
 	 * @return TypeResult<BooleanType>
 	 */
-	public function getIdenticalResult(Scope $scope, Identical $expr): TypeResult
+	public function getIdenticalResult(Scope $scope, Identical $expr, ?NodeScopeResolver $nodeScopeResolver = null): TypeResult
 	{
 		if (
 			$expr->left instanceof Variable
@@ -39,8 +39,15 @@ final class RicherScopeGetTypeHelper
 			return new TypeResult(new ConstantBooleanType(true), []);
 		}
 
-		$leftType = $scope->getType($expr->left);
-		$rightType = $scope->getType($expr->right);
+		// $nodeScopeResolver is passed from inside-out callbacks (e.g. BinaryOp's
+		// typeCallback) so the operands are read from their ExpressionResults
+		// instead of Scope::getType(); rules call this without it (BC).
+		$leftType = $nodeScopeResolver !== null
+			? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->left, $scope->toMutatingScope())
+			: $scope->getType($expr->left);
+		$rightType = $nodeScopeResolver !== null
+			? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->right, $scope->toMutatingScope())
+			: $scope->getType($expr->right);
 
 		if (
 			(
@@ -78,9 +85,9 @@ final class RicherScopeGetTypeHelper
 	/**
 	 * @return TypeResult<BooleanType>
 	 */
-	public function getNotIdenticalResult(Scope $scope, Node\Expr\BinaryOp\NotIdentical $expr): TypeResult
+	public function getNotIdenticalResult(Scope $scope, Node\Expr\BinaryOp\NotIdentical $expr, ?NodeScopeResolver $nodeScopeResolver = null): TypeResult
 	{
-		$identicalResult = $this->getIdenticalResult($scope, new Identical($expr->left, $expr->right));
+		$identicalResult = $this->getIdenticalResult($scope, new Identical($expr->left, $expr->right), $nodeScopeResolver);
 		$identicalType = $identicalResult->type;
 		if ($identicalType instanceof ConstantBooleanType) {
 			return new TypeResult(new ConstantBooleanType(!$identicalType->getValue()), $identicalResult->reasons);

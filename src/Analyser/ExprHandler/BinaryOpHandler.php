@@ -159,11 +159,11 @@ final class BinaryOpHandler implements ExprHandler
 				}
 
 				if ($expr instanceof BinaryOp\Identical) {
-					return $this->richerScopeGetTypeHelper->getIdenticalResult($scope, $expr)->type;
+					return $this->richerScopeGetTypeHelper->getIdenticalResult($scope, $expr, $nodeScopeResolver)->type;
 				}
 
 				if ($expr instanceof BinaryOp\NotIdentical) {
-					return $this->richerScopeGetTypeHelper->getNotIdenticalResult($scope, $expr)->type;
+					return $this->richerScopeGetTypeHelper->getNotIdenticalResult($scope, $expr, $nodeScopeResolver)->type;
 				}
 
 				if ($expr instanceof BinaryOp\LogicalXor) {
