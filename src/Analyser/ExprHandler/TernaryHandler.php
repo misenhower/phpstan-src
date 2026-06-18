@@ -67,7 +67,7 @@ final class TernaryHandler implements ExprHandler
 			$impurePoints = array_merge($impurePoints, $ifResult->getImpurePoints());
 			$hasYield = $hasYield || $ifResult->hasYield();
 			$ifTrueScope = $ifResult->getScope();
-			$ifTrueType = $ifTrueScope->getType($expr->if);
+			$ifTrueType = $ifResult->getTypeForScope($ifTrueScope);
 
 			$elseResult = $nodeScopeResolver->processExprNode($stmt, $expr->else, $ifFalseScope, $storage, $nodeCallback, $context);
 			$throwPoints = array_merge($throwPoints, $elseResult->getThrowPoints());
@@ -76,7 +76,7 @@ final class TernaryHandler implements ExprHandler
 			$ifFalseScope = $elseResult->getScope();
 		}
 
-		$condType = $scope->getType($expr->cond);
+		$condType = $ternaryCondResult->getTypeForScope($scope);
 		if ($condType->isTrue()->yes()) {
 			$finalScope = $ifTrueScope;
 		} elseif ($condType->isFalse()->yes()) {
@@ -85,7 +85,7 @@ final class TernaryHandler implements ExprHandler
 			if ($ifTrueType instanceof NeverType && $ifTrueType->isExplicit()) {
 				$finalScope = $ifFalseScope;
 			} else {
-				$ifFalseType = $ifFalseScope->getType($expr->else);
+				$ifFalseType = $elseResult->getTypeForScope($ifFalseScope);
 
 				if ($ifFalseType instanceof NeverType && $ifFalseType->isExplicit()) {
 					$finalScope = $ifTrueScope;

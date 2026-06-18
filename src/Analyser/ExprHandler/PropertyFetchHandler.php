@@ -65,7 +65,7 @@ final class PropertyFetchHandler implements ExprHandler
 		$nameResult = null;
 		if ($expr->name instanceof Identifier) {
 			$propertyName = $expr->name->toString();
-			$propertyHolderType = $scopeBeforeVar->getType($expr->var);
+			$propertyHolderType = $varResult->getTypeForScope($scopeBeforeVar);
 			$propertyReflection = $scopeBeforeVar->getInstancePropertyReflection($propertyHolderType, $propertyName);
 			if ($propertyReflection !== null && $this->phpVersion->supportsPropertyHooks()) {
 				$propertyDeclaringClass = $propertyReflection->getDeclaringClass();
