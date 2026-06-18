@@ -58,11 +58,19 @@ final class AssignOpHandler implements ExprHandler
 	{
 		$beforeScope = $scope;
 
-		$typeCallback = function (MutatingScope $s) use ($expr): Type {
-			$getType = static fn (Expr $e): Type => $s->getType($e);
+		$typeCallback = function (MutatingScope $s) use ($expr, $nodeScopeResolver): Type {
+			// $expr->var and $expr->expr were processed during this handler's
+			// processExpr (the var as the assignment target, the value expr by the
+			// inner closure below), so their ExpressionResults are stored - read
+			// them instead of re-walking via Scope::getType().
+			$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $s);
 
 			if ($expr instanceof Expr\AssignOp\Coalesce) {
-				return $s->getType(new BinaryOp\Coalesce($expr->var, $expr->expr, $expr->getAttributes()));
+				// the coalesce is synthetic - price it on demand against the
+				// current storage, mirroring resolveTypeOfNewWorldHandlerNode().
+				$coalesce = new BinaryOp\Coalesce($expr->var, $expr->expr, $expr->getAttributes());
+
+				return $nodeScopeResolver->priceSyntheticOnDemand($coalesce, $s);
 			}
 
 			if ($expr instanceof Expr\AssignOp\Concat) {
@@ -158,7 +166,7 @@ final class AssignOpHandler implements ExprHandler
 
 				$exprResult = $nodeScopeResolver->processExprNode($stmt, $expr->expr, $scope, $storage, $nodeCallback, $context->enterDeep());
 				if ($expr instanceof Expr\AssignOp\Coalesce) {
-					$isAlwaysTerminating = $exprResult->isAlwaysTerminating() && $originalScope->getType($expr->var)->isNull()->yes();
+					$isAlwaysTerminating = $exprResult->isAlwaysTerminating() && $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $originalScope)->isNull()->yes();
 					return $this->expressionResultFactory->create(
 						$exprResult->getScope()->mergeWith($originalScope),
 						$originalScope,
@@ -179,7 +187,7 @@ final class AssignOpHandler implements ExprHandler
 		$impurePoints = $assignResult->getImpurePoints();
 		if (
 			($expr instanceof Expr\AssignOp\Div || $expr instanceof Expr\AssignOp\Mod) &&
-			!$scope->getType($expr->expr)->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
+			!$nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $scope)->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
 		) {
 			$throwPoints[] = InternalThrowPoint::createExplicit($scope, new ObjectType(DivisionByZeroError::class), $expr, false);
 		}

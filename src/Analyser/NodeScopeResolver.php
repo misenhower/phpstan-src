@@ -2903,6 +2903,40 @@ class NodeScopeResolver
 	}
 
 	/**
+	 * Reads the type, on the given scope, of a node an ExprHandler already
+	 * processed (its ExpressionResult is in the storage of the analysis in
+	 * progress). Used from lazily-invoked typeCallbacks instead of
+	 * Scope::getType(): it reads the stored result rather than re-walking, and
+	 * does not allocate a throwaway duplicate storage. Falls back to pricing the
+	 * node as synthetic when it is not stored (e.g. a re-evaluation reached this
+	 * before the original processing did).
+	 */
+	public function readStoredOrPriceOnDemand(Expr $expr, MutatingScope $scope): Type
+	{
+		$current = $scope->getCurrentExpressionResultStorage();
+		$result = $current?->findExpressionResult($expr);
+		if ($result !== null) {
+			return $result->getTypeForScope($scope);
+		}
+
+		return $this->priceSyntheticOnDemand($expr, $scope);
+	}
+
+	/**
+	 * Prices a synthetic node (one an ExprHandler built itself) on a duplicate of
+	 * the storage of the analysis currently in progress, mirroring
+	 * MutatingScope::resolveTypeOfNewWorldHandlerNode(): the duplicate isolates
+	 * the synthetic node's own stored result from the live storage while its real
+	 * subnodes still resolve from the fallback.
+	 */
+	public function priceSyntheticOnDemand(Expr $expr, MutatingScope $scope): Type
+	{
+		$current = $scope->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage();
+
+		return $this->processExprOnDemand($expr, $scope, $current->duplicate())->getTypeForScope($scope);
+	}
+
+	/**
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
 	 */
 	public function processExprNode(

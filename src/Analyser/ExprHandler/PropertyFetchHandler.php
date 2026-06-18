@@ -96,7 +96,7 @@ final class PropertyFetchHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
 			issetabilityDescriptor: IssetabilityDescriptor::property($varResult, fn (MutatingScope $s): ?FoundPropertyReflection => $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s), $expr),
-			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $nameResult): Type {
+			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $nameResult, $nodeScopeResolver): Type {
 				// a fetch on a nullsafe chain whose receiver is currently nullable
 				// short-circuits to null - the receiver result carries whether the
 				// chain contains a ?-> (a plain nullable receiver does not propagate)
@@ -131,14 +131,23 @@ final class PropertyFetchHandler implements ExprHandler
 					return $shortCircuit($returnType);
 				}
 
-				$nameType = $nameResult !== null ? $nameResult->getTypeForScope($s) : $s->getType($expr->name);
+				$nameType = $nameResult !== null ? $nameResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $s);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(
-						...array_map(static fn ($constantString) => $constantString->getValue() === '' ? new ErrorType() : $s
-							->filterByTruthyValue(new Expr\BinaryOp\Identical($expr->name, new String_($constantString->getValue())))
-							->getType(
+						...array_map(static function ($constantString) use ($expr, $s, $nodeScopeResolver): Type {
+							if ($constantString->getValue() === '') {
+								return new ErrorType();
+							}
+
+							// a property fetch with a concrete name on the
+							// name-pinned scope is synthetic.
+							$truthyScope = $s->filterByTruthyValue(new Expr\BinaryOp\Identical($expr->name, new String_($constantString->getValue())));
+
+							return $nodeScopeResolver->priceSyntheticOnDemand(
 								new PropertyFetch($expr->var, new Identifier($constantString->getValue())),
-							), $nameType->getConstantStrings()),
+								$truthyScope,
+							);
+						}, $nameType->getConstantStrings()),
 					);
 				}
 

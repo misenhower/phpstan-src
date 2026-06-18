@@ -73,8 +73,10 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
-			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult): Type {
-				$varType = $s->getType($expr->var);
+			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver): Type {
+				// the var was processed above as the receiver of $propertyFetch -
+				// read its stored result instead of re-walking via Scope::getType().
+				$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $s);
 				if ($varType->isNull()->yes()) {
 					return new NullType();
 				}
@@ -82,9 +84,11 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 					return $exprResult->getTypeForScope($s);
 				}
 
+				// the plain property fetch on the null-removed scope is synthetic.
+				$truthyScope = $s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))));
+
 				return TypeCombinator::union(
-					$s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))))
-						->getType(new PropertyFetch($expr->var, $expr->name)),
+					$nodeScopeResolver->priceSyntheticOnDemand(new PropertyFetch($expr->var, $expr->name), $truthyScope),
 					new NullType(),
 				);
 			},

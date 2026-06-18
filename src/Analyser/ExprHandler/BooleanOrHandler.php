@@ -66,7 +66,7 @@ final class BooleanOrHandler implements ExprHandler
 	 * skipped: in the OR-truthy scope the arm that didn't narrow could still be
 	 * the truthy one, so the sound result is the original (unnarrowed) type.
 	 */
-	private function augmentBooleanOrTruthyWithConditionalHolders(MutatingScope $scope, MutatingScope $rightScope, BooleanOr|LogicalOr $expr, SpecifiedTypes $types): SpecifiedTypes
+	private function augmentBooleanOrTruthyWithConditionalHolders(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, MutatingScope $rightScope, BooleanOr|LogicalOr $expr, SpecifiedTypes $types): SpecifiedTypes
 	{
 		$leftTruthyScope = $scope->filterByTruthyValue($expr->left);
 		$rightTruthyScope = $rightScope->filterByTruthyValue($expr->right);
@@ -98,9 +98,9 @@ final class BooleanOrHandler implements ExprHandler
 					continue;
 				}
 
-				$origType = $scope->getType($targetExpr);
-				$leftType = $leftTruthyScope->getType($targetExpr);
-				$rightType = $rightTruthyScope->getType($targetExpr);
+				$origType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $scope);
+				$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $leftTruthyScope);
+				$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $rightTruthyScope);
 
 				$leftNarrowed = !$leftType->equals($origType) && $origType->isSuperTypeOf($leftType)->yes();
 				$rightNarrowed = !$rightType->equals($origType) && $origType->isSuperTypeOf($rightType)->yes();
@@ -128,7 +128,7 @@ final class BooleanOrHandler implements ExprHandler
 		$leftResult = $nodeScopeResolver->processExprNode($stmt, $expr->left, $scope, $storage, $nodeCallback, $context->enterDeep());
 		$leftFalseyScope = $leftResult->getFalseyScope();
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $leftFalseyScope, $storage, $nodeCallback, $context);
-		$rightExprType = $rightResult->getScope()->getType($expr->right);
+		$rightExprType = $rightResult->getTypeForScope($rightResult->getScope());
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
 			$leftMergedWithRightScope = $leftResult->getTruthyScope();
 		} else {
@@ -171,7 +171,7 @@ final class BooleanOrHandler implements ExprHandler
 
 				return new BooleanType();
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): SpecifiedTypes {
 				$leftTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->left, $leftResult, $context)->setRootExpr($expr);
 				$rightScope = $s->filterByFalseyValue($expr->left);
 				$rightTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($rightScope, $expr->right, $rightResult, $context)->setRootExpr($expr);
@@ -190,7 +190,7 @@ final class BooleanOrHandler implements ExprHandler
 						$leftNormalized = $leftTypes->normalize($s);
 						$rightNormalized = $rightTypes->normalize($rightScope);
 						$types = $leftNormalized->intersectWith($rightNormalized);
-						$types = $this->augmentBooleanOrTruthyWithConditionalHolders($s, $rightScope, $expr, $types);
+						$types = $this->augmentBooleanOrTruthyWithConditionalHolders($nodeScopeResolver, $s, $rightScope, $expr, $types);
 						$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($s, $rightScope, $leftNormalized, $rightNormalized, $expr->left, $expr->right, true, $types);
 					}
 				} else {

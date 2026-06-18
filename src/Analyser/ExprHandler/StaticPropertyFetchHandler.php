@@ -96,7 +96,7 @@ final class StaticPropertyFetchHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			containsNullsafe: $classResult !== null && $classResult->containsNullsafe(),
 			issetabilityDescriptor: IssetabilityDescriptor::property($classResult, fn (MutatingScope $s): ?FoundPropertyReflection => $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s), $expr),
-			typeCallback: function (MutatingScope $s) use ($expr, $classResult, $nameResult): Type {
+			typeCallback: function (MutatingScope $s) use ($expr, $classResult, $nameResult, $nodeScopeResolver): Type {
 				$shortCircuit = static fn (Type $type): Type => $classResult !== null && $classResult->containsNullsafe() && TypeCombinator::containsNull($classResult->getTypeForScope($s))
 					? TypeCombinator::addNull($type)
 					: $type;
@@ -117,7 +117,7 @@ final class StaticPropertyFetchHandler implements ExprHandler
 					if ($expr->class instanceof Name) {
 						$staticPropertyFetchedOnType = $s->resolveTypeByName($expr->class);
 					} else {
-						$classType = $classResult !== null ? $classResult->getTypeForScope($s) : $s->getType($expr->class);
+						$classType = $classResult !== null ? $classResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $s);
 						$staticPropertyFetchedOnType = TypeCombinator::removeNull($classType)->getObjectTypeOrClassStringObjectType();
 					}
 
@@ -134,12 +134,23 @@ final class StaticPropertyFetchHandler implements ExprHandler
 					return $shortCircuit($fetchType);
 				}
 
-				$nameType = $nameResult !== null ? $nameResult->getTypeForScope($s) : $s->getType($expr->name);
+				$nameType = $nameResult !== null ? $nameResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $s);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(
-						...array_map(static fn ($constantString) => $constantString->getValue() === '' ? new ErrorType() : $s
-							->filterByTruthyValue(new Identical($expr->name, new String_($constantString->getValue())))
-							->getType(new Expr\StaticPropertyFetch($expr->class, new VarLikeIdentifier($constantString->getValue()))), $nameType->getConstantStrings()),
+						...array_map(static function ($constantString) use ($expr, $s, $nodeScopeResolver): Type {
+							if ($constantString->getValue() === '') {
+								return new ErrorType();
+							}
+
+							// a static property fetch with a concrete name on the
+							// name-pinned scope is synthetic.
+							$truthyScope = $s->filterByTruthyValue(new Identical($expr->name, new String_($constantString->getValue())));
+
+							return $nodeScopeResolver->priceSyntheticOnDemand(
+								new Expr\StaticPropertyFetch($expr->class, new VarLikeIdentifier($constantString->getValue())),
+								$truthyScope,
+							);
+						}, $nameType->getConstantStrings()),
 					);
 				}
 

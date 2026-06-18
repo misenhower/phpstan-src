@@ -54,7 +54,6 @@ final class NullsafeMethodCallHandler implements ExprHandler
 	{
 		$beforeScope = $scope;
 		$scopeBeforeNullsafe = $scope;
-		$varType = $scope->getType($expr->var);
 
 		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($scope, $scope, $expr->var);
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafeMethodCall' => true]);
@@ -75,6 +74,10 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		);
 		$scope = $this->nonNullabilityHelper->revertNonNullability($exprResult->getScope(), $nonNullabilityResult->getSpecifiedExpressions());
 
+		// the var was processed above as the receiver of $methodCall; read its
+		// stored result on the original scope instead of re-walking via getType().
+		$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $scopeBeforeNullsafe);
+
 		$varIsNull = $varType->isNull();
 		if ($varIsNull->yes()) {
 			// Arguments are never evaluated when the var is always null.
@@ -94,8 +97,9 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
-			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult): Type {
-				$varType = $s->getType($expr->var);
+			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver): Type {
+				// the var was processed above as the receiver of $methodCall.
+				$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $s);
 				if ($varType->isNull()->yes()) {
 					return new NullType();
 				}
@@ -103,9 +107,11 @@ final class NullsafeMethodCallHandler implements ExprHandler
 					return $exprResult->getTypeForScope($s);
 				}
 
+				// the plain method call on the null-removed scope is synthetic.
+				$truthyScope = $s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))));
+
 				return TypeCombinator::union(
-					$s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))))
-						->getType(new MethodCall($expr->var, $expr->name, $expr->args)),
+					$nodeScopeResolver->priceSyntheticOnDemand(new MethodCall($expr->var, $expr->name, $expr->args), $truthyScope),
 					new NullType(),
 				);
 			},

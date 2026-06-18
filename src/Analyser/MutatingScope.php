@@ -1241,6 +1241,22 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	}
 
 	/**
+	 * The ExpressionResultStorage of the analysis currently in progress, the one
+	 * resolveTypeOfNewWorldHandlerNode() prices synthetic nodes against. A handler
+	 * pricing a synthetic node from a lazily-invoked typeCallback must use this
+	 * (not a storage captured at processExpr() time): a later re-evaluation
+	 * (e.g. findEarlyTerminatingExpr()) runs under a different current storage,
+	 * and the captured one would resolve the synthetic node's real subnodes from
+	 * stale stored results.
+	 *
+	 * @internal
+	 */
+	public function getCurrentExpressionResultStorage(): ?ExpressionResultStorage
+	{
+		return $this->expressionResultStorageStack->getCurrent();
+	}
+
+	/**
 	 * The isset/empty/?? chain descriptor PHPStan\Rules\IssetCheck folds. Reads
 	 * it from the current expression-result storage; when the rule asks before
 	 * the engine has stored the expression's result (the rule callback fires
