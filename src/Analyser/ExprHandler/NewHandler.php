@@ -3,6 +3,7 @@
 namespace PHPStan\Analyser\ExprHandler;
 
 use PhpParser\Node;
+use PhpParser\Node\Arg;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\New_;
 use PhpParser\Node\Expr\StaticCall;
@@ -13,6 +14,8 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
@@ -24,7 +27,6 @@ use PHPStan\Analyser\StatementContext;
 use PHPStan\Analyser\ThrowPoint;
 use PHPStan\Analyser\Traverser\ConstructorClassTemplateTraverser;
 use PHPStan\Analyser\Traverser\GenericTypeTemplateTraverser;
-use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
@@ -67,10 +69,10 @@ use function count;
 use function sprintf;
 
 /**
- * @implements TypeResolvingExprHandler<New_>
+ * @implements ExprHandler<New_>
  */
 #[AutowiredService]
-final class NewHandler implements TypeResolvingExprHandler
+final class NewHandler implements ExprHandler
 {
 
 	public function __construct(
@@ -81,6 +83,8 @@ final class NewHandler implements TypeResolvingExprHandler
 		#[AutowiredParameter(ref: '%exceptions.implicitThrows%')]
 		private bool $implicitThrows,
 		private ExpressionResultFactory $expressionResultFactory,
+		private TypeSpecifier $typeSpecifier,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -102,6 +106,7 @@ final class NewHandler implements TypeResolvingExprHandler
 		$impurePoints = [];
 		$isAlwaysTerminating = false;
 		$normalizedExpr = $expr;
+		$className = null;
 		if ($expr->class instanceof Name) {
 			$className = $scope->resolveName($expr->class);
 
@@ -116,12 +121,10 @@ final class NewHandler implements TypeResolvingExprHandler
 			$classReflection = $this->reflectionProvider->getAnonymousClassReflection($expr->class, $scope); // populates $expr->class->name
 			if ($classReflection->hasConstructor()) {
 				$constructorReflection = $classReflection->getConstructor();
-				$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
-					$scope,
-					$expr->getArgs(),
-					$constructorReflection->getVariants(),
-					$constructorReflection->getNamedArgumentsVariants(),
-				);
+				// A structural acceptor (names/positions/variadic) drives argument
+				// normalization and the throw point - generics are resolved
+				// type-driven by processArgs() into $resolvedParametersAcceptor.
+				$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $constructorReflection->getVariants(), $constructorReflection->getNamedArgumentsVariants());
 
 				if ($constructorReflection->getDeclaringClass()->getName() === $classReflection->getName()) {
 					$constructorResult = null;
@@ -165,9 +168,24 @@ final class NewHandler implements TypeResolvingExprHandler
 			} else {
 				$nodeScopeResolver->processStmtNode($expr->class, $scope, $storage, $nodeCallback, StatementContext::createTopLevel());
 			}
+
+			if ($parametersAcceptor !== null) {
+				$normalizedExpr = ArgumentsNormalizer::reorderNewArguments($parametersAcceptor, $expr) ?? $expr;
+			}
 		} else {
 			$isDynamic = true;
-			$objectClasses = $scope->getType($expr)->getObjectClassNames();
+
+			$classResult = $nodeScopeResolver->processExprNode($stmt, $expr->class, $scope, $storage, $nodeCallback, $context->enterDeep());
+			$scope = $classResult->getScope();
+			$hasYield = $classResult->hasYield();
+			$throwPoints = $classResult->getThrowPoints();
+			$impurePoints = $classResult->getImpurePoints();
+			$isAlwaysTerminating = $classResult->isAlwaysTerminating();
+
+			// The instantiated object type derives from the class expression - read
+			// its already-processed result rather than asking Scope::getType() for
+			// the not-yet-stored New_ node, which would re-enter this handler.
+			$objectClasses = $classResult->getTypeForScope($scope)->getObjectTypeOrClassStringObjectType()->getObjectClassNames();
 			if (count($objectClasses) === 1) {
 				$objectExprResult = $nodeScopeResolver->processExprNode($stmt, new New_(new Name($objectClasses[0])), $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 				$className = $objectClasses[0];
@@ -177,12 +195,6 @@ final class NewHandler implements TypeResolvingExprHandler
 				$additionalThrowPoints = [InternalThrowPoint::createImplicit($scope, $expr)];
 			}
 
-			$classResult = $nodeScopeResolver->processExprNode($stmt, $expr->class, $scope, $storage, $nodeCallback, $context->enterDeep());
-			$scope = $classResult->getScope();
-			$hasYield = $classResult->hasYield();
-			$throwPoints = $classResult->getThrowPoints();
-			$impurePoints = $classResult->getImpurePoints();
-			$isAlwaysTerminating = $classResult->isAlwaysTerminating();
 			$throwPoints = array_merge($throwPoints, $additionalThrowPoints);
 
 			if ($className !== null) {
@@ -214,6 +226,45 @@ final class NewHandler implements TypeResolvingExprHandler
 		$impurePoints = array_merge($impurePoints, $argsResult->getImpurePoints());
 		$isAlwaysTerminating = $isAlwaysTerminating || $argsResult->isAlwaysTerminating();
 
+		// The new-expression type is derived from $resolvedParametersAcceptor - the
+		// constructor acceptor processArgs() selected from the arg types gathered on
+		// the arg-to-arg evolving scope (type-driven, resolves the class's @template
+		// parameters from constructor args). When null (native-types-promoted, or
+		// on-demand / synthetic pricing), resolveReturnType() re-selects a structural
+		// acceptor from the args on the asking scope.
+		$typeCallback = fn (MutatingScope $s): Type => $this->resolveReturnType(
+			$nodeScopeResolver,
+			$s,
+			$expr,
+			$s->nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+		);
+		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
+			$s,
+			$expr,
+			$resolvedParametersAcceptor,
+			$specifyContext,
+		);
+
+		// Store a preliminary result carrying the type/specify callbacks before the
+		// throw-point return type is computed: getConstructorThrowPoint() and the
+		// exact-instantiation return type resolution can re-enter on demand (e.g. a
+		// dynamic static-method return type extension narrowing this very
+		// instantiation). Without a stored result that narrowing would re-process
+		// this New_ on demand and recurse. The callbacks are scope-independent, so
+		// the preliminary result answers those asks correctly; the final result
+		// below overwrites it with the resolved scope and throw/impure points.
+		$nodeScopeResolver->storeExpressionResult($storage, $expr, $this->expressionResultFactory->create(
+			$scope,
+			beforeScope: $beforeScope,
+			expr: $expr,
+			hasYield: $hasYield,
+			isAlwaysTerminating: $isAlwaysTerminating,
+			throwPoints: [],
+			impurePoints: [],
+			typeCallback: $typeCallback,
+			specifyTypesCallback: $specifyTypesCallback,
+		));
+
 		if ($constructorReflection !== null && $parametersAcceptor !== null) {
 			$className ??= $constructorReflection->getDeclaringClass()->getName();
 			$constructorThrowPoint = $this->getConstructorThrowPoint($constructorReflection, $parametersAcceptor, $expr, new Name\FullyQualified($className), $expr->getArgs(), $scope, $context);
@@ -240,9 +291,8 @@ final class NewHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: $resolvedParametersAcceptor !== null && $expr->class instanceof Name
-				? fn (MutatingScope $s): Type => $this->resolveReturnType($s, $expr, $s->nativeTypesPromoted ? null : $resolvedParametersAcceptor)
-				: null,
+			typeCallback: $typeCallback,
+			specifyTypesCallback: $specifyTypesCallback,
 		);
 	}
 
@@ -260,12 +310,10 @@ final class NewHandler implements TypeResolvingExprHandler
 			$classReflection = $this->reflectionProvider->getClass($className);
 			if ($classReflection->hasConstructor()) {
 				$constructorReflection = $classReflection->getConstructor();
-				$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
-					$scope,
-					$expr->getArgs(),
-					$constructorReflection->getVariants(),
-					$constructorReflection->getNamedArgumentsVariants(),
-				);
+				// A structural acceptor (names/positions/variadic) drives argument
+				// normalization and the throw point - generics are resolved
+				// type-driven by processArgs() into $resolvedParametersAcceptor.
+				$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $constructorReflection->getVariants(), $constructorReflection->getNamedArgumentsVariants());
 			}
 		}
 
@@ -344,21 +392,45 @@ final class NewHandler implements TypeResolvingExprHandler
 		return null;
 	}
 
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
+	/**
+	 * A structural acceptor for argument normalization and the throw point: it
+	 * depends only on argument names/positions/variadic, so it is generic-agnostic
+	 * (the type-driven, generic-resolved acceptor is produced by processArgs()
+	 * instead). Mirrors the old variant-set choice - named-argument calls select
+	 * among the named-arguments variants, which carry the parameter defaults
+	 * reorderNewArguments() needs to fill skipped optionals.
+	 *
+	 * @param Arg[] $args
+	 * @param ParametersAcceptor[] $variants
+	 * @param ParametersAcceptor[]|null $namedArgumentsVariants
+	 */
+	private function combineVariantsForNormalization(array $args, array $variants, ?array $namedArgumentsVariants): ParametersAcceptor
 	{
-		return $this->resolveReturnType($scope, $expr, null);
+		$hasName = false;
+		foreach ($args as $arg) {
+			if ($arg->name !== null) {
+				$hasName = true;
+				break;
+			}
+		}
+
+		$selectedVariants = ($hasName && $namedArgumentsVariants !== null) ? $namedArgumentsVariants : $variants;
+
+		return count($selectedVariants) === 1
+			? $selectedVariants[0]
+			: ParametersAcceptorSelector::combineAcceptors($selectedVariants);
 	}
 
 	/**
 	 * The stored new-expression type is derived from $preResolvedAcceptor - the
 	 * constructor acceptor processArgs() selected from the arg types gathered on
 	 * the arg-to-arg evolving scope (resolves the class's @template parameters
-	 * from constructor args). Null falls back to re-selecting from the args on the
-	 * asking scope (on-demand / synthetic pricing).
+	 * from constructor args). Null falls back to re-selecting a structural acceptor
+	 * from the args on the asking scope (on-demand / synthetic pricing).
 	 *
 	 * @param New_ $expr
 	 */
-	private function resolveReturnType(MutatingScope $scope, Expr $expr, ?ParametersAcceptor $preResolvedAcceptor): Type
+	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr, ?ParametersAcceptor $preResolvedAcceptor): Type
 	{
 		if ($expr->class instanceof Name) {
 			return $this->exactInstantiation($scope, $expr, $expr->class, $preResolvedAcceptor);
@@ -369,7 +441,9 @@ final class NewHandler implements TypeResolvingExprHandler
 			return new ObjectType($anonymousClassReflection->getName());
 		}
 
-		$exprType = $scope->getType($expr->class);
+		// the class expression was processed during processExpr; read its already
+		// computed result instead of re-walking via Scope::getType().
+		$exprType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $scope);
 		return $exprType->getObjectTypeOrClassStringObjectType();
 	}
 
@@ -419,8 +493,7 @@ final class NewHandler implements TypeResolvingExprHandler
 			$node->getArgs(),
 		);
 
-		$parametersAcceptor = $preResolvedAcceptor ?? ParametersAcceptorSelector::selectFromArgs(
-			$scope,
+		$parametersAcceptor = $preResolvedAcceptor ?? $this->combineVariantsForNormalization(
 			$methodCall->getArgs(),
 			$constructorMethod->getVariants(),
 			$constructorMethod->getNamedArgumentsVariants(),
@@ -450,6 +523,9 @@ final class NewHandler implements TypeResolvingExprHandler
 			return TypeCombinator::union(...$resolvedTypes);
 		}
 
+		// $methodCall is a synthetic StaticCall the handler built - it is not a
+		// source node, so Scope::getType() prices it on demand (the constructor's
+		// own never-returning conditional return type).
 		$methodResult = $scope->getType($methodCall);
 		if ($methodResult instanceof NeverType && $methodResult->isExplicit()) {
 			return $methodResult;
@@ -655,13 +731,24 @@ final class NewHandler implements TypeResolvingExprHandler
 		return TypeTraverser::map($newGenericType, new GenericTypeTemplateTraverser($resolvedTemplateTypeMap));
 	}
 
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
+	/**
+	 * Ported inside-out from the old TypeResolvingExprHandler::specifyTypes(): the
+	 * constructor's @phpstan-assert narrowing is invoked on the already-processed
+	 * argument results. The acceptor is $resolvedParametersAcceptor (type-driven,
+	 * generics resolved by processArgs) rather than re-selected from the args on
+	 * the asking scope. The subject's own default narrowing comes from
+	 * DefaultNarrowingHelper instead of TypeSpecifier::specifyDefaultTypes(), which
+	 * would re-enter this expression through TypeSpecifier::create().
+	 *
+	 * @param New_ $expr
+	 */
+	private function specifyTypes(MutatingScope $scope, Expr $expr, ?ParametersAcceptor $resolvedParametersAcceptor, TypeSpecifierContext $context): SpecifiedTypes
 	{
 		if (
 			!$expr->class instanceof Name
 			|| !$this->reflectionProvider->hasClass($expr->class->toString())
 		) {
-			return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+			return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 		}
 
 		$classReflection = $this->reflectionProvider->getClass($expr->class->toString());
@@ -670,17 +757,15 @@ final class NewHandler implements TypeResolvingExprHandler
 			$methodReflection = $classReflection->getConstructor();
 			$asserts = $methodReflection->getAsserts();
 
-			if ($asserts->getAll() !== []) {
-				$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs($scope, $expr->getArgs(), $methodReflection->getVariants(), $methodReflection->getNamedArgumentsVariants());
-
+			if ($asserts->getAll() !== [] && $resolvedParametersAcceptor !== null) {
 				$asserts = $asserts->mapTypes(static fn (Type $type) => TemplateTypeHelper::resolveTemplateTypes(
 					$type,
-					$parametersAcceptor->getResolvedTemplateTypeMap(),
-					$parametersAcceptor instanceof ExtendedParametersAcceptor ? $parametersAcceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+					$resolvedParametersAcceptor->getResolvedTemplateTypeMap(),
+					$resolvedParametersAcceptor instanceof ExtendedParametersAcceptor ? $resolvedParametersAcceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
 					TemplateTypeVariance::createInvariant(),
 				));
 
-				$specifiedTypes = $typeSpecifier->specifyTypesFromAsserts($context, $expr, $asserts, $parametersAcceptor, $scope);
+				$specifiedTypes = $this->typeSpecifier->specifyTypesFromAsserts($context, $expr, $asserts, $resolvedParametersAcceptor, $scope);
 
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes;
@@ -688,6 +773,10 @@ final class NewHandler implements TypeResolvingExprHandler
 			}
 		}
 
+		// A known class without (applicable) constructor asserts contributes no
+		// narrowing entry, mirroring the old handler's empty return for this path
+		// (a `new X()` is always a truthy object, so the default truthy/falsey
+		// removal that path 1 emits would be a no-op here anyway).
 		return (new SpecifiedTypes([], []))->setRootExpr($expr);
 	}
 
