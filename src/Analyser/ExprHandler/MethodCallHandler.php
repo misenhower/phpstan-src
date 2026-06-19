@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler;
 
+use PhpParser\Node\Arg;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\BinaryOp\Identical;
 use PhpParser\Node\Expr\MethodCall;
@@ -13,16 +14,15 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\MethodCallReturnTypeHelper;
 use PHPStan\Analyser\ExprHandler\Helper\MethodThrowPointHelper;
-use PHPStan\Analyser\ExprHandler\Helper\NullsafeShortCircuitingHelper;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
@@ -50,10 +50,10 @@ use function sprintf;
 use function strtolower;
 
 /**
- * @implements TypeResolvingExprHandler<MethodCall>
+ * @implements ExprHandler<MethodCall>
  */
 #[AutowiredService]
-final class MethodCallHandler implements TypeResolvingExprHandler
+final class MethodCallHandler implements ExprHandler
 {
 
 	public function __construct(
@@ -63,6 +63,8 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 		#[AutowiredParameter]
 		private bool $rememberPossiblyImpureFunctionValues,
 		private ExpressionResultFactory $expressionResultFactory,
+		private TypeSpecifier $typeSpecifier,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -101,25 +103,25 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 		$variants = [];
 		$namedArgumentsVariants = null;
 		$methodReflection = null;
-		$calledOnType = $scope->getType($expr->var);
+		$nameResult = null;
+		// the var was processed above as the receiver; read its already-computed
+		// result instead of re-walking via Scope::getType().
+		$calledOnType = $varResult->getTypeForScope($scope);
 		if ($expr->name instanceof Identifier) {
 			$methodName = $expr->name->name;
 			$methodReflection = $scope->getMethodReflection($calledOnType, $methodName);
 			if ($methodReflection !== null) {
 				$variants = $methodReflection->getVariants();
 				$namedArgumentsVariants = $methodReflection->getNamedArgumentsVariants();
-				$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
-					$scope,
-					$expr->getArgs(),
-					$variants,
-					$namedArgumentsVariants,
-				);
-
+				// A structural acceptor (names/positions/variadic) drives argument
+				// normalization, the impure point and the throw point - generics are
+				// resolved type-driven by processArgs() into $resolvedParametersAcceptor.
+				$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $variants, $namedArgumentsVariants);
 			}
 		} else {
-			$methodNameResult = $nodeScopeResolver->processExprNode($stmt, $expr->name, $scope, $storage, $nodeCallback, $context->enterDeep());
-			$throwPoints = array_merge($throwPoints, $methodNameResult->getThrowPoints());
-			$scope = $methodNameResult->getScope();
+			$nameResult = $nodeScopeResolver->processExprNode($stmt, $expr->name, $scope, $storage, $nodeCallback, $context->enterDeep());
+			$throwPoints = array_merge($throwPoints, $nameResult->getThrowPoints());
+			$scope = $nameResult->getScope();
 		}
 
 		if ($methodReflection !== null) {
@@ -160,8 +162,67 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 		$scope = $argsResult->getScope();
 		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 
+		// The return type is derived from $resolvedParametersAcceptor - the acceptor
+		// processArgs() selected from the arg types gathered on the arg-to-arg
+		// evolving scope (type-driven, generics resolved). When null
+		// (native-types-promoted, or on-demand / synthetic pricing) the acceptor is
+		// re-derived from the already-processed argument results on the asking scope.
+		$typeCallback = fn (MutatingScope $s): Type => $this->resolveReturnType(
+			$nodeScopeResolver,
+			$s,
+			$expr,
+			$varResult,
+			$nameResult,
+			$s->nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+		);
+		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
+			$nodeScopeResolver,
+			$s,
+			$expr,
+			$normalizedExpr,
+			$varResult,
+			$resolvedParametersAcceptor,
+			$specifyContext,
+		);
+
+		// Store a preliminary result carrying the type/specify callbacks before the
+		// throw point is computed: the method throw point resolves the return type
+		// (resolveReturnType below) through dynamic return type extensions, which can
+		// narrow this very call on demand. Without a stored result that narrowing
+		// would re-process this MethodCall on demand and recurse. The callbacks are
+		// scope-independent, so the preliminary result answers those asks correctly;
+		// the final result below overwrites it with the resolved scope and
+		// throw/impure points.
+		$nodeScopeResolver->storeExpressionResult($storage, $expr, $this->expressionResultFactory->create(
+			$scope,
+			beforeScope: $beforeScope,
+			expr: $expr,
+			hasYield: $hasYield,
+			isAlwaysTerminating: $isAlwaysTerminating,
+			throwPoints: [],
+			impurePoints: [],
+			containsNullsafe: $varResult->containsNullsafe(),
+			typeCallback: $typeCallback,
+			specifyTypesCallback: $specifyTypesCallback,
+		));
+
 		if ($methodReflection !== null) {
-			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context, $scope->getType($normalizedExpr));
+			// The early structural check above only sees the unresolved acceptor
+			// return type; a conditional-return never (e.g. `($x is Foo ? never :
+			// string)`) only resolves to never once the actual argument types are
+			// folded in by the type-driven resolved acceptor.
+			if ($resolvedParametersAcceptor !== null) {
+				$resolvedReturnType = $resolvedParametersAcceptor->getReturnType();
+				$isAlwaysTerminating = $isAlwaysTerminating || ($resolvedReturnType instanceof NeverType && $resolvedReturnType->isExplicit());
+			}
+
+			// The call's return type, computed from the already-processed argument
+			// results (resolveReturnType reads them via the receiver/name results and
+			// readStoredOrPriceOnDemand, never re-running processArgs) - asking
+			// Scope::getType() for the MethodCall here would re-enter this handler on
+			// demand, as its final result is not stored yet.
+			$methodCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, $expr, $varResult, $nameResult, $resolvedParametersAcceptor);
+			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context, $methodCallReturnType);
 			if ($methodThrowPoint !== null) {
 				$throwPoints[] = $methodThrowPoint;
 			}
@@ -170,21 +231,27 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 				$nodeScopeResolver->callNodeCallback($nodeCallback, new InvalidateExprNode($normalizedExpr->var), $scope, $storage);
 				$scope = $scope->invalidateExpression($normalizedExpr->var, true, $methodReflection->getDeclaringClass());
 			} elseif ($this->rememberPossiblyImpureFunctionValues && $methodReflection->hasSideEffects()->maybe() && !$methodReflection->getDeclaringClass()->isBuiltin()) {
+				// the remembered call value and the @phpstan-self-out type are
+				// generic-sensitive: resolve them from the type-driven acceptor
+				// processArgs() selected (generics resolved against the actual arg
+				// types), falling back to the structural acceptor for dynamic callees.
+				$acceptorForGenerics = $resolvedParametersAcceptor ?? $parametersAcceptor;
 				$scope = $scope->assignExpression(
 					new PossiblyImpureCallExpr($normalizedExpr, $normalizedExpr->var, sprintf('%s::%s()', $methodReflection->getDeclaringClass()->getDisplayName(), $methodReflection->getName())),
-					$parametersAcceptor->getReturnType(),
+					$acceptorForGenerics->getReturnType(),
 					new MixedType(),
 				);
 			}
 			if (!$methodReflection->isStatic()) {
 				$selfOutType = $methodReflection->getSelfOutType();
 				if ($selfOutType !== null) {
+					$acceptorForGenerics = $resolvedParametersAcceptor ?? $parametersAcceptor;
 					$scope = $scope->assignExpression(
 						$normalizedExpr->var,
 						TemplateTypeHelper::resolveTemplateTypes(
 							$selfOutType,
-							$parametersAcceptor->getResolvedTemplateTypeMap(),
-							$parametersAcceptor instanceof ExtendedParametersAcceptor ? $parametersAcceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+							$acceptorForGenerics->getResolvedTemplateTypeMap(),
+							$acceptorForGenerics instanceof ExtendedParametersAcceptor ? $acceptorForGenerics->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
 							TemplateTypeVariance::createCovariant(),
 						),
 						$scope->getNativeType($normalizedExpr->var),
@@ -209,10 +276,6 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 		$impurePoints = array_merge($impurePoints, $argsResult->getImpurePoints());
 		$isAlwaysTerminating = $isAlwaysTerminating || $argsResult->isAlwaysTerminating();
 
-		$typeCallback = $resolvedParametersAcceptor !== null
-			? fn (MutatingScope $s): Type => $this->resolveReturnType($s, $expr, $s->nativeTypesPromoted ? null : $resolvedParametersAcceptor)
-			: null;
-
 		$result = $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -223,9 +286,12 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
 			typeCallback: $typeCallback,
+			specifyTypesCallback: $specifyTypesCallback,
 		);
 
-		$calledOnType = $originalScope->getType($expr->var);
+		// the var was processed above as the receiver; read its already-computed
+		// result on the original scope instead of re-walking via Scope::getType().
+		$calledOnType = $varResult->getTypeForScope($originalScope);
 		if (!$expr->name instanceof Identifier) {
 			return $result;
 		}
@@ -251,7 +317,9 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 					isAlwaysTerminating: $result->isAlwaysTerminating(),
 					throwPoints: $result->getThrowPoints(),
 					impurePoints: $result->getImpurePoints(),
+					containsNullsafe: $varResult->containsNullsafe(),
 					typeCallback: $typeCallback,
+					specifyTypesCallback: $specifyTypesCallback,
 				);
 			}
 		}
@@ -259,25 +327,32 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 		return $result;
 	}
 
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		return $this->resolveReturnType($scope, $expr, null);
-	}
-
 	/**
-	 * The stored call-expression type is derived from $preResolvedAcceptor - the
-	 * acceptor processArgs() selected from the arg types gathered on the arg-to-arg
-	 * evolving scope. Null falls back to re-selecting from the args on the asking
-	 * scope (on-demand / synthetic pricing).
+	 * The call-expression type is derived from $preResolvedAcceptor - the acceptor
+	 * processArgs() selected from the arg types gathered on the arg-to-arg evolving
+	 * scope (type-driven, generics resolved). When null (native-types-promoted, or
+	 * on-demand / synthetic pricing) it falls back to re-selecting from the args via
+	 * MethodCallReturnTypeHelper on the asking scope.
+	 *
+	 * The receiver/name were processed during processExpr; their already computed
+	 * results are read instead of re-walking via Scope::getType(). The dynamic-name
+	 * branch builds a synthetic MethodCall priced on demand by the resolver.
 	 *
 	 * @param MethodCall $expr
 	 */
-	private function resolveReturnType(MutatingScope $scope, Expr $expr, ?ParametersAcceptor $preResolvedAcceptor): Type
+	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr, ExpressionResult $varResult, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor): Type
 	{
+		// a call on a nullsafe chain whose receiver is currently nullable
+		// short-circuits to null - the receiver result carries whether the chain
+		// contains a ?-> (a plain nullable receiver does not propagate).
+		$shortCircuit = static fn (Type $type): Type => $varResult->containsNullsafe() && TypeCombinator::containsNull($varResult->getTypeForScope($scope))
+			? TypeCombinator::addNull($type)
+			: $type;
+
 		if ($expr->name instanceof Identifier) {
 			if ($scope->nativeTypesPromoted) {
 				$methodReflection = $scope->getMethodReflection(
-					$scope->getNativeType($expr->var),
+					$varResult->getNativeTypeForScope($scope),
 					$expr->name->name,
 				);
 				if ($methodReflection === null) {
@@ -286,12 +361,12 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 					$returnType = ParametersAcceptorSelector::combineAcceptors($methodReflection->getVariants())->getNativeReturnType();
 				}
 
-				return NullsafeShortCircuitingHelper::getType($scope, $expr->var, $returnType);
+				return $shortCircuit($returnType);
 			}
 
 			$returnType = $this->methodCallReturnTypeHelper->methodCallReturnType(
 				$scope,
-				$scope->getType($expr->var),
+				$varResult->getTypeForScope($scope),
 				$expr->name->name,
 				$expr,
 				$preResolvedAcceptor,
@@ -299,39 +374,57 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			if ($returnType === null) {
 				$returnType = new ErrorType();
 			}
-			return NullsafeShortCircuitingHelper::getType($scope, $expr->var, $returnType);
+			return $shortCircuit($returnType);
 		}
 
-		$nameType = $scope->getType($expr->name);
+		$nameType = $nameResult !== null ? $nameResult->getTypeForScope($scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $scope);
 		if (count($nameType->getConstantStrings()) > 0) {
 			return TypeCombinator::union(
-				...array_map(static fn ($constantString) => $constantString->getValue() === '' ? new ErrorType() : $scope
-					->filterByTruthyValue(new Identical($expr->name, new String_($constantString->getValue())))
-					->getType(new MethodCall($expr->var, new Identifier($constantString->getValue()), $expr->args)), $nameType->getConstantStrings()),
+				...array_map(static function ($constantString) use ($expr, $scope, $nodeScopeResolver): Type {
+					if ($constantString->getValue() === '') {
+						return new ErrorType();
+					}
+
+					// a method call with a concrete name on the name-pinned scope
+					// is synthetic.
+					$truthyScope = $scope->filterByTruthyValue(new Identical($expr->name, new String_($constantString->getValue())));
+
+					return $nodeScopeResolver->priceSyntheticOnDemand(
+						new MethodCall($expr->var, new Identifier($constantString->getValue()), $expr->args),
+						$truthyScope,
+					);
+				}, $nameType->getConstantStrings()),
 			);
 		}
 
 		return new MixedType();
 	}
 
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
+	/**
+	 * Ported inside-out from the old TypeResolvingExprHandler::specifyTypes(): the
+	 * MethodTypeSpecifyingExtensions, conditional-return-type and @phpstan-assert
+	 * narrowing are invoked on the already-processed argument results. The acceptor
+	 * is $resolvedParametersAcceptor (type-driven, generics resolved by processArgs)
+	 * rather than re-selected from the args on the asking scope. The subject's own
+	 * default narrowing comes from DefaultNarrowingHelper instead of
+	 * TypeSpecifier::handleDefaultTruthyOrFalseyContext(), which would re-enter this
+	 * expression through TypeSpecifier::create().
+	 *
+	 * @param MethodCall $expr
+	 * @param MethodCall $normalizedExpr
+	 */
+	private function specifyTypes(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr, Expr $normalizedExpr, ExpressionResult $varResult, ?ParametersAcceptor $resolvedParametersAcceptor, TypeSpecifierContext $context): SpecifiedTypes
 	{
 		if (!$expr->name instanceof Identifier) {
-			return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+			return $this->defaultMethodCallNarrowing($scope, $expr, $varResult, $context);
 		}
 
-		$methodCalledOnType = $scope->getType($expr->var);
+		// the var was processed during processExpr; read its already-computed
+		// result instead of re-walking via Scope::getType().
+		$methodCalledOnType = $varResult->getTypeForScope($scope);
 		$methodReflection = $scope->getMethodReflection($methodCalledOnType, $expr->name->name);
 		if ($methodReflection !== null) {
-			// lazy create parametersAcceptor, as creation can be expensive
-			$parametersAcceptor = null;
-
-			$normalizedExpr = $expr;
 			$args = $expr->getArgs();
-			if (count($args) > 0) {
-				$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs($scope, $args, $methodReflection->getVariants(), $methodReflection->getNamedArgumentsVariants());
-				$normalizedExpr = ArgumentsNormalizer::reorderMethodArguments($parametersAcceptor, $expr) ?? $expr;
-			}
 
 			$referencedClasses = $methodCalledOnType->getObjectClassNames();
 			if (
@@ -339,7 +432,7 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 				&& $this->reflectionProvider->hasClass($referencedClasses[0])
 			) {
 				$methodClassReflection = $this->reflectionProvider->getClass($referencedClasses[0]);
-				foreach ($typeSpecifier->getMethodTypeSpecifyingExtensionsForClass($methodClassReflection->getName()) as $extension) {
+				foreach ($this->typeSpecifier->getMethodTypeSpecifyingExtensionsForClass($methodClassReflection->getName()) as $extension) {
 					if (!$extension->isMethodSupported($methodReflection, $normalizedExpr, $context)) {
 						continue;
 					}
@@ -348,24 +441,22 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 				}
 			}
 
-			if (count($args) > 0) {
-				$specifiedTypes = $typeSpecifier->specifyTypesFromConditionalReturnType($context, $expr, $parametersAcceptor, $scope);
+			if (count($args) > 0 && $resolvedParametersAcceptor !== null) {
+				$specifiedTypes = $this->typeSpecifier->specifyTypesFromConditionalReturnType($context, $expr, $resolvedParametersAcceptor, $scope);
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes;
 				}
 			}
 
 			$assertions = $methodReflection->getAsserts();
-			if ($assertions->getAll() !== []) {
-				$parametersAcceptor ??= ParametersAcceptorSelector::selectFromArgs($scope, $args, $methodReflection->getVariants(), $methodReflection->getNamedArgumentsVariants());
-
+			if ($assertions->getAll() !== [] && $resolvedParametersAcceptor !== null) {
 				$asserts = $assertions->mapTypes(static fn (Type $type) => TemplateTypeHelper::resolveTemplateTypes(
 					$type,
-					$parametersAcceptor->getResolvedTemplateTypeMap(),
-					$parametersAcceptor instanceof ExtendedParametersAcceptor ? $parametersAcceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
+					$resolvedParametersAcceptor->getResolvedTemplateTypeMap(),
+					$resolvedParametersAcceptor instanceof ExtendedParametersAcceptor ? $resolvedParametersAcceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
 					TemplateTypeVariance::createInvariant(),
 				));
-				$specifiedTypes = $typeSpecifier->specifyTypesFromAsserts($context, $expr, $asserts, $parametersAcceptor, $scope);
+				$specifiedTypes = $this->typeSpecifier->specifyTypesFromAsserts($context, $expr, $asserts, $resolvedParametersAcceptor, $scope);
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes
 						->unionWith($typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $scope))
@@ -374,7 +465,76 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			}
 		}
 
-		return $typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $scope);
+		return $this->defaultMethodCallNarrowing($scope, $expr, $varResult, $context);
+	}
+
+	/**
+	 * The default truthy/falsey narrowing of the call expression itself, gated by
+	 * the same purity check TypeSpecifier::create() applies: a method with side
+	 * effects (or an unknown method whose result is not remembered) is not
+	 * narrowable - calling it twice may yield different values - so it contributes
+	 * no entry. Mirrors create()'s MethodCall handling inside-out, without
+	 * re-entering this expression through create().
+	 *
+	 * @param MethodCall $expr
+	 */
+	private function defaultMethodCallNarrowing(MutatingScope $scope, Expr $expr, ExpressionResult $varResult, TypeSpecifierContext $context): SpecifiedTypes
+	{
+		if (!$this->isMethodCallNarrowable($scope, $expr, $varResult)) {
+			return (new SpecifiedTypes([], []))->setRootExpr($expr);
+		}
+
+		return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+	}
+
+	/** @param MethodCall $expr */
+	private function isMethodCallNarrowable(MutatingScope $scope, Expr $expr, ExpressionResult $varResult): bool
+	{
+		if (!$expr->name instanceof Identifier) {
+			return true;
+		}
+
+		$calledOnType = $varResult->getTypeForScope($scope);
+		$methodReflection = $scope->getMethodReflection($calledOnType, $expr->name->toString());
+		if ($methodReflection === null) {
+			return false;
+		}
+
+		$hasSideEffects = $methodReflection->hasSideEffects();
+		if ($hasSideEffects->yes()) {
+			return false;
+		}
+
+		return $this->rememberPossiblyImpureFunctionValues || $hasSideEffects->no();
+	}
+
+	/**
+	 * A structural acceptor for argument normalization, the impure point and the
+	 * throw point: it depends only on argument names/positions/variadic, so it is
+	 * generic-agnostic (the type-driven, generic-resolved acceptor is produced by
+	 * processArgs() instead). Named-argument calls select among the named-arguments
+	 * variants, which carry the parameter defaults reorderMethodArguments() needs to
+	 * fill skipped optionals.
+	 *
+	 * @param Arg[] $args
+	 * @param ParametersAcceptor[] $variants
+	 * @param ParametersAcceptor[]|null $namedArgumentsVariants
+	 */
+	private function combineVariantsForNormalization(array $args, array $variants, ?array $namedArgumentsVariants): ParametersAcceptor
+	{
+		$hasName = false;
+		foreach ($args as $arg) {
+			if ($arg->name !== null) {
+				$hasName = true;
+				break;
+			}
+		}
+
+		$selectedVariants = ($hasName && $namedArgumentsVariants !== null) ? $namedArgumentsVariants : $variants;
+
+		return count($selectedVariants) === 1
+			? $selectedVariants[0]
+			: ParametersAcceptorSelector::combineAcceptors($selectedVariants);
 	}
 
 }
