@@ -111,6 +111,8 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 	{
 		$beforeScope = $scope;
 		$parametersAcceptor = null;
+		$variants = [];
+		$namedArgumentsVariants = null;
 		$functionReflection = null;
 		$throwPoints = [];
 		$impurePoints = [];
@@ -118,10 +120,11 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 		if ($expr->name instanceof Expr) {
 			$nameType = $scope->getType($expr->name);
 			if (!$nameType->isCallable()->no()) {
+				$variants = $nameType->getCallableParametersAcceptors($scope);
 				$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
 					$scope,
 					$expr->getArgs(),
-					$nameType->getCallableParametersAcceptors($scope),
+					$variants,
 					null,
 				);
 			}
@@ -149,11 +152,13 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 			}
 		} elseif ($this->reflectionProvider->hasFunction($expr->name, $scope)) {
 			$functionReflection = $this->reflectionProvider->getFunction($expr->name, $scope);
+			$variants = $functionReflection->getVariants();
+			$namedArgumentsVariants = $functionReflection->getNamedArgumentsVariants();
 			$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
 				$scope,
 				$expr->getArgs(),
-				$functionReflection->getVariants(),
-				$functionReflection->getNamedArgumentsVariants(),
+				$variants,
+				$namedArgumentsVariants,
 			);
 			$impurePoint = SimpleImpurePoint::createFromVariant($functionReflection, $parametersAcceptor, $scope, $expr->getArgs());
 			if ($impurePoint !== null) {
@@ -277,7 +282,8 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 		}
 
 		$scopeBeforeArgs = $scope;
-		$argsResult = $nodeScopeResolver->processArgs($stmt, $functionReflection, null, $parametersAcceptor, $normalizedExpr, $scope, $storage, $nodeCallbackForArgs, $context);
+		$argsResult = $nodeScopeResolver->processArgs($stmt, $functionReflection, null, $variants, $namedArgumentsVariants, $normalizedExpr, $scope, $storage, $nodeCallbackForArgs, $context);
+		$resolvedParametersAcceptor = $argsResult->getResolvedParametersAcceptor();
 		$scope = $argsResult->getScope();
 		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 		$hasYield = $argsResult->hasYield();
@@ -597,6 +603,9 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			typeCallback: $resolvedParametersAcceptor !== null
+				? fn (MutatingScope $s): Type => $this->resolveReturnType($s, $expr, $s->nativeTypesPromoted ? null : $resolvedParametersAcceptor)
+				: null,
 		);
 	}
 
@@ -806,13 +815,27 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 
 	public function resolveType(MutatingScope $scope, Expr $expr): Type
 	{
+		return $this->resolveReturnType($scope, $expr, null);
+	}
+
+	/**
+	 * The stored call-expression type is derived from $preResolvedAcceptor - the
+	 * acceptor processArgs() selected from the arg types gathered on the arg-to-arg
+	 * evolving scope (type-driven, generics resolved). When null (on-demand /
+	 * synthetic pricing, or special cases below), it falls back to selecting from
+	 * the args on the asking scope.
+	 *
+	 * @param FuncCall $expr
+	 */
+	private function resolveReturnType(MutatingScope $scope, Expr $expr, ?ParametersAcceptor $preResolvedAcceptor): Type
+	{
 		if ($expr->name instanceof Expr) {
 			$calledOnType = $scope->getType($expr->name);
 			if ($calledOnType->isCallable()->no()) {
 				return new ErrorType();
 			}
 
-			$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
+			$parametersAcceptor = $preResolvedAcceptor ?? ParametersAcceptorSelector::selectFromArgs(
 				$scope,
 				$expr->getArgs(),
 				$calledOnType->getCallableParametersAcceptors($scope),
@@ -871,7 +894,7 @@ final class FuncCallHandler implements TypeResolvingExprHandler
 			}
 		}
 
-		$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
+		$parametersAcceptor = $preResolvedAcceptor ?? ParametersAcceptorSelector::selectFromArgs(
 			$scope,
 			$expr->getArgs(),
 			$functionReflection->getVariants(),

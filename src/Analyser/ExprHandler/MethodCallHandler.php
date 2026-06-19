@@ -31,6 +31,7 @@ use PHPStan\Node\Expr\PossiblyImpureCallExpr;
 use PHPStan\Node\InvalidateExprNode;
 use PHPStan\Reflection\Callables\SimpleImpurePoint;
 use PHPStan\Reflection\ExtendedParametersAcceptor;
+use PHPStan\Reflection\ParametersAcceptor;
 use PHPStan\Reflection\ParametersAcceptorSelector;
 use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Type\ErrorType;
@@ -97,17 +98,21 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			$scope = $scope->restoreOriginalScopeAfterClosureBind($originalScope);
 		}
 		$parametersAcceptor = null;
+		$variants = [];
+		$namedArgumentsVariants = null;
 		$methodReflection = null;
 		$calledOnType = $scope->getType($expr->var);
 		if ($expr->name instanceof Identifier) {
 			$methodName = $expr->name->name;
 			$methodReflection = $scope->getMethodReflection($calledOnType, $methodName);
 			if ($methodReflection !== null) {
+				$variants = $methodReflection->getVariants();
+				$namedArgumentsVariants = $methodReflection->getNamedArgumentsVariants();
 				$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
 					$scope,
 					$expr->getArgs(),
-					$methodReflection->getVariants(),
-					$methodReflection->getNamedArgumentsVariants(),
+					$variants,
+					$namedArgumentsVariants,
 				);
 
 			}
@@ -143,13 +148,15 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			$stmt,
 			$methodReflection,
 			$methodReflection !== null ? $scope->getNakedMethod($calledOnType, $methodReflection->getName()) : null,
-			$parametersAcceptor,
+			$variants,
+			$namedArgumentsVariants,
 			$normalizedExpr,
 			$scope,
 			$storage,
 			$nodeCallback,
 			$context,
 		);
+		$resolvedParametersAcceptor = $argsResult->getResolvedParametersAcceptor();
 		$scope = $argsResult->getScope();
 		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 
@@ -202,6 +209,10 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 		$impurePoints = array_merge($impurePoints, $argsResult->getImpurePoints());
 		$isAlwaysTerminating = $isAlwaysTerminating || $argsResult->isAlwaysTerminating();
 
+		$typeCallback = $resolvedParametersAcceptor !== null
+			? fn (MutatingScope $s): Type => $this->resolveReturnType($s, $expr, $s->nativeTypesPromoted ? null : $resolvedParametersAcceptor)
+			: null;
+
 		$result = $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -211,6 +222,7 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
+			typeCallback: $typeCallback,
 		);
 
 		$calledOnType = $originalScope->getType($expr->var);
@@ -239,6 +251,7 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 					isAlwaysTerminating: $result->isAlwaysTerminating(),
 					throwPoints: $result->getThrowPoints(),
 					impurePoints: $result->getImpurePoints(),
+					typeCallback: $typeCallback,
 				);
 			}
 		}
@@ -247,6 +260,19 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 	}
 
 	public function resolveType(MutatingScope $scope, Expr $expr): Type
+	{
+		return $this->resolveReturnType($scope, $expr, null);
+	}
+
+	/**
+	 * The stored call-expression type is derived from $preResolvedAcceptor - the
+	 * acceptor processArgs() selected from the arg types gathered on the arg-to-arg
+	 * evolving scope. Null falls back to re-selecting from the args on the asking
+	 * scope (on-demand / synthetic pricing).
+	 *
+	 * @param MethodCall $expr
+	 */
+	private function resolveReturnType(MutatingScope $scope, Expr $expr, ?ParametersAcceptor $preResolvedAcceptor): Type
 	{
 		if ($expr->name instanceof Identifier) {
 			if ($scope->nativeTypesPromoted) {
@@ -268,6 +294,7 @@ final class MethodCallHandler implements TypeResolvingExprHandler
 				$scope->getType($expr->var),
 				$expr->name->name,
 				$expr,
+				$preResolvedAcceptor,
 			);
 			if ($returnType === null) {
 				$returnType = new ErrorType();

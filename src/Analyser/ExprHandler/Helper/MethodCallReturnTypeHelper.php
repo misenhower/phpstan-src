@@ -8,6 +8,7 @@ use PHPStan\Analyser\ArgumentsNormalizer;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\DependencyInjection\Type\DynamicReturnTypeExtensionRegistryProvider;
+use PHPStan\Reflection\ParametersAcceptor;
 use PHPStan\Reflection\ParametersAcceptorSelector;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
@@ -29,6 +30,7 @@ final class MethodCallReturnTypeHelper
 		Type $typeWithMethod,
 		string $methodName,
 		MethodCall|Expr\StaticCall $methodCall,
+		?ParametersAcceptor $preResolvedAcceptor = null,
 	): ?Type
 	{
 		$typeWithMethod = $scope->filterTypeWithMethod($typeWithMethod, $methodName);
@@ -37,7 +39,7 @@ final class MethodCallReturnTypeHelper
 		}
 
 		$methodReflection = $typeWithMethod->getMethod($methodName, $scope);
-		$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
+		$parametersAcceptor = $preResolvedAcceptor ?? ParametersAcceptorSelector::selectFromArgs(
 			$scope,
 			$methodCall->getArgs(),
 			$methodReflection->getVariants(),

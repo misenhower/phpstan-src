@@ -36,6 +36,7 @@ use PHPStan\Parser\NewAssignedToPropertyVisitor;
 use PHPStan\Reflection\Callables\SimpleImpurePoint;
 use PHPStan\Reflection\ClassReflection;
 use PHPStan\Reflection\Dummy\DummyConstructorReflection;
+use PHPStan\Reflection\ExtendedMethodReflection;
 use PHPStan\Reflection\ExtendedParametersAcceptor;
 use PHPStan\Reflection\MethodReflection;
 use PHPStan\Reflection\ParametersAcceptor;
@@ -202,7 +203,10 @@ final class NewHandler implements TypeResolvingExprHandler
 			}
 		}
 
-		$argsResult = $nodeScopeResolver->processArgs($stmt, $constructorReflection, null, $parametersAcceptor, $normalizedExpr, $scope, $storage, $nodeCallback, $context);
+		$variants = $constructorReflection !== null ? $constructorReflection->getVariants() : [];
+		$namedArgumentsVariants = $constructorReflection !== null ? $constructorReflection->getNamedArgumentsVariants() : null;
+		$argsResult = $nodeScopeResolver->processArgs($stmt, $constructorReflection, null, $variants, $namedArgumentsVariants, $normalizedExpr, $scope, $storage, $nodeCallback, $context);
+		$resolvedParametersAcceptor = $argsResult->getResolvedParametersAcceptor();
 		$scope = $argsResult->getScope();
 		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 		$hasYield = $hasYield || $argsResult->hasYield();
@@ -236,11 +240,14 @@ final class NewHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			typeCallback: $resolvedParametersAcceptor !== null && $expr->class instanceof Name
+				? fn (MutatingScope $s): Type => $this->resolveReturnType($s, $expr, $s->nativeTypesPromoted ? null : $resolvedParametersAcceptor)
+				: null,
 		);
 	}
 
 	/**
-	 * @return array{?MethodReflection, ?ClassReflection, ?ParametersAcceptor, ImpurePoint[]}
+	 * @return array{?ExtendedMethodReflection, ?ClassReflection, ?ParametersAcceptor, ImpurePoint[]}
 	 */
 	private function processConstructorReflection(string $className, New_ $expr, MutatingScope $scope, bool $isDynamic): array
 	{
@@ -339,8 +346,22 @@ final class NewHandler implements TypeResolvingExprHandler
 
 	public function resolveType(MutatingScope $scope, Expr $expr): Type
 	{
+		return $this->resolveReturnType($scope, $expr, null);
+	}
+
+	/**
+	 * The stored new-expression type is derived from $preResolvedAcceptor - the
+	 * constructor acceptor processArgs() selected from the arg types gathered on
+	 * the arg-to-arg evolving scope (resolves the class's @template parameters
+	 * from constructor args). Null falls back to re-selecting from the args on the
+	 * asking scope (on-demand / synthetic pricing).
+	 *
+	 * @param New_ $expr
+	 */
+	private function resolveReturnType(MutatingScope $scope, Expr $expr, ?ParametersAcceptor $preResolvedAcceptor): Type
+	{
 		if ($expr->class instanceof Name) {
-			return $this->exactInstantiation($scope, $expr, $expr->class);
+			return $this->exactInstantiation($scope, $expr, $expr->class, $preResolvedAcceptor);
 		}
 		if ($expr->class instanceof Node\Stmt\Class_) {
 			$anonymousClassReflection = $this->reflectionProvider->getAnonymousClassReflection($expr->class, $scope);
@@ -352,7 +373,7 @@ final class NewHandler implements TypeResolvingExprHandler
 		return $exprType->getObjectTypeOrClassStringObjectType();
 	}
 
-	private function exactInstantiation(MutatingScope $scope, New_ $node, Name $className): Type
+	private function exactInstantiation(MutatingScope $scope, New_ $node, Name $className, ?ParametersAcceptor $preResolvedAcceptor): Type
 	{
 		$resolvedClassName = $scope->resolveName($className);
 		$isStatic = false;
@@ -398,7 +419,7 @@ final class NewHandler implements TypeResolvingExprHandler
 			$node->getArgs(),
 		);
 
-		$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
+		$parametersAcceptor = $preResolvedAcceptor ?? ParametersAcceptorSelector::selectFromArgs(
 			$scope,
 			$methodCall->getArgs(),
 			$constructorMethod->getVariants(),

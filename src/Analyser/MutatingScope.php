@@ -1094,6 +1094,20 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		$exprHandler = ExprHandlerRegistry::resolve($node, $this->container);
 		if ($exprHandler !== null) {
 			if ($exprHandler instanceof TypeResolvingExprHandler) {
+				// A call handler that processed this node wires a typeCallback onto
+				// its stored ExpressionResult carrying the acceptor resolved from
+				// the arg types gathered on the arg-to-arg evolving scope. Prefer it
+				// over resolveType(), whose own re-selection would lose generics
+				// inferred from sibling args. resolveType() still answers synthetic /
+				// not-yet-processed nodes.
+				$storage = $this->expressionResultStorageStack->getCurrent();
+				if ($storage !== null) {
+					$result = $storage->findExpressionResult($node);
+					if ($result !== null && $result->hasTypeCallback()) {
+						return $result->getTypeForScope($this->toMutatingScope());
+					}
+				}
+
 				return $exprHandler->resolveType($this, $node);
 			}
 

@@ -99,6 +99,8 @@ final class StaticCallHandler implements TypeResolvingExprHandler
 		}
 
 		$parametersAcceptor = null;
+		$variants = [];
+		$namedArgumentsVariants = null;
 		$methodReflection = null;
 		$closureBindScope = null;
 		if ($expr->name instanceof Identifier) {
@@ -107,11 +109,13 @@ final class StaticCallHandler implements TypeResolvingExprHandler
 				$methodName = $expr->name->name;
 				if ($classType->hasMethod($methodName)->yes()) {
 					$methodReflection = $classType->getMethod($methodName, $scope);
+					$variants = $methodReflection->getVariants();
+					$namedArgumentsVariants = $methodReflection->getNamedArgumentsVariants();
 					$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
 						$scope,
 						$expr->getArgs(),
-						$methodReflection->getVariants(),
-						$methodReflection->getNamedArgumentsVariants(),
+						$variants,
+						$namedArgumentsVariants,
 					);
 
 					$declaringClass = $methodReflection->getDeclaringClass();
@@ -164,11 +168,13 @@ final class StaticCallHandler implements TypeResolvingExprHandler
 				$methodName = $expr->name->name;
 				$methodReflection = $scope->getMethodReflection($classType, $methodName);
 				if ($methodReflection !== null) {
+					$variants = $methodReflection->getVariants();
+					$namedArgumentsVariants = $methodReflection->getNamedArgumentsVariants();
 					$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
 						$scope,
 						$expr->getArgs(),
-						$methodReflection->getVariants(),
-						$methodReflection->getNamedArgumentsVariants(),
+						$variants,
+						$namedArgumentsVariants,
 					);
 				}
 			}
@@ -217,7 +223,7 @@ final class StaticCallHandler implements TypeResolvingExprHandler
 			$returnType = $parametersAcceptor->getReturnType();
 			$isAlwaysTerminating = $isAlwaysTerminating || ($returnType instanceof NeverType && $returnType->isExplicit());
 		}
-		$argsResult = $nodeScopeResolver->processArgs($stmt, $methodReflection, null, $parametersAcceptor, $normalizedExpr, $scope, $storage, $nodeCallback, $context, $closureBindScope);
+		$argsResult = $nodeScopeResolver->processArgs($stmt, $methodReflection, null, $variants, $namedArgumentsVariants, $normalizedExpr, $scope, $storage, $nodeCallback, $context, $closureBindScope);
 		$scope = $argsResult->getScope();
 		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);
 		$scopeFunction = $scope->getFunction();

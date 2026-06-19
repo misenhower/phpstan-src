@@ -581,6 +581,57 @@ final class ParametersAcceptorSelector
 	}
 
 	/**
+	 * Whether applyIntrinsicArgOverrides() could rewrite the acceptor's parameter
+	 * types for these args (array_map/filter/walk/find, curl_setopt, implode,
+	 * Closure::bind). When false the single-acceptor metadata is override-free and
+	 * processArgs() can skip re-selecting it per argument. Mirrors the attribute
+	 * dispatch in applyIntrinsicArgOverrides().
+	 *
+	 * @internal
+	 * @param Node\Arg[] $args
+	 */
+	public static function argsHaveIntrinsicArgOverride(array $args): bool
+	{
+		if (count($args) === 0) {
+			return false;
+		}
+
+		if ($args[0]->value->getAttribute(ArrayMapArgVisitor::ATTRIBUTE_NAME) !== null) {
+			return true;
+		}
+
+		if ((bool) $args[0]->getAttribute(CurlSetOptArgVisitor::ATTRIBUTE_NAME)) {
+			return true;
+		}
+
+		if (isset($args[1]) && (bool) $args[1]->getAttribute(CurlSetOptArrayArgVisitor::ATTRIBUTE_NAME)) {
+			return true;
+		}
+
+		if ((bool) $args[0]->getAttribute(ArrayFilterArgVisitor::ATTRIBUTE_NAME)) {
+			return true;
+		}
+
+		if ((bool) $args[0]->getAttribute(ImplodeArgVisitor::ATTRIBUTE_NAME)) {
+			return true;
+		}
+
+		if ((bool) $args[0]->getAttribute(ArrayWalkArgVisitor::ATTRIBUTE_NAME)) {
+			return true;
+		}
+
+		if ((bool) $args[0]->getAttribute(ArrayFindArgVisitor::ATTRIBUTE_NAME)) {
+			return true;
+		}
+
+		if ($args[0]->getAttribute(ClosureBindToVarVisitor::ATTRIBUTE_NAME) !== null) {
+			return true;
+		}
+
+		return $args[0]->getAttribute(ClosureBindArgVisitor::ATTRIBUTE_NAME) !== null;
+	}
+
+	/**
 	 * @internal
 	 */
 	public static function hasAcceptorTemplateOrLateResolvableType(ParametersAcceptor $acceptor): bool
