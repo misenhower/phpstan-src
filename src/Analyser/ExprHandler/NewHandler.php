@@ -3,7 +3,6 @@
 namespace PHPStan\Analyser\ExprHandler;
 
 use PhpParser\Node;
-use PhpParser\Node\Arg;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\New_;
 use PhpParser\Node\Expr\StaticCall;
@@ -124,7 +123,7 @@ final class NewHandler implements ExprHandler
 				// A structural acceptor (names/positions/variadic) drives argument
 				// normalization and the throw point - generics are resolved
 				// type-driven by processArgs() into $resolvedParametersAcceptor.
-				$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $constructorReflection->getVariants(), $constructorReflection->getNamedArgumentsVariants());
+				$parametersAcceptor = ParametersAcceptorSelector::combineVariantsForNormalization($expr->getArgs(), $constructorReflection->getVariants(), $constructorReflection->getNamedArgumentsVariants());
 
 				if ($constructorReflection->getDeclaringClass()->getName() === $classReflection->getName()) {
 					$constructorResult = null;
@@ -313,7 +312,7 @@ final class NewHandler implements ExprHandler
 				// A structural acceptor (names/positions/variadic) drives argument
 				// normalization and the throw point - generics are resolved
 				// type-driven by processArgs() into $resolvedParametersAcceptor.
-				$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $constructorReflection->getVariants(), $constructorReflection->getNamedArgumentsVariants());
+				$parametersAcceptor = ParametersAcceptorSelector::combineVariantsForNormalization($expr->getArgs(), $constructorReflection->getVariants(), $constructorReflection->getNamedArgumentsVariants());
 			}
 		}
 
@@ -393,35 +392,6 @@ final class NewHandler implements ExprHandler
 	}
 
 	/**
-	 * A structural acceptor for argument normalization and the throw point: it
-	 * depends only on argument names/positions/variadic, so it is generic-agnostic
-	 * (the type-driven, generic-resolved acceptor is produced by processArgs()
-	 * instead). Mirrors the old variant-set choice - named-argument calls select
-	 * among the named-arguments variants, which carry the parameter defaults
-	 * reorderNewArguments() needs to fill skipped optionals.
-	 *
-	 * @param Arg[] $args
-	 * @param ParametersAcceptor[] $variants
-	 * @param ParametersAcceptor[]|null $namedArgumentsVariants
-	 */
-	private function combineVariantsForNormalization(array $args, array $variants, ?array $namedArgumentsVariants): ParametersAcceptor
-	{
-		$hasName = false;
-		foreach ($args as $arg) {
-			if ($arg->name !== null) {
-				$hasName = true;
-				break;
-			}
-		}
-
-		$selectedVariants = ($hasName && $namedArgumentsVariants !== null) ? $namedArgumentsVariants : $variants;
-
-		return count($selectedVariants) === 1
-			? $selectedVariants[0]
-			: ParametersAcceptorSelector::combineAcceptors($selectedVariants);
-	}
-
-	/**
 	 * The stored new-expression type is derived from $preResolvedAcceptor - the
 	 * constructor acceptor processArgs() selected from the arg types gathered on
 	 * the arg-to-arg evolving scope (resolves the class's @template parameters
@@ -493,7 +463,7 @@ final class NewHandler implements ExprHandler
 			$node->getArgs(),
 		);
 
-		$parametersAcceptor = $preResolvedAcceptor ?? $this->combineVariantsForNormalization(
+		$parametersAcceptor = $preResolvedAcceptor ?? ParametersAcceptorSelector::combineVariantsForNormalization(
 			$methodCall->getArgs(),
 			$constructorMethod->getVariants(),
 			$constructorMethod->getNamedArgumentsVariants(),

@@ -128,7 +128,7 @@ final class FuncCallHandler implements ExprHandler
 				// A structural acceptor (names/positions/variadic) drives the per-arg
 				// metadata and the throw/impure points - generics are resolved
 				// type-driven by processArgs() into $resolvedParametersAcceptor.
-				$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $variants, null);
+				$parametersAcceptor = ParametersAcceptorSelector::combineVariantsForNormalization($expr->getArgs(), $variants, null);
 			}
 
 			$nameResult = $nodeScopeResolver->processExprNode($stmt, $expr->name, $scope, $storage, $nodeCallback, $context->enterDeep());
@@ -159,7 +159,7 @@ final class FuncCallHandler implements ExprHandler
 			// A structural acceptor (names/positions/variadic) drives argument
 			// normalization, the impure point and the throw points - generics are
 			// resolved type-driven by processArgs() into $resolvedParametersAcceptor.
-			$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $variants, $namedArgumentsVariants);
+			$parametersAcceptor = ParametersAcceptorSelector::combineVariantsForNormalization($expr->getArgs(), $variants, $namedArgumentsVariants);
 			$impurePoint = SimpleImpurePoint::createFromVariant($functionReflection, $parametersAcceptor, $scope, $expr->getArgs());
 			if ($impurePoint !== null) {
 				$impurePoints[] = new ImpurePoint($scope, $expr, $impurePoint->getIdentifier(), $impurePoint->getDescription(), $impurePoint->isCertain());
@@ -871,35 +871,6 @@ final class FuncCallHandler implements ExprHandler
 		);
 
 		return $arrayType;
-	}
-
-	/**
-	 * A structural acceptor for argument normalization, the impure point and the
-	 * throw points: it depends only on argument names/positions/variadic, so it is
-	 * generic-agnostic (the type-driven, generic-resolved acceptor is produced by
-	 * processArgs() instead). Mirrors selectArgsAcceptor()'s variant-set choice -
-	 * named-argument calls select among the named-arguments variants, which carry
-	 * the parameter defaults reorderFuncArguments() needs to fill skipped optionals.
-	 *
-	 * @param Arg[] $args
-	 * @param ParametersAcceptor[] $variants
-	 * @param ParametersAcceptor[]|null $namedArgumentsVariants
-	 */
-	private function combineVariantsForNormalization(array $args, array $variants, ?array $namedArgumentsVariants): ParametersAcceptor
-	{
-		$hasName = false;
-		foreach ($args as $arg) {
-			if ($arg->name !== null) {
-				$hasName = true;
-				break;
-			}
-		}
-
-		$selectedVariants = ($hasName && $namedArgumentsVariants !== null) ? $namedArgumentsVariants : $variants;
-
-		return count($selectedVariants) === 1
-			? $selectedVariants[0]
-			: ParametersAcceptorSelector::combineAcceptors($selectedVariants);
 	}
 
 	/**

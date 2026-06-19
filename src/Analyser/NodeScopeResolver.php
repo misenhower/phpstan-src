@@ -3630,8 +3630,7 @@ class NodeScopeResolver
 					$classReflection = $this->reflectionProvider->getClass($className);
 					if ($classReflection->hasConstructor()) {
 						$constructorReflection = $classReflection->getConstructor();
-						$parametersAcceptor = ParametersAcceptorSelector::selectFromArgs(
-							$scope,
+						$parametersAcceptor = ParametersAcceptorSelector::combineVariantsForNormalization(
 							$attr->args,
 							$constructorReflection->getVariants(),
 							$constructorReflection->getNamedArgumentsVariants(),

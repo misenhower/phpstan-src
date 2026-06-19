@@ -2,7 +2,6 @@
 
 namespace PHPStan\Analyser\ExprHandler;
 
-use PhpParser\Node\Arg;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\BinaryOp\Identical;
 use PhpParser\Node\Expr\MethodCall;
@@ -116,7 +115,7 @@ final class MethodCallHandler implements ExprHandler
 				// A structural acceptor (names/positions/variadic) drives argument
 				// normalization, the impure point and the throw point - generics are
 				// resolved type-driven by processArgs() into $resolvedParametersAcceptor.
-				$parametersAcceptor = $this->combineVariantsForNormalization($expr->getArgs(), $variants, $namedArgumentsVariants);
+				$parametersAcceptor = ParametersAcceptorSelector::combineVariantsForNormalization($expr->getArgs(), $variants, $namedArgumentsVariants);
 			}
 		} else {
 			$nameResult = $nodeScopeResolver->processExprNode($stmt, $expr->name, $scope, $storage, $nodeCallback, $context->enterDeep());
@@ -506,35 +505,6 @@ final class MethodCallHandler implements ExprHandler
 		}
 
 		return $this->rememberPossiblyImpureFunctionValues || $hasSideEffects->no();
-	}
-
-	/**
-	 * A structural acceptor for argument normalization, the impure point and the
-	 * throw point: it depends only on argument names/positions/variadic, so it is
-	 * generic-agnostic (the type-driven, generic-resolved acceptor is produced by
-	 * processArgs() instead). Named-argument calls select among the named-arguments
-	 * variants, which carry the parameter defaults reorderMethodArguments() needs to
-	 * fill skipped optionals.
-	 *
-	 * @param Arg[] $args
-	 * @param ParametersAcceptor[] $variants
-	 * @param ParametersAcceptor[]|null $namedArgumentsVariants
-	 */
-	private function combineVariantsForNormalization(array $args, array $variants, ?array $namedArgumentsVariants): ParametersAcceptor
-	{
-		$hasName = false;
-		foreach ($args as $arg) {
-			if ($arg->name !== null) {
-				$hasName = true;
-				break;
-			}
-		}
-
-		$selectedVariants = ($hasName && $namedArgumentsVariants !== null) ? $namedArgumentsVariants : $variants;
-
-		return count($selectedVariants) === 1
-			? $selectedVariants[0]
-			: ParametersAcceptorSelector::combineAcceptors($selectedVariants);
 	}
 
 }
