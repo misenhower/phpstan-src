@@ -39,16 +39,36 @@ final class ArrowFunctionHandler implements ExprHandler
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
-		$result = $nodeScopeResolver->processArrowFunctionNode($stmt, $expr, $scope, $storage, $nodeCallback, null);
+		$arrowFunctionResult = $nodeScopeResolver->processArrowFunctionNode($stmt, $expr, $scope, $storage, $nodeCallback, null);
+		$result = $arrowFunctionResult->getExpressionResult();
 
 		// A plain typeCallback recursing through getClosureType() would re-walk
 		// the body each getType() ask before the cache populates and hang;
 		// ExpressionResult excludes closures from its tracked-type early return.
-		// Compute the ClosureType once here and store it as an eager value. The
-		// native flavour mirrors what getNativeType() did via resolveType() on a
-		// promoted scope (getClosureType($scope->doNotTreatPhpDocTypesAsCertain())).
-		$type = $this->closureTypeResolver->getClosureType($scope, $expr);
-		$nativeType = $this->closureTypeResolver->getClosureType($scope->doNotTreatPhpDocTypesAsCertain(), $expr);
+		// Compute the ClosureType once here and store it as an eager value.
+		//
+		// Both flavours are built from the arrow function body the single walk in
+		// processArrowFunctionNode() already covered, without a second walk: the
+		// native flavour reads the body expression's stored native types off the
+		// same arrowScope (an arrow's native return type is its body's native type).
+		$arrowScope = $arrowFunctionResult->getArrowFunctionScope();
+		$type = $this->closureTypeResolver->buildClosureTypeForArrowFunction(
+			$scope,
+			$expr,
+			$arrowScope,
+			$arrowFunctionResult->getClosureTypeThrowPoints(),
+			$arrowFunctionResult->getClosureTypeImpurePoints(),
+			$arrowFunctionResult->getInvalidateExpressions(),
+		);
+		$nativeType = $this->closureTypeResolver->buildClosureTypeForArrowFunction(
+			$scope,
+			$expr,
+			$arrowScope,
+			$arrowFunctionResult->getClosureTypeThrowPoints(),
+			$arrowFunctionResult->getClosureTypeImpurePoints(),
+			$arrowFunctionResult->getInvalidateExpressions(),
+			native: true,
+		);
 
 		return $this->expressionResultFactory->create(
 			$result->getScope(),

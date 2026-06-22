@@ -44,11 +44,27 @@ final class ClosureHandler implements ExprHandler
 		// A plain typeCallback recursing through getClosureType() would re-walk
 		// the body each getType() ask before the cache populates and hang;
 		// ExpressionResult excludes closures from its tracked-type early return.
-		// Compute the ClosureType once here and store it as an eager value. The
-		// native flavour mirrors what getNativeType() did via resolveType() on a
-		// promoted scope (getClosureType($scope->doNotTreatPhpDocTypesAsCertain())).
-		$type = $this->closureTypeResolver->getClosureType($scope, $expr);
-		$nativeType = $this->closureTypeResolver->getClosureType($scope->doNotTreatPhpDocTypesAsCertain(), $expr);
+		// Compute the ClosureType once here and store it as an eager value.
+		//
+		// The phpdoc flavour is built from the returns/yields the single body walk
+		// in processClosureNode() already gathered, without a second walk.
+		//
+		// A closure carries no @param/@return of its own, and its native type
+		// resolves the body the same way its phpdoc type does (a closure's native
+		// type equals its phpdoc type - e.g. a closure returning a positive-int
+		// method is Closure(): int<1, max> in both flavours). So the native
+		// flavour reuses the phpdoc ClosureType - no native walk.
+		$type = $this->closureTypeResolver->buildClosureTypeForClosure(
+			$scope,
+			$expr,
+			$processClosureResult->getGatheredReturnStatements(),
+			$processClosureResult->getGatheredYieldStatements(),
+			$processClosureResult->getExecutionEnds(),
+			$processClosureResult->getThrowPoints(),
+			$processClosureResult->getClosureTypeImpurePoints(),
+			$processClosureResult->getInvalidateExpressions(),
+		);
+		$nativeType = $type;
 
 		return $this->expressionResultFactory->create(
 			$processClosureResult->applyByRefUseScope($processClosureResult->getScope()),

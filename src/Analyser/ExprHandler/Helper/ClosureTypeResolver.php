@@ -11,6 +11,7 @@ use PhpParser\Node\Expr\YieldFrom;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ImpurePoint;
+use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
@@ -26,6 +27,7 @@ use PHPStan\Reflection\Callables\SimpleImpurePoint;
 use PHPStan\Reflection\Callables\SimpleThrowPoint;
 use PHPStan\Reflection\ExtendedParameterReflection;
 use PHPStan\Reflection\Native\NativeParameterReflection;
+use PHPStan\Reflection\ParameterReflection;
 use PHPStan\Reflection\PassedByReference;
 use PHPStan\Reflection\Php\DummyParameter;
 use PHPStan\ShouldNotHappenException;
@@ -38,6 +40,7 @@ use PHPStan\Type\IntegerType;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\NonAcceptingNeverType;
 use PHPStan\Type\NullType;
+use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\VoidType;
 use function array_key_exists;
@@ -58,10 +61,457 @@ final class ClosureTypeResolver
 	{
 	}
 
+	/**
+	 * Resolves a closure/arrow function type by walking its body itself. Used by
+	 * the paths that have NO prior walk to read return/yield types from - a
+	 * closure asking its own type before its result is stored, and
+	 * resolveCallableTypeForScope(). A self-by-ref closure legitimately re-walks
+	 * here (the $resolveClosureTypeDepth guard answers that ask).
+	 *
+	 * Callers that have already walked the body (the closure/arrow handlers and
+	 * the closure-as-call-arg store sites) feed the gathered returns/yields to
+	 * buildClosureType() instead, which constructs the same ClosureType without
+	 * a second walk.
+	 */
 	public function getClosureType(
 		MutatingScope $scope,
 		Node\Expr\Closure|ArrowFunction $expr,
 	): ClosureType
+	{
+		[$parameters, $isVariadic, $callableParameters, $nativeCallableParameters] = $this->buildParametersAndAcceptors($scope, $expr);
+
+		if ($expr instanceof ArrowFunction) {
+			$arrowScope = $scope->enterArrowFunctionWithoutReflection($expr, $callableParameters, $nativeCallableParameters);
+
+			$returnType = $this->resolveArrowFunctionReturnType($scope, $arrowScope, $expr);
+
+			$arrowFunctionImpurePoints = [];
+			$invalidateExpressions = [];
+			$arrowFunctionExprResult = $this->nodeScopeResolver->processExprNode(
+				new Node\Stmt\Expression($expr->expr),
+				$expr->expr,
+				$arrowScope,
+				new ExpressionResultStorage(),
+				static function (Node $node, Scope $scope) use ($arrowScope, &$arrowFunctionImpurePoints, &$invalidateExpressions): void {
+					if ($scope->getAnonymousFunctionReflection() !== $arrowScope->getAnonymousFunctionReflection()) {
+						return;
+					}
+
+					if ($node instanceof InvalidateExprNode) {
+						$invalidateExpressions[] = $node;
+						return;
+					}
+
+					if (!$node instanceof PropertyAssignNode) {
+						return;
+					}
+
+					$arrowFunctionImpurePoints[] = new ImpurePoint(
+						$scope,
+						$node,
+						'propertyAssign',
+						'property assignment',
+						true,
+					);
+					$invalidateExpressions[] = new InvalidateExprNode($node->getPropertyFetch());
+				},
+				ExpressionContext::createDeep(),
+			);
+			$throwPoints = array_map(static fn ($throwPoint) => $throwPoint->toPublic(), $arrowFunctionExprResult->getThrowPoints());
+			$impurePoints = array_merge($arrowFunctionImpurePoints, $arrowFunctionExprResult->getImpurePoints());
+
+			return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, []);
+		}
+
+		$cachedTypes = $expr->getAttribute('phpstanCachedTypes', []);
+		$cacheKey = $scope->getClosureScopeCacheKey();
+		if (array_key_exists($cacheKey, $cachedTypes)) {
+			return $this->createClosureTypeFromCache($expr, $parameters, $isVariadic, $cachedTypes[$cacheKey]);
+		}
+		if (self::$resolveClosureTypeDepth >= 2) {
+			return new ClosureType(
+				$parameters,
+				$scope->getFunctionType($expr->returnType, false, false),
+				$isVariadic,
+				isStatic: TrinaryLogic::createFromBoolean($expr->static),
+			);
+		}
+
+		self::$resolveClosureTypeDepth++;
+
+		$closureScope = $scope->enterAnonymousFunctionWithoutReflection($expr, $callableParameters, $nativeCallableParameters);
+		$closureReturnStatements = [];
+		$closureYieldStatements = [];
+		$closureExecutionEnds = [];
+		$closureImpurePoints = [];
+		$invalidateExpressions = [];
+
+		try {
+			$closureStatementResult = $this->nodeScopeResolver->processStmtNodes($expr, $expr->stmts, $closureScope, static function (Node $node, Scope $scope) use ($closureScope, &$closureReturnStatements, &$closureYieldStatements, &$closureExecutionEnds, &$closureImpurePoints, &$invalidateExpressions): void {
+				if ($scope->getAnonymousFunctionReflection() !== $closureScope->getAnonymousFunctionReflection()) {
+					return;
+				}
+
+				if ($node instanceof InvalidateExprNode) {
+					$invalidateExpressions[] = $node;
+					return;
+				}
+
+				if ($node instanceof PropertyAssignNode) {
+					$closureImpurePoints[] = new ImpurePoint(
+						$scope,
+						$node,
+						'propertyAssign',
+						'property assignment',
+						true,
+					);
+					$invalidateExpressions[] = new InvalidateExprNode($node->getPropertyFetch());
+					return;
+				}
+
+				if ($node instanceof ExecutionEndNode) {
+					$closureExecutionEnds[] = $node;
+					return;
+				}
+
+				if ($node instanceof Node\Stmt\Return_) {
+					$closureReturnStatements[] = [$node, $scope];
+				}
+
+				if (!$node instanceof Yield_ && !$node instanceof YieldFrom) {
+					return;
+				}
+
+				$closureYieldStatements[] = [$node, $scope];
+			}, StatementContext::createTopLevel());
+		} finally {
+			self::$resolveClosureTypeDepth--;
+		}
+
+		$throwPoints = $closureStatementResult->getThrowPoints();
+		$impurePoints = array_merge($closureImpurePoints, $closureStatementResult->getImpurePoints());
+
+		return $this->buildClosureTypeFromClosureWalk(
+			$scope,
+			$expr,
+			$parameters,
+			$isVariadic,
+			$closureReturnStatements,
+			$closureYieldStatements,
+			$closureExecutionEnds,
+			$throwPoints,
+			$impurePoints,
+			$invalidateExpressions,
+		);
+	}
+
+	/**
+	 * Constructs a closure type from data the engine already gathered while
+	 * walking the body once (see NodeScopeResolver::processClosureNode()),
+	 * without a second walk. The return/yield expression types are read from
+	 * their stored results.
+	 *
+	 * @param list<array{Node\Stmt\Return_, Scope}> $returnStatements
+	 * @param list<array{Yield_|YieldFrom, Scope}> $yieldStatements
+	 * @param list<ExecutionEndNode> $executionEnds
+	 * @param InternalThrowPoint[] $throwPoints the single body walk's internal throw points
+	 * @param ImpurePoint[] $impurePoints already merged (property-assign impure points + statement result impure points)
+	 * @param InvalidateExprNode[] $invalidateExpressions
+	 */
+	public function buildClosureTypeForClosure(
+		MutatingScope $scope,
+		Node\Expr\Closure $expr,
+		array $returnStatements,
+		array $yieldStatements,
+		array $executionEnds,
+		array $throwPoints,
+		array $impurePoints,
+		array $invalidateExpressions,
+	): ClosureType
+	{
+		if ($this->bodyWalkHasOwnParameterTypes($expr)) {
+			return $this->getClosureType($scope, $expr);
+		}
+
+		[$parameters, $isVariadic] = $this->buildParametersAndAcceptors($scope, $expr);
+
+		return $this->buildClosureTypeFromClosureWalk(
+			$scope,
+			$expr,
+			$parameters,
+			$isVariadic,
+			$returnStatements,
+			$yieldStatements,
+			$executionEnds,
+			array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->toPublic(), $throwPoints),
+			$impurePoints,
+			$invalidateExpressions,
+		);
+	}
+
+	/**
+	 * Constructs an arrow function type from data the engine already gathered
+	 * while walking the body once (see NodeScopeResolver::
+	 * processArrowFunctionNode()), without a second walk. The return/yield
+	 * expression types are read from their stored results on $arrowScope.
+	 *
+	 * @param ThrowPoint[] $throwPoints
+	 * @param ImpurePoint[] $impurePoints already merged (property-assign impure points + expression result impure points)
+	 * @param InvalidateExprNode[] $invalidateExpressions
+	 */
+	public function buildClosureTypeForArrowFunction(
+		MutatingScope $scope,
+		ArrowFunction $expr,
+		MutatingScope $arrowScope,
+		array $throwPoints,
+		array $impurePoints,
+		array $invalidateExpressions,
+		bool $native = false,
+	): ClosureType
+	{
+		if ($this->bodyWalkHasOwnParameterTypes($expr)) {
+			return $this->getClosureType($native ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope, $expr);
+		}
+
+		[$parameters, $isVariadic] = $this->buildParametersAndAcceptors($scope, $expr);
+
+		$returnType = $this->resolveArrowFunctionReturnType($scope, $arrowScope, $expr, $native);
+
+		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, []);
+	}
+
+	/**
+	 * Whether getClosureType() would walk the body with different parameter types
+	 * than NodeScopeResolver's single walk (processClosureNode()/
+	 * processArrowFunctionNode()) did. array_map() callbacks and immediately
+	 * invoked closures get their parameter types from the array element type /
+	 * the invocation arguments in getClosureType(), whereas the single walk types
+	 * them from the closure's passed-to callable type - so the return type read
+	 * from the gathered scopes would differ, and getClosureType() must re-walk.
+	 */
+	private function bodyWalkHasOwnParameterTypes(Node\Expr\Closure|ArrowFunction $expr): bool
+	{
+		return $expr->getAttribute(ArrayMapArgVisitor::ATTRIBUTE_NAME) !== null
+			|| $expr->getAttribute(ImmediatelyInvokedClosureVisitor::ARGS_ATTRIBUTE_NAME) !== null;
+	}
+
+	/**
+	 * @param list<NativeParameterReflection> $parameters
+	 * @param list<array{Node\Stmt\Return_, Scope}> $returnStatements
+	 * @param list<array{Yield_|YieldFrom, Scope}> $yieldStatements
+	 * @param list<ExecutionEndNode> $executionEnds
+	 * @param ThrowPoint[] $throwPoints
+	 * @param ImpurePoint[] $impurePoints
+	 * @param InvalidateExprNode[] $invalidateExpressions
+	 */
+	private function buildClosureTypeFromClosureWalk(
+		MutatingScope $scope,
+		Node\Expr\Closure $expr,
+		array $parameters,
+		bool $isVariadic,
+		array $returnStatements,
+		array $yieldStatements,
+		array $executionEnds,
+		array $throwPoints,
+		array $impurePoints,
+		array $invalidateExpressions,
+	): ClosureType
+	{
+		$onlyNeverExecutionEnds = $this->deriveOnlyNeverExecutionEnds($executionEnds);
+
+		$returnTypes = [];
+		$hasNull = false;
+		foreach ($returnStatements as [$returnNode, $returnScope]) {
+			if ($returnNode->expr === null) {
+				$hasNull = true;
+				continue;
+			}
+
+			$returnTypes[] = $returnScope->toMutatingScope()->getType($returnNode->expr);
+		}
+
+		if (count($returnTypes) === 0) {
+			if ($onlyNeverExecutionEnds === true && !$hasNull) {
+				$returnType = new NonAcceptingNeverType();
+			} else {
+				$returnType = new VoidType();
+			}
+		} else {
+			if ($onlyNeverExecutionEnds === true) {
+				$returnTypes[] = new NonAcceptingNeverType();
+			}
+			if ($hasNull) {
+				$returnTypes[] = new NullType();
+			}
+			$returnType = TypeCombinator::union(...$returnTypes);
+		}
+
+		if (count($yieldStatements) > 0) {
+			$keyTypes = [];
+			$valueTypes = [];
+			foreach ($yieldStatements as [$yieldNode, $yieldScope]) {
+				if ($yieldNode instanceof Yield_) {
+					if ($yieldNode->key === null) {
+						$keyTypes[] = new IntegerType();
+					} else {
+						$keyTypes[] = $yieldScope->toMutatingScope()->getType($yieldNode->key);
+					}
+
+					if ($yieldNode->value === null) {
+						$valueTypes[] = new NullType();
+					} else {
+						$valueTypes[] = $yieldScope->toMutatingScope()->getType($yieldNode->value);
+					}
+
+					continue;
+				}
+
+				$yieldFromType = $yieldScope->toMutatingScope()->getType($yieldNode->expr);
+				$keyTypes[] = $yieldScope->toMutatingScope()->getIterableKeyType($yieldFromType);
+				$valueTypes[] = $yieldScope->toMutatingScope()->getIterableValueType($yieldFromType);
+			}
+
+			$returnType = new GenericObjectType(Generator::class, [
+				TypeCombinator::union(...$keyTypes),
+				TypeCombinator::union(...$valueTypes),
+				new MixedType(),
+				$returnType,
+			]);
+		} else {
+			if ($expr->returnType !== null) {
+				$nativeReturnType = $scope->getFunctionType($expr->returnType, false, false);
+				$returnType = MutatingScope::intersectButNotNever($nativeReturnType, $returnType);
+			}
+		}
+
+		$usedVariables = [];
+		foreach ($expr->uses as $use) {
+			if (!is_string($use->var->name)) {
+				continue;
+			}
+
+			$usedVariables[] = $use->var->name;
+		}
+
+		foreach ($expr->uses as $use) {
+			if (!$use->byRef) {
+				continue;
+			}
+
+			$impurePoints[] = new ImpurePoint(
+				$scope,
+				$expr,
+				'functionCall',
+				'call to a Closure with by-ref use',
+				true,
+			);
+			break;
+		}
+
+		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, $usedVariables);
+	}
+
+	private function resolveArrowFunctionReturnType(
+		MutatingScope $scope,
+		MutatingScope $arrowScope,
+		ArrowFunction $expr,
+		bool $native = false,
+	): Type
+	{
+		// Unlike a closure (whose native type equals its phpdoc type), an arrow
+		// function's native return type is the body expression's native type
+		// (e.g. fn () => methodReturningPositiveInt() is Closure(): int natively,
+		// Closure(): int<1, max> in phpdoc). The body was already processed in the
+		// single walk, so the native flavour just reads the stored native types off
+		// the same arrowScope - no second walk.
+		$readScope = $native ? $arrowScope->doNotTreatPhpDocTypesAsCertain() : $arrowScope;
+
+		if ($expr->expr instanceof Yield_ || $expr->expr instanceof YieldFrom) {
+			$yieldNode = $expr->expr;
+
+			if ($yieldNode instanceof Yield_) {
+				if ($yieldNode->key === null) {
+					$keyType = new IntegerType();
+				} else {
+					$keyType = $readScope->getType($yieldNode->key);
+				}
+
+				if ($yieldNode->value === null) {
+					$valueType = new NullType();
+				} else {
+					$valueType = $readScope->getType($yieldNode->value);
+				}
+			} else {
+				$yieldFromType = $readScope->getType($yieldNode->expr);
+				$keyType = $readScope->getIterableKeyType($yieldFromType);
+				$valueType = $readScope->getIterableValueType($yieldFromType);
+			}
+
+			return new GenericObjectType(Generator::class, [
+				$keyType,
+				$valueType,
+				new MixedType(),
+				new VoidType(),
+			]);
+		}
+
+		$returnType = $readScope->getKeepVoidType($expr->expr);
+		if ($expr->returnType !== null) {
+			$nativeReturnType = $scope->getFunctionType($expr->returnType, false, false);
+			$returnType = MutatingScope::intersectButNotNever($nativeReturnType, $returnType);
+		}
+
+		return $returnType;
+	}
+
+	/**
+	 * Whether every execution end of the closure body is a "never" terminator
+	 * (throw/exit) rather than a return: null when there were no execution ends,
+	 * false once a return (or non-terminating end) is seen.
+	 *
+	 * @param list<ExecutionEndNode> $executionEnds
+	 */
+	private function deriveOnlyNeverExecutionEnds(array $executionEnds): ?bool
+	{
+		$onlyNeverExecutionEnds = null;
+		foreach ($executionEnds as $node) {
+			if ($node->getStatementResult()->isAlwaysTerminating()) {
+				foreach ($node->getStatementResult()->getExitPoints() as $exitPoint) {
+					if ($exitPoint->getStatement() instanceof Node\Stmt\Return_) {
+						$onlyNeverExecutionEnds = false;
+						continue;
+					}
+
+					if ($onlyNeverExecutionEnds === null) {
+						$onlyNeverExecutionEnds = true;
+					}
+
+					break;
+				}
+
+				if (count($node->getStatementResult()->getExitPoints()) === 0) {
+					if ($onlyNeverExecutionEnds === null) {
+						$onlyNeverExecutionEnds = true;
+					}
+				}
+			} else {
+				$onlyNeverExecutionEnds = false;
+			}
+		}
+
+		return $onlyNeverExecutionEnds;
+	}
+
+	/**
+	 * Builds the closure/arrow function's declared parameters (independent of the
+	 * body walk) and the callable parameter acceptors derived from the call site.
+	 *
+	 * @return array{list<NativeParameterReflection>, bool, ParameterReflection[]|null, ParameterReflection[]|null}
+	 */
+	private function buildParametersAndAcceptors(
+		MutatingScope $scope,
+		Node\Expr\Closure|ArrowFunction $expr,
+	): array
 	{
 		$parameters = [];
 		$isVariadic = false;
@@ -125,286 +575,71 @@ final class ClosureTypeResolver
 			}
 		}
 
-		if ($expr instanceof ArrowFunction) {
-			$arrowScope = $scope->enterArrowFunctionWithoutReflection($expr, $callableParameters, $nativeCallableParameters);
+		return [$parameters, $isVariadic, $callableParameters, $nativeCallableParameters];
+	}
 
-			if ($expr->expr instanceof Yield_ || $expr->expr instanceof YieldFrom) {
-				$yieldNode = $expr->expr;
-
-				if ($yieldNode instanceof Yield_) {
-					if ($yieldNode->key === null) {
-						$keyType = new IntegerType();
-					} else {
-						$keyType = $arrowScope->getType($yieldNode->key);
-					}
-
-					if ($yieldNode->value === null) {
-						$valueType = new NullType();
-					} else {
-						$valueType = $arrowScope->getType($yieldNode->value);
-					}
-				} else {
-					$yieldFromType = $arrowScope->getType($yieldNode->expr);
-					$keyType = $arrowScope->getIterableKeyType($yieldFromType);
-					$valueType = $arrowScope->getIterableValueType($yieldFromType);
+	/**
+	 * @param list<NativeParameterReflection> $parameters
+	 * @param array{returnType: Type, throwPoints: SimpleThrowPoint[], impurePoints: SimpleImpurePoint[], invalidateExpressions: InvalidateExprNode[], usedVariables: string[]} $cachedClosureData
+	 */
+	private function createClosureTypeFromCache(
+		Node\Expr\Closure $expr,
+		array $parameters,
+		bool $isVariadic,
+		array $cachedClosureData,
+	): ClosureType
+	{
+		$mustUseReturnValue = TrinaryLogic::createNo();
+		foreach ($expr->attrGroups as $attrGroup) {
+			foreach ($attrGroup->attrs as $attr) {
+				if ($attr->name->toLowerString() === 'nodiscard') {
+					$mustUseReturnValue = TrinaryLogic::createYes();
+					break;
 				}
-
-				$returnType = new GenericObjectType(Generator::class, [
-					$keyType,
-					$valueType,
-					new MixedType(),
-					new VoidType(),
-				]);
-			} else {
-				$returnType = $arrowScope->getKeepVoidType($expr->expr);
-				if ($expr->returnType !== null) {
-					$nativeReturnType = $scope->getFunctionType($expr->returnType, false, false);
-					$returnType = MutatingScope::intersectButNotNever($nativeReturnType, $returnType);
-				}
-			}
-
-			$arrowFunctionImpurePoints = [];
-			$invalidateExpressions = [];
-			$arrowFunctionExprResult = $this->nodeScopeResolver->processExprNode(
-				new Node\Stmt\Expression($expr->expr),
-				$expr->expr,
-				$arrowScope,
-				new ExpressionResultStorage(),
-				static function (Node $node, Scope $scope) use ($arrowScope, &$arrowFunctionImpurePoints, &$invalidateExpressions): void {
-					if ($scope->getAnonymousFunctionReflection() !== $arrowScope->getAnonymousFunctionReflection()) {
-						return;
-					}
-
-					if ($node instanceof InvalidateExprNode) {
-						$invalidateExpressions[] = $node;
-						return;
-					}
-
-					if (!$node instanceof PropertyAssignNode) {
-						return;
-					}
-
-					$arrowFunctionImpurePoints[] = new ImpurePoint(
-						$scope,
-						$node,
-						'propertyAssign',
-						'property assignment',
-						true,
-					);
-					$invalidateExpressions[] = new InvalidateExprNode($node->getPropertyFetch());
-				},
-				ExpressionContext::createDeep(),
-			);
-			$throwPoints = array_map(static fn ($throwPoint) => $throwPoint->toPublic(), $arrowFunctionExprResult->getThrowPoints());
-			$impurePoints = array_merge($arrowFunctionImpurePoints, $arrowFunctionExprResult->getImpurePoints());
-			$usedVariables = [];
-		} else {
-			$cachedTypes = $expr->getAttribute('phpstanCachedTypes', []);
-			$cacheKey = $scope->getClosureScopeCacheKey();
-			if (array_key_exists($cacheKey, $cachedTypes)) {
-				$cachedClosureData = $cachedTypes[$cacheKey];
-
-				$mustUseReturnValue = TrinaryLogic::createNo();
-				foreach ($expr->attrGroups as $attrGroup) {
-					foreach ($attrGroup->attrs as $attr) {
-						if ($attr->name->toLowerString() === 'nodiscard') {
-							$mustUseReturnValue = TrinaryLogic::createYes();
-							break;
-						}
-					}
-				}
-
-				return new ClosureType(
-					$parameters,
-					$cachedClosureData['returnType'],
-					$isVariadic,
-					TemplateTypeMap::createEmpty(),
-					TemplateTypeMap::createEmpty(),
-					TemplateTypeVarianceMap::createEmpty(),
-					throwPoints: $cachedClosureData['throwPoints'],
-					impurePoints: $cachedClosureData['impurePoints'],
-					invalidateExpressions: $cachedClosureData['invalidateExpressions'],
-					usedVariables: $cachedClosureData['usedVariables'],
-					acceptsNamedArguments: TrinaryLogic::createYes(),
-					mustUseReturnValue: $mustUseReturnValue,
-					isStatic: TrinaryLogic::createFromBoolean($expr->static),
-				);
-			}
-			if (self::$resolveClosureTypeDepth >= 2) {
-				return new ClosureType(
-					$parameters,
-					$scope->getFunctionType($expr->returnType, false, false),
-					$isVariadic,
-					isStatic: TrinaryLogic::createFromBoolean($expr->static),
-				);
-			}
-
-			self::$resolveClosureTypeDepth++;
-
-			$closureScope = $scope->enterAnonymousFunctionWithoutReflection($expr, $callableParameters, $nativeCallableParameters);
-			$closureReturnStatements = [];
-			$closureYieldStatements = [];
-			$onlyNeverExecutionEnds = null;
-			$closureImpurePoints = [];
-			$invalidateExpressions = [];
-
-			try {
-				$closureStatementResult = $this->nodeScopeResolver->processStmtNodes($expr, $expr->stmts, $closureScope, static function (Node $node, Scope $scope) use ($closureScope, &$closureReturnStatements, &$closureYieldStatements, &$onlyNeverExecutionEnds, &$closureImpurePoints, &$invalidateExpressions): void {
-					if ($scope->getAnonymousFunctionReflection() !== $closureScope->getAnonymousFunctionReflection()) {
-						return;
-					}
-
-					if ($node instanceof InvalidateExprNode) {
-						$invalidateExpressions[] = $node;
-						return;
-					}
-
-					if ($node instanceof PropertyAssignNode) {
-						$closureImpurePoints[] = new ImpurePoint(
-							$scope,
-							$node,
-							'propertyAssign',
-							'property assignment',
-							true,
-						);
-						$invalidateExpressions[] = new InvalidateExprNode($node->getPropertyFetch());
-						return;
-					}
-
-					if ($node instanceof ExecutionEndNode) {
-						if ($node->getStatementResult()->isAlwaysTerminating()) {
-							foreach ($node->getStatementResult()->getExitPoints() as $exitPoint) {
-								if ($exitPoint->getStatement() instanceof Node\Stmt\Return_) {
-									$onlyNeverExecutionEnds = false;
-									continue;
-								}
-
-								if ($onlyNeverExecutionEnds === null) {
-									$onlyNeverExecutionEnds = true;
-								}
-
-								break;
-							}
-
-							if (count($node->getStatementResult()->getExitPoints()) === 0) {
-								if ($onlyNeverExecutionEnds === null) {
-									$onlyNeverExecutionEnds = true;
-								}
-							}
-						} else {
-							$onlyNeverExecutionEnds = false;
-						}
-
-						return;
-					}
-
-					if ($node instanceof Node\Stmt\Return_) {
-						$closureReturnStatements[] = [$node, $scope];
-					}
-
-					if (!$node instanceof Yield_ && !$node instanceof YieldFrom) {
-						return;
-					}
-
-					$closureYieldStatements[] = [$node, $scope];
-				}, StatementContext::createTopLevel());
-			} finally {
-				self::$resolveClosureTypeDepth--;
-			}
-
-			$throwPoints = $closureStatementResult->getThrowPoints();
-			$impurePoints = array_merge($closureImpurePoints, $closureStatementResult->getImpurePoints());
-
-			$returnTypes = [];
-			$hasNull = false;
-			foreach ($closureReturnStatements as [$returnNode, $returnScope]) {
-				if ($returnNode->expr === null) {
-					$hasNull = true;
-					continue;
-				}
-
-				$returnTypes[] = $returnScope->toMutatingScope()->getType($returnNode->expr);
-			}
-
-			if (count($returnTypes) === 0) {
-				if ($onlyNeverExecutionEnds === true && !$hasNull) {
-					$returnType = new NonAcceptingNeverType();
-				} else {
-					$returnType = new VoidType();
-				}
-			} else {
-				if ($onlyNeverExecutionEnds === true) {
-					$returnTypes[] = new NonAcceptingNeverType();
-				}
-				if ($hasNull) {
-					$returnTypes[] = new NullType();
-				}
-				$returnType = TypeCombinator::union(...$returnTypes);
-			}
-
-			if (count($closureYieldStatements) > 0) {
-				$keyTypes = [];
-				$valueTypes = [];
-				foreach ($closureYieldStatements as [$yieldNode, $yieldScope]) {
-					if ($yieldNode instanceof Yield_) {
-						if ($yieldNode->key === null) {
-							$keyTypes[] = new IntegerType();
-						} else {
-							$keyTypes[] = $yieldScope->toMutatingScope()->getType($yieldNode->key);
-						}
-
-						if ($yieldNode->value === null) {
-							$valueTypes[] = new NullType();
-						} else {
-							$valueTypes[] = $yieldScope->toMutatingScope()->getType($yieldNode->value);
-						}
-
-						continue;
-					}
-
-					$yieldFromType = $yieldScope->toMutatingScope()->getType($yieldNode->expr);
-					$keyTypes[] = $yieldScope->toMutatingScope()->getIterableKeyType($yieldFromType);
-					$valueTypes[] = $yieldScope->toMutatingScope()->getIterableValueType($yieldFromType);
-				}
-
-				$returnType = new GenericObjectType(Generator::class, [
-					TypeCombinator::union(...$keyTypes),
-					TypeCombinator::union(...$valueTypes),
-					new MixedType(),
-					$returnType,
-				]);
-			} else {
-				if ($expr->returnType !== null) {
-					$nativeReturnType = $scope->getFunctionType($expr->returnType, false, false);
-					$returnType = MutatingScope::intersectButNotNever($nativeReturnType, $returnType);
-				}
-			}
-
-			$usedVariables = [];
-			foreach ($expr->uses as $use) {
-				if (!is_string($use->var->name)) {
-					continue;
-				}
-
-				$usedVariables[] = $use->var->name;
-			}
-
-			foreach ($expr->uses as $use) {
-				if (!$use->byRef) {
-					continue;
-				}
-
-				$impurePoints[] = new ImpurePoint(
-					$scope,
-					$expr,
-					'functionCall',
-					'call to a Closure with by-ref use',
-					true,
-				);
-				break;
 			}
 		}
 
+		return new ClosureType(
+			$parameters,
+			$cachedClosureData['returnType'],
+			$isVariadic,
+			TemplateTypeMap::createEmpty(),
+			TemplateTypeMap::createEmpty(),
+			TemplateTypeVarianceMap::createEmpty(),
+			throwPoints: $cachedClosureData['throwPoints'],
+			impurePoints: $cachedClosureData['impurePoints'],
+			invalidateExpressions: $cachedClosureData['invalidateExpressions'],
+			usedVariables: $cachedClosureData['usedVariables'],
+			acceptsNamedArguments: TrinaryLogic::createYes(),
+			mustUseReturnValue: $mustUseReturnValue,
+			isStatic: TrinaryLogic::createFromBoolean($expr->static),
+		);
+	}
+
+	/**
+	 * Constructs the final ClosureType from the resolved return type and the
+	 * gathered throw/impure/invalidate points. Adds the by-ref-parameter impure
+	 * point, populates the per-scope phpdoc-type cache (closures only), and
+	 * resolves the #[NoDiscard] attribute.
+	 *
+	 * @param list<NativeParameterReflection> $parameters
+	 * @param ThrowPoint[] $throwPoints
+	 * @param ImpurePoint[] $impurePoints
+	 * @param InvalidateExprNode[] $invalidateExpressions
+	 * @param string[] $usedVariables
+	 */
+	private function assembleClosureType(
+		MutatingScope $scope,
+		Node\Expr\Closure|ArrowFunction $expr,
+		array $parameters,
+		bool $isVariadic,
+		Type $returnType,
+		array $throwPoints,
+		array $impurePoints,
+		array $invalidateExpressions,
+		array $usedVariables,
+	): ClosureType
+	{
 		foreach ($parameters as $parameter) {
 			if ($parameter->passedByReference()->no()) {
 				continue;
