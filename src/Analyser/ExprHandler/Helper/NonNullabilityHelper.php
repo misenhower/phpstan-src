@@ -92,7 +92,7 @@ final class NonNullabilityHelper
 				$specifiedExpressions[] = $specifiedExpression;
 			}
 			return $result->getScope();
-		});
+		}, false);
 
 		return new EnsuredNonNullabilityResult($scope, $specifiedExpressions);
 	}
@@ -121,9 +121,13 @@ final class NonNullabilityHelper
 	/**
 	 * @param Closure(MutatingScope, Expr): MutatingScope $callback
 	 */
-	private function lookForExpressionCallback(MutatingScope $scope, Expr $expr, Closure $callback): MutatingScope
+	private function lookForExpressionCallback(MutatingScope $scope, Expr $expr, Closure $callback, bool $includeExpr = true): MutatingScope
 	{
-		if (!$expr instanceof ArrayDimFetch || $expr->dim !== null) {
+		// $includeExpr is false only for the outermost operand: ensuring its chain
+		// links non-null lets it be walked without spurious "possibly null" noise,
+		// but the operand's own value must keep its real (nullable) type - that is
+		// the type the isset/empty/?? verdict and narrowing read from its result.
+		if ($includeExpr && (!$expr instanceof ArrayDimFetch || $expr->dim !== null)) {
 			$scope = $callback($scope, $expr);
 		}
 
