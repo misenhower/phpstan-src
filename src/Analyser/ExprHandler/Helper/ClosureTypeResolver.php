@@ -76,9 +76,26 @@ final class ClosureTypeResolver
 	public function getClosureType(
 		MutatingScope $scope,
 		Node\Expr\Closure|ArrowFunction $expr,
+		bool $shallow = false,
 	): ClosureType
 	{
 		[$parameters, $isVariadic, $callableParameters, $nativeCallableParameters] = $this->buildParametersAndAcceptors($scope, $expr);
+
+		// A shallow reflection is the closure/arrow function's signature without
+		// walking its body: parameters plus the DECLARED return type. Used at scope
+		// ENTRY (enterAnonymousFunction()/enterArrowFunction()) so entering a
+		// closure/arrow scope never re-walks the body - the refined return type is
+		// built afterwards from the single body walk's gathered returns and carried
+		// on the node/rule scope (see NodeScopeResolver::processClosureNodeInternal()
+		// and processArrowFunctionNode()).
+		if ($shallow) {
+			return new ClosureType(
+				$parameters,
+				$scope->getFunctionType($expr->returnType, false, false),
+				$isVariadic,
+				isStatic: TrinaryLogic::createFromBoolean($expr->static),
+			);
+		}
 
 		if ($expr instanceof ArrowFunction) {
 			$arrowScope = $scope->enterArrowFunctionWithoutReflection($expr, $callableParameters, $nativeCallableParameters);

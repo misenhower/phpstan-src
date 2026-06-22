@@ -3345,6 +3345,7 @@ class NodeScopeResolver
 		if (count($byRefUses) === 0) {
 			$statementResult = $this->processStmtNodesInternalWithoutFlushingPendingFibers($expr, $expr->stmts, $closureScope, $storage, $closureStmtsCallback, StatementContext::createTopLevel());
 			$publicStatementResult = $statementResult->toPublic();
+			$closureReturnStatementsNodeScope = $this->refineClosureNodeScope($closureScope, $scope, $expr, $gatheredReturnStatementsWithScope, $gatheredYieldStatementsWithScope, $executionEnds, $statementResult->getThrowPoints(), array_merge($closureImpurePoints, $statementResult->getImpurePoints()), $invalidateExpressions);
 			$this->callNodeCallback($nodeCallback, new ClosureReturnStatementsNode(
 				$expr,
 				$gatheredReturnStatements,
@@ -3352,7 +3353,7 @@ class NodeScopeResolver
 				$publicStatementResult,
 				$executionEnds,
 				array_merge($publicStatementResult->getImpurePoints(), $closureImpurePoints),
-			), $closureScope, $storage);
+			), $closureReturnStatementsNodeScope, $storage);
 
 			return new ProcessClosureResult(
 				$scope,
@@ -3404,6 +3405,7 @@ class NodeScopeResolver
 		$storage = $originalStorage;
 		$statementResult = $this->processStmtNodesInternalWithoutFlushingPendingFibers($expr, $expr->stmts, $closureScope, $storage, $closureStmtsCallback, StatementContext::createTopLevel());
 		$publicStatementResult = $statementResult->toPublic();
+		$closureReturnStatementsNodeScope = $this->refineClosureNodeScope($closureScope, $scope, $expr, $gatheredReturnStatementsWithScope, $gatheredYieldStatementsWithScope, $executionEnds, $statementResult->getThrowPoints(), array_merge($closureImpurePoints, $statementResult->getImpurePoints()), $invalidateExpressions);
 		$this->callNodeCallback($nodeCallback, new ClosureReturnStatementsNode(
 			$expr,
 			$gatheredReturnStatements,
@@ -3411,7 +3413,7 @@ class NodeScopeResolver
 			$publicStatementResult,
 			$executionEnds,
 			array_merge($publicStatementResult->getImpurePoints(), $closureImpurePoints),
-		), $closureScope, $storage);
+		), $closureReturnStatementsNodeScope, $storage);
 
 		return new ProcessClosureResult(
 			$scope,
@@ -3425,6 +3427,47 @@ class NodeScopeResolver
 			$closureResultScope,
 			$byRefUses,
 		);
+	}
+
+	/**
+	 * The closure scope was entered with a shallow reflection (parameters +
+	 * declared return, no body walk - see ClosureTypeResolver::getClosureType()
+	 * with $shallow). Now that the single body walk has gathered the returns,
+	 * build the refined ClosureType from them (no second walk) and swap it onto
+	 * the scope the ClosureReturnStatementsNode fires with, so the return-type
+	 * rules see the refined expected return (e.g. Bar&Foo, not just Foo).
+	 *
+	 * @param list<array{Return_, Scope}> $gatheredReturnStatementsWithScope
+	 * @param list<array{Expr\Yield_|Expr\YieldFrom, Scope}> $gatheredYieldStatementsWithScope
+	 * @param list<ExecutionEndNode> $executionEnds
+	 * @param InternalThrowPoint[] $throwPoints
+	 * @param ImpurePoint[] $impurePoints
+	 * @param InvalidateExprNode[] $invalidateExpressions
+	 */
+	private function refineClosureNodeScope(
+		MutatingScope $closureScope,
+		MutatingScope $scope,
+		Expr\Closure $expr,
+		array $gatheredReturnStatementsWithScope,
+		array $gatheredYieldStatementsWithScope,
+		array $executionEnds,
+		array $throwPoints,
+		array $impurePoints,
+		array $invalidateExpressions,
+	): MutatingScope
+	{
+		$refinedClosureType = $this->container->getByType(ClosureTypeResolver::class)->buildClosureTypeForClosure(
+			$scope,
+			$expr,
+			$gatheredReturnStatementsWithScope,
+			$gatheredYieldStatementsWithScope,
+			$executionEnds,
+			$throwPoints,
+			$impurePoints,
+			$invalidateExpressions,
+		);
+
+		return $closureScope->withAnonymousFunctionReflection($refinedClosureType);
 	}
 
 	/**
@@ -3475,11 +3518,9 @@ class NodeScopeResolver
 		$callableParameters = $this->createCallableParameters($scope, $expr, $arrowFunctionCallArgs, $passedToType);
 		$nativeCallableParameters = $this->createNativeCallableParameters($scope, $expr, $arrowFunctionCallArgs, $nativePassedToType);
 		$arrowFunctionScope = $scope->enterArrowFunction($expr, $callableParameters, $nativeCallableParameters);
-		$arrowFunctionType = $arrowFunctionScope->getAnonymousFunctionReflection();
-		if ($arrowFunctionType === null) {
+		if ($arrowFunctionScope->getAnonymousFunctionReflection() === null) {
 			throw new ShouldNotHappenException();
 		}
-		$this->callNodeCallback($nodeCallback, new InArrowFunctionNode($arrowFunctionType, $expr), $arrowFunctionScope, $storage);
 
 		// Gather the property-assign impure points and invalidate expressions the
 		// arrow function type needs (mirroring ClosureTypeResolver::getClosureType()),
@@ -3516,6 +3557,22 @@ class NodeScopeResolver
 
 		$closureTypeThrowPoints = array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->toPublic(), $exprResult->getThrowPoints());
 		$closureTypeImpurePoints = array_merge($arrowFunctionImpurePoints, $exprResult->getImpurePoints());
+
+		// The arrow scope was entered with a shallow reflection (parameters +
+		// declared return, no body walk). Now that the single body walk above has
+		// run, build the refined arrow function type from the body expression's
+		// stored type (no second walk) and fire InArrowFunctionNode with it, so the
+		// node and the return-type rules see the refined expected return.
+		$refinedArrowFunctionType = $this->container->getByType(ClosureTypeResolver::class)->buildClosureTypeForArrowFunction(
+			$scope,
+			$expr,
+			$arrowFunctionScope,
+			$closureTypeThrowPoints,
+			$closureTypeImpurePoints,
+			$invalidateExpressions,
+		);
+		$refinedArrowFunctionScope = $arrowFunctionScope->withAnonymousFunctionReflection($refinedArrowFunctionType);
+		$this->callNodeCallback($nodeCallback, new InArrowFunctionNode($refinedArrowFunctionType, $expr), $refinedArrowFunctionScope, $storage);
 
 		return new ProcessArrowFunctionResult(
 			$this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $expr, hasYield: false, isAlwaysTerminating: $exprResult->isAlwaysTerminating(), throwPoints: $exprResult->getThrowPoints(), impurePoints: $exprResult->getImpurePoints()),
