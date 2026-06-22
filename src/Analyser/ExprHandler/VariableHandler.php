@@ -54,8 +54,7 @@ final class VariableHandler implements ExprHandler
 	 * Evaluates the variable as a read on the asking scope. Also used by
 	 * AssignHandler for the placeholder result it stores for an assignment
 	 * target - every stored result for a Variable node must carry a
-	 * typeCallback now that this handler no longer implements
-	 * TypeResolvingExprHandler.
+	 * typeCallback so it can resolve its own type from the stored result.
 	 *
 	 * @return Closure(MutatingScope): Type
 	 */

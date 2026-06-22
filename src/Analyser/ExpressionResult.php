@@ -60,6 +60,8 @@ final class ExpressionResult
 		?callable $typeCallback = null,
 		?callable $specifyTypesCallback = null,
 		?callable $createTypesCallback = null,
+		private ?Type $type = null,
+		private ?Type $nativeType = null,
 	)
 	{
 		$this->truthyScopeCallback = $truthyScopeCallback;
@@ -178,6 +180,10 @@ final class ExpressionResult
 
 	public function getType(): Type
 	{
+		if ($this->type !== null) {
+			return $this->type;
+		}
+
 		if ($this->cachedType !== null) {
 			return $this->cachedType;
 		}
@@ -198,6 +204,10 @@ final class ExpressionResult
 
 	public function getNativeType(): Type
 	{
+		if ($this->nativeType !== null) {
+			return $this->nativeType;
+		}
+
 		if ($this->cachedNativeType !== null) {
 			return $this->cachedNativeType;
 		}
@@ -224,9 +234,14 @@ final class ExpressionResult
 			&& $scope->hasExpressionType($this->expr)->yes();
 	}
 
-	public function hasTypeCallback(): bool
+	/**
+	 * Whether this result can answer its own type without asking the scope -
+	 * either an eagerly computed value (e.g. a closure's ClosureType) or a
+	 * typeCallback. The new-world resolution in MutatingScope gates on this.
+	 */
+	public function canResolveOwnType(): bool
 	{
-		return $this->typeCallback !== null;
+		return $this->type !== null || $this->typeCallback !== null;
 	}
 
 	/**
@@ -268,6 +283,17 @@ final class ExpressionResult
 	 */
 	public function getTypeForScope(MutatingScope $scope): Type
 	{
+		// A native-promoted scope asks getType() but means the native flavour
+		// (MutatingScope::getNativeType() promotes then calls getType()); the
+		// eager value is stored as a (phpdoc, native) pair, so honour the scope.
+		if ($this->nativeType !== null && $scope->nativeTypesPromoted) {
+			return $this->nativeType;
+		}
+
+		if ($this->type !== null) {
+			return $this->type;
+		}
+
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($scope)) {
 			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($scope, $this->expr));
 		}
@@ -278,6 +304,10 @@ final class ExpressionResult
 	/** Native counterpart of getTypeForScope(). */
 	public function getNativeTypeForScope(MutatingScope $scope): Type
 	{
+		if ($this->nativeType !== null) {
+			return $this->nativeType;
+		}
+
 		$nativeScope = $scope->doNotTreatPhpDocTypesAsCertain();
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($nativeScope)) {
 			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($nativeScope, $this->expr));

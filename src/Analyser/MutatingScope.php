@@ -21,6 +21,7 @@ use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Function_;
 use PhpParser\NodeFinder;
+use PHPStan\Analyser\ExprHandler\Helper\ClosureTypeResolver;
 use PHPStan\Analyser\Traverser\TransformStaticTypeTraverser;
 use PHPStan\Collectors\Collector;
 use PHPStan\DependencyInjection\Container;
@@ -1093,24 +1094,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		$exprHandler = ExprHandlerRegistry::resolve($node, $this->container);
 		if ($exprHandler !== null) {
-			if ($exprHandler instanceof TypeResolvingExprHandler) {
-				// A call handler that processed this node wires a typeCallback onto
-				// its stored ExpressionResult carrying the acceptor resolved from
-				// the arg types gathered on the arg-to-arg evolving scope. Prefer it
-				// over resolveType(), whose own re-selection would lose generics
-				// inferred from sibling args. resolveType() still answers synthetic /
-				// not-yet-processed nodes.
-				$storage = $this->expressionResultStorageStack->getCurrent();
-				if ($storage !== null) {
-					$result = $storage->findExpressionResult($node);
-					if ($result !== null && $result->hasTypeCallback()) {
-						return $result->getTypeForScope($this->toMutatingScope());
-					}
-				}
-
-				return $exprHandler->resolveType($this, $node);
-			}
-
 			return $this->resolveTypeOfNewWorldHandlerNode($node);
 		}
 
@@ -1118,10 +1101,10 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	}
 
 	/**
-	 * The handler of the node no longer implements TypeResolvingExprHandler.
+	 * Resolves the type of a node whose ExprHandler produced an ExpressionResult.
 	 * The answer comes from the ExpressionResult stored during the analysis
-	 * currently in progress, or from processing the node on demand (synthetic
-	 * nodes, or no analysis in progress at all).
+	 * currently in progress (its eager type or typeCallback), or from processing
+	 * the node on demand (synthetic nodes, or no analysis in progress at all).
 	 *
 	 * The scope deliberately does not reference the storage - that would create
 	 * a reference cycle that never gets collected (see ExpressionResultStorageStack).
@@ -1136,16 +1119,28 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		$storage = $this->expressionResultStorageStack->getCurrent();
 		if ($storage !== null) {
 			$result = $storage->findExpressionResult($node);
-			if ($result !== null) {
-				if (!$result->hasTypeCallback()) {
-					throw new ShouldNotHappenException(sprintf(
-						'ExprHandler for %s does not implement TypeResolvingExprHandler but its ExpressionResult is missing a typeCallback.',
-						get_class($node),
-					));
-				}
-
-				return $result->getTypeForScope($scope);
+			if ($result !== null && $result->canResolveOwnType()) {
+				return $scope->nativeTypesPromoted ? $result->getNativeTypeForScope($scope) : $result->getTypeForScope($scope);
 			}
+		}
+
+		// A closure/arrow function type is computed directly (as
+		// resolveCallableTypeForScope() also does) - never by processing it on
+		// demand, which would re-enter ClosureHandler::processExpr() endlessly.
+		// This answers both a closure whose result is not stored yet (its own
+		// body walk asks for its type, and a callable parameter is derived from
+		// it while it is being processed) and a closure passed as a call argument,
+		// whose result NodeScopeResolver stores without an eager type.
+		// getClosureType()'s own depth guard answers the self-by-ref ask.
+		if ($node instanceof Expr\Closure || $node instanceof Expr\ArrowFunction) {
+			return $this->container->getByType(ClosureTypeResolver::class)->getClosureType($scope, $node);
+		}
+
+		if ($storage !== null && $storage->findExpressionResult($node) !== null) {
+			throw new ShouldNotHappenException(sprintf(
+				'ExpressionResult of %s cannot resolve its own type (no eager type, no typeCallback).',
+				get_class($node),
+			));
 		}
 
 		// a synthetic node, or no analysis in progress
@@ -1155,7 +1150,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
 		);
 
-		return $onDemandResult->getTypeForScope($scope);
+		return $scope->nativeTypesPromoted ? $onDemandResult->getNativeTypeForScope($scope) : $onDemandResult->getTypeForScope($scope);
 	}
 
 	/**
@@ -1208,10 +1203,9 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 	/**
 	 * Narrowing counterpart of resolveTypeOfNewWorldHandlerNode() - the old-world
-	 * TypeSpecifier dispatcher asks here for nodes whose handler no longer
-	 * implements TypeResolvingExprHandler. Returns null when the ExpressionResult
-	 * carries no specifyTypesCallback - the dispatcher falls back to default
-	 * truthy/falsey narrowing, which is what such handlers used to implement.
+	 * TypeSpecifier dispatcher asks here for a node's narrowing. Returns null when
+	 * the ExpressionResult carries no specifyTypesCallback - the dispatcher falls
+	 * back to default truthy/falsey narrowing.
 	 *
 	 * @internal
 	 */

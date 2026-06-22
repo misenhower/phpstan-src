@@ -428,8 +428,8 @@ class NodeScopeResolver
 		if (self::$guardNewWorld) {
 			self::$guardProcessedExprIds[spl_object_id($expr)] = true;
 		}
-		// converted handlers (no TypeResolvingExprHandler) are answered from
-		// stored results in both worlds - storing must not depend on fibers
+		// handlers are answered from stored results in both worlds - storing must
+		// not depend on fibers
 		$storage->storeExpressionResult($expr, $expressionResult);
 	}
 
@@ -3483,7 +3483,7 @@ class NodeScopeResolver
 	 * Resolves the type of an expression a callable parameter is derived from -
 	 * either the closure/arrow function whose acceptors describe the parameters,
 	 * or a call argument refining them. A closure/arrow function is resolved
-	 * through its TypeResolvingExprHandler (as Scope::getType() would), not by
+	 * directly through ClosureTypeResolver (as Scope::getType() would), not by
 	 * processing it on demand: createCallableParameters() runs while that very
 	 * closure is being processed, so on-demand processing would re-enter
 	 * processClosureNodeInternal() endlessly.
@@ -4033,6 +4033,7 @@ class NodeScopeResolver
 					$impurePoints = array_merge($impurePoints, $closureResult->getImpurePoints());
 				}
 
+				$closureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
 				$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
 					$closureResult->getScope(),
 					$scopeToPass,
@@ -4041,6 +4042,8 @@ class NodeScopeResolver
 					isAlwaysTerminating: false,
 					throwPoints: [],
 					impurePoints: [],
+					type: $closureTypeResolver->getClosureType($scopeToPass, $arg->value),
+					nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
 				));
 
 				$uses = [];
@@ -4112,7 +4115,18 @@ class NodeScopeResolver
 						$deferredInvalidateExpressions[] = [$arrowFunctionType->getInvalidateExpressions(), $arrowFunctionType->getUsedVariables()];
 					}
 				}
-				$this->storeExpressionResult($storage, $arg->value, $arrowFunctionResult);
+				$arrowFunctionClosureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
+				$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
+					$arrowFunctionResult->getScope(),
+					beforeScope: $scopeToPass,
+					expr: $arg->value,
+					hasYield: $arrowFunctionResult->hasYield(),
+					isAlwaysTerminating: $arrowFunctionResult->isAlwaysTerminating(),
+					throwPoints: $arrowFunctionResult->getThrowPoints(),
+					impurePoints: $arrowFunctionResult->getImpurePoints(),
+					type: $arrowFunctionClosureTypeResolver->getClosureType($scopeToPass, $arg->value),
+					nativeType: $arrowFunctionClosureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+				));
 			} else {
 				$exprType = $this->readStoredOrPriceOnDemand($arg->value, $scope);
 				$enterExpressionAssignForByRef = $assignByReference && $arg->value instanceof ArrayDimFetch && $arg->value->dim === null;

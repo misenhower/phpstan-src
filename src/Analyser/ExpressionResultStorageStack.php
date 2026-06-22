@@ -19,9 +19,8 @@ use function count;
  * NodeScopeResolver pushes a storage for the duration of an analysis (file,
  * statement list, trait pass, on-demand expression) through
  * MutatingScope::pushExpressionResultStorage() and must always pop it
- * in a finally block. Old-world type questions about expressions whose
- * handler no longer implements TypeResolvingExprHandler are answered from
- * the current storage (see MutatingScope::resolveTypeOfNewWorldHandlerNode()).
+ * in a finally block. Old-world type questions about an expression are answered
+ * from the current storage (see MutatingScope::resolveTypeOfNewWorldHandlerNode()).
  * A scope used outside any running analysis simply misses here and resolves
  * on demand with a throwaway storage.
  */

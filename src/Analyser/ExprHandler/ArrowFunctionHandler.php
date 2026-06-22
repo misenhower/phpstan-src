@@ -9,27 +9,25 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ClosureTypeResolver;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
-use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
-use PHPStan\Type\Type;
 
 /**
- * @implements TypeResolvingExprHandler<ArrowFunction>
+ * @implements ExprHandler<ArrowFunction>
  */
 #[AutowiredService]
-final class ArrowFunctionHandler implements TypeResolvingExprHandler
+final class ArrowFunctionHandler implements ExprHandler
 {
 
 	public function __construct(
 		private ClosureTypeResolver $closureTypeResolver,
 		private ExpressionResultFactory $expressionResultFactory,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -43,6 +41,15 @@ final class ArrowFunctionHandler implements TypeResolvingExprHandler
 	{
 		$result = $nodeScopeResolver->processArrowFunctionNode($stmt, $expr, $scope, $storage, $nodeCallback, null);
 
+		// A plain typeCallback recursing through getClosureType() would re-walk
+		// the body each getType() ask before the cache populates and hang;
+		// ExpressionResult excludes closures from its tracked-type early return.
+		// Compute the ClosureType once here and store it as an eager value. The
+		// native flavour mirrors what getNativeType() did via resolveType() on a
+		// promoted scope (getClosureType($scope->doNotTreatPhpDocTypesAsCertain())).
+		$type = $this->closureTypeResolver->getClosureType($scope, $expr);
+		$nativeType = $this->closureTypeResolver->getClosureType($scope->doNotTreatPhpDocTypesAsCertain(), $expr);
+
 		return $this->expressionResultFactory->create(
 			$result->getScope(),
 			beforeScope: $scope,
@@ -51,17 +58,10 @@ final class ArrowFunctionHandler implements TypeResolvingExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $c) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $c),
+			type: $type,
+			nativeType: $nativeType,
 		);
-	}
-
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
-	{
-		return $this->closureTypeResolver->getClosureType($scope, $expr);
-	}
-
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 	}
 
 }
