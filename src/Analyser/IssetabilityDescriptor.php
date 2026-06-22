@@ -6,21 +6,24 @@ use Closure;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\StaticPropertyFetch;
+use PhpParser\Node\Expr\Variable;
+use PhpParser\Node\Identifier;
+use PHPStan\Node\Expr\PropertyInitializationExpr;
 use PHPStan\Rules\Properties\FoundPropertyReflection;
 use PHPStan\ShouldNotHappenException;
-use PHPStan\Type\Type;
+use PHPStan\TrinaryLogic;
+use PHPStan\Type\NeverType;
 
 /**
- * The inside-out replacement for the AST re-walk in MutatingScope::issetCheck()
- * (and, later, PHPStan\Rules\IssetCheck). Each chain-link ExpressionResult
- * (variable / array dim fetch / property fetch) carries the descriptor for its
- * own link plus references to the child ExpressionResult(s), so isset/empty/??
- * fold the chain by reading already-computed child results instead of
- * re-traversing the AST and re-resolving types/reflections.
+ * The inside-out carrier for isset/empty/?? chains. Each chain-link
+ * ExpressionResult (variable / array dim fetch / property fetch) holds the
+ * descriptor for its own link plus references to the child ExpressionResult(s),
+ * built during the single pass like containsNullsafe.
  *
- * Per-link types stay scope-recomputed (via the child results' getTypeForScope)
- * because issetCheck answers at the asking scope, with phpdoc or native types
- * depending on the scope.
+ * resolve() walks the chain once on the asking scope and produces an
+ * IssetabilityResolution of fully-resolved IssetabilityLinkInfo facts. The engine
+ * (IssetabilityResolution::isSet) and the rule (PHPStan\Rules\IssetCheck) read
+ * those facts; neither re-traverses the AST nor re-resolves types/reflections.
  */
 final class IssetabilityDescriptor
 {
@@ -64,62 +67,13 @@ final class IssetabilityDescriptor
 		return new self(self::KIND_PROPERTY, innerResult: $innerResult, reflectionResolver: $reflectionResolver, propertyFetch: $propertyFetch);
 	}
 
-	public function isVariable(): bool
-	{
-		return $this->kind === self::KIND_VARIABLE;
-	}
-
-	public function isOffset(): bool
-	{
-		return $this->kind === self::KIND_OFFSET;
-	}
-
-	public function isProperty(): bool
-	{
-		return $this->kind === self::KIND_PROPERTY;
-	}
-
-	public function getVariableName(): ?string
-	{
-		return $this->variableName;
-	}
-
-	public function getVarResult(): ?ExpressionResult
-	{
-		return $this->varResult;
-	}
-
-	public function getDimResult(): ?ExpressionResult
-	{
-		return $this->dimResult;
-	}
-
-	public function getInnerResult(): ?ExpressionResult
-	{
-		return $this->innerResult;
-	}
-
-	public function resolvePropertyReflection(MutatingScope $scope): ?FoundPropertyReflection
-	{
-		if ($this->reflectionResolver === null) {
-			throw new ShouldNotHappenException();
-		}
-
-		return ($this->reflectionResolver)($scope);
-	}
-
 	/**
-	 * @return PropertyFetch|StaticPropertyFetch|null
+	 * Walks the chain once on the asking scope, resolving every link's facts.
+	 * $expr is the expression this descriptor belongs to (threaded by
+	 * ExpressionResult::getIssetabilityResolution); $useNativeTypes selects native
+	 * vs phpdoc types (the rule's treatPhpDocTypesAsCertain).
 	 */
-	public function getPropertyFetch(): ?Expr
-	{
-		return $this->propertyFetch;
-	}
-
-	/**
-	 * @param callable(Type): ?bool $typeCallback
-	 */
-	public function check(MutatingScope $scope, callable $typeCallback, ?bool $result = null): ?bool
+	public function resolve(MutatingScope $scope, bool $useNativeTypes, Expr $expr): IssetabilityResolution
 	{
 		if ($this->kind === self::KIND_VARIABLE) {
 			$variableName = $this->variableName;
@@ -128,23 +82,11 @@ final class IssetabilityDescriptor
 			}
 
 			$hasVariable = $scope->hasVariableType($variableName);
-			if ($hasVariable->maybe()) {
-				return null;
-			}
+			$valueType = $hasVariable->yes()
+				? ($useNativeTypes ? $scope->getNativeType($expr) : $scope->getType($expr))
+				: new NeverType();
 
-			if ($result === null) {
-				if ($hasVariable->yes()) {
-					if ($variableName === '_SESSION') {
-						return null;
-					}
-
-					return $typeCallback($scope->getVariableType($variableName));
-				}
-
-				return false;
-			}
-
-			return $result;
+			return new IssetabilityResolution(IssetabilityLinkInfo::variable($variableName, $hasVariable, $valueType), null);
 		}
 
 		if ($this->kind === self::KIND_OFFSET) {
@@ -154,29 +96,22 @@ final class IssetabilityDescriptor
 				throw new ShouldNotHappenException();
 			}
 
-			$type = $varResult->getTypeForScope($scope);
-			if (!$type->isOffsetAccessible()->yes()) {
-				return $result ?? $this->checkUndefinedInner($varResult, $scope);
-			}
+			$varType = $useNativeTypes ? $varResult->getNativeTypeForScope($scope) : $varResult->getTypeForScope($scope);
+			$dimType = $useNativeTypes ? $dimResult->getNativeTypeForScope($scope) : $dimResult->getTypeForScope($scope);
+			$hasOffsetValue = $varType->hasOffsetValueType($dimType);
+			$valueType = $hasOffsetValue->no() ? new NeverType() : $varType->getOffsetValueType($dimType);
 
-			$dimType = $dimResult->getTypeForScope($scope);
-			$hasOffsetValue = $type->hasOffsetValueType($dimType);
-			if ($hasOffsetValue->no()) {
-				return false;
-			}
-
-			// If offset cannot be null, store this error message and see if one of the earlier offsets is.
-			// E.g. $array['a']['b']['c'] ?? null; is a valid coalesce if a OR b or C might be null.
-			if ($hasOffsetValue->yes()) {
-				$result = $typeCallback($type->getOffsetValueType($dimType));
-
-				if ($result !== null) {
-					return $this->checkInner($varResult, $scope, $typeCallback, $result);
-				}
-			}
-
-			// Has offset, it is nullable
-			return null;
+			return new IssetabilityResolution(
+				IssetabilityLinkInfo::offset(
+					$varType->isOffsetAccessible(),
+					$hasOffsetValue,
+					$scope->hasExpressionType($expr)->yes(),
+					$varType,
+					$dimType,
+					$valueType,
+				),
+				$varResult->getIssetabilityResolution($scope, $useNativeTypes),
+			);
 		}
 
 		$reflectionResolver = $this->reflectionResolver;
@@ -184,91 +119,44 @@ final class IssetabilityDescriptor
 		if ($reflectionResolver === null || $propertyFetch === null) {
 			throw new ShouldNotHappenException();
 		}
-		$innerResult = $this->innerResult;
+
+		$inner = $this->innerResult !== null ? $this->innerResult->getIssetabilityResolution($scope, $useNativeTypes) : null;
 
 		$propertyReflection = $reflectionResolver($scope);
 		if ($propertyReflection === null) {
-			return $innerResult !== null ? $this->checkUndefinedInner($innerResult, $scope) : null;
+			return new IssetabilityResolution(
+				IssetabilityLinkInfo::property(null, $propertyFetch, false, false, TrinaryLogic::createNo(), new NeverType(), new NeverType(), false, false, false, false, false, false, false),
+				$inner,
+			);
 		}
 
-		if (!$propertyReflection->isNative()) {
-			return $innerResult !== null ? $this->checkUndefinedInner($innerResult, $scope) : null;
-		}
+		$hasNativeType = $propertyReflection->hasNativeType();
+		$nativeReflection = $propertyReflection->getNativeReflection();
+		$initializedThisProperty = $propertyFetch instanceof PropertyFetch
+			&& $propertyFetch->name instanceof Identifier
+			&& $propertyFetch->var instanceof Variable
+			&& $propertyFetch->var->name === 'this'
+			&& $scope->hasExpressionType(new PropertyInitializationExpr($propertyReflection->getName()))->yes();
 
-		if ($propertyReflection->hasNativeType() && !$propertyReflection->isVirtual()->yes()) {
-			if (!$scope->hasExpressionType($propertyFetch)->yes()) {
-				$nativeReflection = $propertyReflection->getNativeReflection();
-				if ($nativeReflection === null || !$nativeReflection->isPromoted() || (!$nativeReflection->isReadOnly() && !$nativeReflection->isHooked())) {
-					return $innerResult !== null ? $this->checkUndefinedInner($innerResult, $scope) : null;
-				}
-			}
-		}
-
-		if ($result !== null) {
-			return $innerResult !== null ? $this->checkInner($innerResult, $scope, $typeCallback, $result) : $result;
-		}
-
-		$result = $typeCallback($propertyReflection->getWritableType());
-		if ($result !== null && $innerResult !== null) {
-			return $this->checkInner($innerResult, $scope, $typeCallback, $result);
-		}
-
-		return $result;
-	}
-
-	public function checkUndefined(MutatingScope $scope): ?bool
-	{
-		if ($this->kind === self::KIND_VARIABLE) {
-			$variableName = $this->variableName;
-			if ($variableName === null) {
-				throw new ShouldNotHappenException();
-			}
-
-			$hasVariable = $scope->hasVariableType($variableName);
-			if (!$hasVariable->no()) {
-				return null;
-			}
-
-			return false;
-		}
-
-		if ($this->kind === self::KIND_OFFSET) {
-			$varResult = $this->varResult;
-			$dimResult = $this->dimResult;
-			if ($varResult === null || $dimResult === null) {
-				throw new ShouldNotHappenException();
-			}
-
-			$type = $varResult->getTypeForScope($scope);
-			if (!$type->isOffsetAccessible()->yes()) {
-				return $this->checkUndefinedInner($varResult, $scope);
-			}
-
-			$dimType = $dimResult->getTypeForScope($scope);
-			$hasOffsetValue = $type->hasOffsetValueType($dimType);
-			if (!$hasOffsetValue->no()) {
-				return $this->checkUndefinedInner($varResult, $scope);
-			}
-
-			return false;
-		}
-
-		$innerResult = $this->innerResult;
-
-		return $innerResult !== null ? $this->checkUndefinedInner($innerResult, $scope) : null;
-	}
-
-	/**
-	 * @param callable(Type): ?bool $typeCallback
-	 */
-	private function checkInner(ExpressionResult $inner, MutatingScope $scope, callable $typeCallback, ?bool $result): ?bool
-	{
-		return $inner->issetCheck($scope, $typeCallback, $result);
-	}
-
-	private function checkUndefinedInner(ExpressionResult $inner, MutatingScope $scope): ?bool
-	{
-		return $inner->issetCheckUndefined($scope);
+		return new IssetabilityResolution(
+			IssetabilityLinkInfo::property(
+				$propertyReflection,
+				$propertyFetch,
+				$propertyReflection->isNative(),
+				$hasNativeType,
+				$propertyReflection->isVirtual(),
+				$propertyReflection->getWritableType(),
+				$hasNativeType ? $propertyReflection->getNativeType() : new NeverType(),
+				$scope->hasExpressionType($propertyFetch)->yes(),
+				$initializedThisProperty,
+				$nativeReflection !== null,
+				$nativeReflection !== null && $nativeReflection->isPromoted(),
+				$nativeReflection !== null && $nativeReflection->isReadOnly(),
+				$nativeReflection !== null && $nativeReflection->isHooked(),
+				$nativeReflection !== null && $nativeReflection->getNativeReflection()->hasDefaultValue(),
+			),
+			$inner,
+		);
 	}
 
 }

@@ -17,6 +17,7 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Node\CoalesceExpressionNode;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\NullType;
@@ -53,7 +54,7 @@ final class CoalesceHandler implements ExprHandler
 	 */
 	private function getFalseySpecifiedTypes(MutatingScope $s, Expr $expr, ExpressionResult $condResult, TypeSpecifierContext $context): SpecifiedTypes
 	{
-		$isset = $condResult->issetCheck($s, static fn () => true);
+		$isset = $condResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
 
 		if ($isset !== true) {
 			return new SpecifiedTypes();
@@ -82,6 +83,8 @@ final class CoalesceHandler implements ExprHandler
 			$scope = $scope->filterByTruthyValue(new Expr\Isset_([$expr->left]))->mergeWith($rightResult->getScope());
 		}
 
+		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new CoalesceExpressionNode($expr, $condResult, 'on left side of ??'), $beforeScope, $storage, $context);
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -93,7 +96,7 @@ final class CoalesceHandler implements ExprHandler
 			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $rightScope): Type {
 				$issetLeftExpr = new Expr\Isset_([$expr->left]);
 
-				$result = $condResult->issetCheck($s, static function (Type $type): ?bool {
+				$result = $condResult->getIssetabilityResolution($s, false)->isSet(static function (Type $type): ?bool {
 					$isNull = $type->isNull();
 					if ($isNull->maybe()) {
 						return null;

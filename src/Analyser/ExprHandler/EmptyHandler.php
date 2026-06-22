@@ -18,6 +18,7 @@ use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Node\EmptyExpressionNode;
 use PHPStan\Type\BooleanType;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\Type;
@@ -52,6 +53,8 @@ final class EmptyHandler implements ExprHandler
 		$scope = $this->nonNullabilityHelper->revertNonNullability($scope, $nonNullabilityResult->getSpecifiedExpressions());
 		$scope = $nodeScopeResolver->lookForUnsetAllowedUndefinedExpressions($scope, $expr->expr);
 
+		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new EmptyExpressionNode($expr, $exprResult), $beforeScope, $storage, $context);
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -61,7 +64,7 @@ final class EmptyHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			typeCallback: static function (MutatingScope $s) use ($exprResult): Type {
-				$result = $exprResult->empty($s);
+				$result = $exprResult->getIssetabilityResolution($s, false)->notEmpty();
 				if ($result === null) {
 					return new BooleanType();
 				}
@@ -69,7 +72,7 @@ final class EmptyHandler implements ExprHandler
 				return new ConstantBooleanType(!$result);
 			},
 			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult): SpecifiedTypes {
-				$isset = $exprResult->issetCheck($s, static fn () => true);
+				$isset = $exprResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
 				if ($isset === false) {
 					return new SpecifiedTypes();
 				}

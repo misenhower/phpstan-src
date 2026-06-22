@@ -5,12 +5,13 @@ namespace PHPStan\Rules\Variables;
 use PhpParser\Node;
 use PHPStan\Analyser\Scope;
 use PHPStan\DependencyInjection\RegisteredRule;
+use PHPStan\Node\CoalesceExpressionNode;
 use PHPStan\Rules\IssetCheck;
 use PHPStan\Rules\Rule;
 use PHPStan\Type\Type;
 
 /**
- * @implements Rule<Node\Expr>
+ * @implements Rule<CoalesceExpressionNode>
  */
 #[RegisteredRule(level: 1)]
 final class NullCoalesceRule implements Rule
@@ -22,31 +23,29 @@ final class NullCoalesceRule implements Rule
 
 	public function getNodeType(): string
 	{
-		return Node\Expr::class;
+		return CoalesceExpressionNode::class;
 	}
 
 	public function processNode(Node $node, Scope $scope): array
 	{
-		$typeMessageCallback = static function (Type $type): ?string {
-			$isNull = $type->isNull();
-			if ($isNull->maybe()) {
-				return null;
-			}
+		$error = $this->issetCheck->check(
+			$node->getSubjectResult(),
+			$scope,
+			$node->getOperatorDescription(),
+			'nullCoalesce',
+			static function (Type $type): ?string {
+				$isNull = $type->isNull();
+				if ($isNull->maybe()) {
+					return null;
+				}
 
-			if ($isNull->yes()) {
-				return 'is always null';
-			}
+				if ($isNull->yes()) {
+					return 'is always null';
+				}
 
-			return 'is not nullable';
-		};
-
-		if ($node instanceof Node\Expr\BinaryOp\Coalesce) {
-			$error = $this->issetCheck->check($node->left, $scope, 'on left side of ??', 'nullCoalesce', $typeMessageCallback);
-		} elseif ($node instanceof Node\Expr\AssignOp\Coalesce) {
-			$error = $this->issetCheck->check($node->var, $scope, 'on left side of ??=', 'nullCoalesce', $typeMessageCallback);
-		} else {
-			return [];
-		}
+				return 'is not nullable';
+			},
+		);
 
 		if ($error === null) {
 			return [];

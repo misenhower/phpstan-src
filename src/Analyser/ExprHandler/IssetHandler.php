@@ -17,18 +17,18 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
-use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeResolvingExprHandler;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\TypeExpr;
 use PHPStan\Node\IssetExpr;
+use PHPStan\Node\IssetExpressionNode;
 use PHPStan\Rules\Arrays\AllowedArrayKeysTypes;
 use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Accessory\HasOffsetType;
@@ -52,15 +52,16 @@ use function count;
 use function is_string;
 
 /**
- * @implements TypeResolvingExprHandler<Isset_>
+ * @implements ExprHandler<Isset_>
  */
 #[AutowiredService]
-final class IssetHandler implements TypeResolvingExprHandler
+final class IssetHandler implements ExprHandler
 {
 
 	public function __construct(
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
+		private TypeSpecifier $typeSpecifier,
 	)
 	{
 	}
@@ -70,40 +71,101 @@ final class IssetHandler implements TypeResolvingExprHandler
 		return $expr instanceof Isset_;
 	}
 
-	public function resolveType(MutatingScope $scope, Expr $expr): Type
+	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
-		$issetResult = true;
+		$beforeScope = $scope;
+		$hasYield = false;
+		$throwPoints = [];
+		$impurePoints = [];
+		$nonNullabilityResults = [];
+		$isAlwaysTerminating = false;
+		$varResults = [];
 		foreach ($expr->vars as $var) {
-			$result = $scope->issetCheck($var, static function (Type $type): ?bool {
-				$isNull = $type->isNull();
-				if ($isNull->maybe()) {
-					return null;
-				}
+			$nonNullabilityResult = $this->nonNullabilityHelper->ensureNonNullability($nodeScopeResolver, $scope, $var);
+			$scope = $nodeScopeResolver->lookForSetAllowedUndefinedExpressions($nonNullabilityResult->getScope(), $var);
+			$varResult = $nodeScopeResolver->processExprNode($stmt, $var, $scope, $storage, $nodeCallback, $context->enterDeep());
+			$varResults[] = $varResult;
+			$scope = $varResult->getScope();
+			$hasYield = $hasYield || $varResult->hasYield();
+			$throwPoints = array_merge($throwPoints, $varResult->getThrowPoints());
+			$impurePoints = array_merge($impurePoints, $varResult->getImpurePoints());
+			$isAlwaysTerminating = $isAlwaysTerminating || $varResult->isAlwaysTerminating();
+			$nonNullabilityResults[] = $nonNullabilityResult;
 
-				return !$isNull->yes();
-			});
-			if ($result !== null) {
-				if (!$result) {
-					return new ConstantBooleanType($result);
-				}
-
+			if (!($var instanceof ArrayDimFetch)) {
 				continue;
 			}
 
-			$issetResult = $result;
+			$varType = $scope->getType($var->var);
+			if ($varType->isArray()->yes() || (new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
+				continue;
+			}
+
+			$throwPoints = array_merge($throwPoints, $nodeScopeResolver->processExprNode(
+				$stmt,
+				new MethodCall(new TypeExpr($varType), 'offsetExists'),
+				$scope,
+				$storage,
+				new NoopNodeCallback(),
+				$context,
+			)->getThrowPoints());
+		}
+		foreach (array_reverse($expr->vars) as $var) {
+			$scope = $nodeScopeResolver->lookForUnsetAllowedUndefinedExpressions($scope, $var);
+		}
+		foreach (array_reverse($nonNullabilityResults) as $nonNullabilityResult) {
+			$scope = $this->nonNullabilityHelper->revertNonNullability($scope, $nonNullabilityResult->getSpecifiedExpressions());
 		}
 
-		if ($issetResult === null) {
-			return new BooleanType();
-		}
+		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new IssetExpressionNode($expr, $varResults), $beforeScope, $storage, $context);
 
-		return new ConstantBooleanType($issetResult);
+		return $this->expressionResultFactory->create(
+			$scope,
+			beforeScope: $beforeScope,
+			expr: $expr,
+			hasYield: $hasYield,
+			isAlwaysTerminating: $isAlwaysTerminating,
+			throwPoints: $throwPoints,
+			impurePoints: $impurePoints,
+			typeCallback: static function (MutatingScope $s) use ($varResults): Type {
+				$issetResult = true;
+				foreach ($varResults as $varResult) {
+					$result = $varResult->getIssetabilityResolution($s, false)->isSet(static function (Type $type): ?bool {
+						$isNull = $type->isNull();
+						if ($isNull->maybe()) {
+							return null;
+						}
+
+						return !$isNull->yes();
+					});
+					if ($result !== null) {
+						if (!$result) {
+							return new ConstantBooleanType($result);
+						}
+
+						continue;
+					}
+
+					$issetResult = $result;
+				}
+
+				if ($issetResult === null) {
+					return new BooleanType();
+				}
+
+				return new ConstantBooleanType($issetResult);
+			},
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->specifyTypes($s, $expr, $context, $varResults),
+		);
 	}
 
-	public function specifyTypes(TypeSpecifier $typeSpecifier, Scope $scope, Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
+	/**
+	 * @param ExpressionResult[] $varResults
+	 */
+	private function specifyTypes(MutatingScope $scope, Isset_ $expr, TypeSpecifierContext $context, array $varResults): SpecifiedTypes
 	{
 		if (count($expr->vars) === 0 || $context->null()) {
-			return $typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+			return $this->typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
 		}
 
 		// rewrite multi param isset() to and-chained single param isset()
@@ -128,17 +190,13 @@ final class IssetHandler implements TypeResolvingExprHandler
 				throw new ShouldNotHappenException();
 			}
 
-			return $typeSpecifier->specifyTypesInCondition($scope, $andChain, $context)->setRootExpr($expr);
+			return $this->typeSpecifier->specifyTypesInCondition($scope, $andChain, $context)->setRootExpr($expr);
 		}
 
 		$issetExpr = $expr->vars[0];
 
 		if (!$context->true()) {
-			if (!$scope instanceof MutatingScope) {
-				throw new ShouldNotHappenException();
-			}
-
-			$isset = $scope->issetCheck($issetExpr, static fn () => true);
+			$isset = $varResults[0]->getIssetabilityResolution($scope, false)->isSet(static fn (): bool => true);
 
 			if ($isset === false) {
 				return new SpecifiedTypes();
@@ -146,7 +204,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 
 			$type = $scope->getType($issetExpr);
 			$isNullable = !$type->isNull()->no();
-			$exprType = $typeSpecifier->create(
+			$exprType = $this->typeSpecifier->create(
 				$issetExpr,
 				new NullType(),
 				$context->negate(),
@@ -160,7 +218,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 					}
 
 					// variable cannot exist in !isset()
-					return $exprType->unionWith($typeSpecifier->create(
+					return $exprType->unionWith($this->typeSpecifier->create(
 						new IssetExpr($issetExpr),
 						new NullType(),
 						$context,
@@ -170,7 +228,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 
 				if ($isNullable) {
 					// reduces variable certainty to maybe
-					return $exprType->unionWith($typeSpecifier->create(
+					return $exprType->unionWith($this->typeSpecifier->create(
 						new IssetExpr($issetExpr),
 						new NullType(),
 						$context->negate(),
@@ -179,7 +237,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 				}
 
 				// variable cannot exist in !isset()
-				return $typeSpecifier->create(
+				return $this->typeSpecifier->create(
 					new IssetExpr($issetExpr),
 					new NullType(),
 					$context,
@@ -214,7 +272,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 						if ($typesToRemove !== []) {
 							$typeToRemove = TypeCombinator::union(...$typesToRemove);
 
-							$result = $typeSpecifier->create(
+							$result = $this->typeSpecifier->create(
 								$issetExpr->var,
 								$typeToRemove,
 								TypeSpecifierContext::createFalse(),
@@ -223,7 +281,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 
 							if ($scope->hasExpressionType($issetExpr->var)->maybe()) {
 								$result = $result->unionWith(
-									$typeSpecifier->create(
+									$this->typeSpecifier->create(
 										new IssetExpr($issetExpr->var),
 										new NullType(),
 										TypeSpecifierContext::createTruthy(),
@@ -278,7 +336,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 
 				if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
 					$types = $types->unionWith(
-						$typeSpecifier->create(
+						$this->typeSpecifier->create(
 							$var->var,
 							new HasOffsetType($dimType),
 							$context,
@@ -291,7 +349,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 					$narrowedKey = AllowedArrayKeysTypes::narrowOffsetKeyType($varType, $dimType);
 					if ($narrowedKey !== null) {
 						$types = $types->unionWith(
-							$typeSpecifier->create(
+							$this->typeSpecifier->create(
 								$var->dim,
 								$narrowedKey,
 								$context,
@@ -302,7 +360,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 
 					if ($varType->isArray()->yes()) {
 						$types = $types->unionWith(
-							$typeSpecifier->create(
+							$this->typeSpecifier->create(
 								$var->var,
 								new NonEmptyArrayType(),
 								$context,
@@ -318,7 +376,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 				&& $var->name instanceof Identifier
 			) {
 				$types = $types->unionWith(
-					$typeSpecifier->create($var->var, new IntersectionType([
+					$this->typeSpecifier->create($var->var, new IntersectionType([
 						new ObjectWithoutClassType(),
 						new HasPropertyType($var->name->toString()),
 					]), TypeSpecifierContext::createTruthy(), $scope)->setRootExpr($expr),
@@ -329,7 +387,7 @@ final class IssetHandler implements TypeResolvingExprHandler
 				&& $var->name instanceof VarLikeIdentifier
 			) {
 				$types = $types->unionWith(
-					$typeSpecifier->create($var->class, new IntersectionType([
+					$this->typeSpecifier->create($var->class, new IntersectionType([
 						new ObjectWithoutClassType(),
 						new HasPropertyType($var->name->toString()),
 					]), TypeSpecifierContext::createTruthy(), $scope)->setRootExpr($expr),
@@ -337,66 +395,11 @@ final class IssetHandler implements TypeResolvingExprHandler
 			}
 
 			$types = $types->unionWith(
-				$typeSpecifier->create($var, new NullType(), TypeSpecifierContext::createFalse(), $scope)->setRootExpr($expr),
+				$this->typeSpecifier->create($var, new NullType(), TypeSpecifierContext::createFalse(), $scope)->setRootExpr($expr),
 			);
 		}
 
 		return $types;
-	}
-
-	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
-	{
-		$beforeScope = $scope;
-		$hasYield = false;
-		$throwPoints = [];
-		$impurePoints = [];
-		$nonNullabilityResults = [];
-		$isAlwaysTerminating = false;
-		foreach ($expr->vars as $var) {
-			$nonNullabilityResult = $this->nonNullabilityHelper->ensureNonNullability($nodeScopeResolver, $scope, $var);
-			$scope = $nodeScopeResolver->lookForSetAllowedUndefinedExpressions($nonNullabilityResult->getScope(), $var);
-			$varResult = $nodeScopeResolver->processExprNode($stmt, $var, $scope, $storage, $nodeCallback, $context->enterDeep());
-			$scope = $varResult->getScope();
-			$hasYield = $hasYield || $varResult->hasYield();
-			$throwPoints = array_merge($throwPoints, $varResult->getThrowPoints());
-			$impurePoints = array_merge($impurePoints, $varResult->getImpurePoints());
-			$isAlwaysTerminating = $isAlwaysTerminating || $varResult->isAlwaysTerminating();
-			$nonNullabilityResults[] = $nonNullabilityResult;
-
-			if (!($var instanceof ArrayDimFetch)) {
-				continue;
-			}
-
-			$varType = $scope->getType($var->var);
-			if ($varType->isArray()->yes() || (new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
-				continue;
-			}
-
-			$throwPoints = array_merge($throwPoints, $nodeScopeResolver->processExprNode(
-				$stmt,
-				new MethodCall(new TypeExpr($varType), 'offsetExists'),
-				$scope,
-				$storage,
-				new NoopNodeCallback(),
-				$context,
-			)->getThrowPoints());
-		}
-		foreach (array_reverse($expr->vars) as $var) {
-			$scope = $nodeScopeResolver->lookForUnsetAllowedUndefinedExpressions($scope, $var);
-		}
-		foreach (array_reverse($nonNullabilityResults) as $nonNullabilityResult) {
-			$scope = $this->nonNullabilityHelper->revertNonNullability($scope, $nonNullabilityResult->getSpecifiedExpressions());
-		}
-
-		return $this->expressionResultFactory->create(
-			$scope,
-			beforeScope: $beforeScope,
-			expr: $expr,
-			hasYield: $hasYield,
-			isAlwaysTerminating: $isAlwaysTerminating,
-			throwPoints: $throwPoints,
-			impurePoints: $impurePoints,
-		);
 	}
 
 }

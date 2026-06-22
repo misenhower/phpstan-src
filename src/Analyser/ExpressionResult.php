@@ -74,11 +74,6 @@ final class ExpressionResult
 		return $this->scope;
 	}
 
-	public function getExpr(): Expr
-	{
-		return $this->expr;
-	}
-
 	public function getBeforeScope(): MutatingScope
 	{
 		return $this->beforeScope;
@@ -101,57 +96,23 @@ final class ExpressionResult
 	}
 
 	/**
-	 * The isset/empty/?? chain descriptor for this expression, or null when the
-	 * expression is not a variable / array dim fetch / property fetch chain link
-	 * (in which case isset() falls back to the leaf type check).
+	 * The fully-resolved isset/empty/?? view of this expression on the asking
+	 * scope: folds the chain descriptor, or builds a leaf resolution from the
+	 * expression's own type when it is not a chain link (e.g. a method-call-rooted
+	 * base like $this->getFoo()['x']). $useNativeTypes selects native vs phpdoc.
 	 */
-	public function getIssetabilityDescriptor(): ?IssetabilityDescriptor
-	{
-		return $this->issetabilityDescriptor;
-	}
-
-	/**
-	 * Whether isset($expr) holds: folds the isset/empty/?? chain descriptor, or
-	 * applies the leaf type check when the expression is not a chain link.
-	 *
-	 * @param callable(Type): ?bool $typeCallback
-	 */
-	public function issetCheck(MutatingScope $scope, callable $typeCallback, ?bool $result = null): ?bool
+	public function getIssetabilityResolution(MutatingScope $scope, bool $useNativeTypes): IssetabilityResolution
 	{
 		if ($this->issetabilityDescriptor !== null) {
-			return $this->issetabilityDescriptor->check($scope, $typeCallback, $result);
+			return $this->issetabilityDescriptor->resolve($scope, $useNativeTypes, $this->expr);
 		}
 
-		return $result ?? $typeCallback($this->getTypeForScope($scope));
-	}
+		$type = $useNativeTypes ? $this->getNativeTypeForScope($scope) : $this->getTypeForScope($scope);
 
-	public function issetCheckUndefined(MutatingScope $scope): ?bool
-	{
-		return $this->issetabilityDescriptor?->checkUndefined($scope);
-	}
-
-	/**
-	 * Whether $expr is definitely set-and-non-falsey (i.e. the negation of
-	 * empty($expr)); null = maybe. EmptyHandler negates the result.
-	 */
-	public function empty(MutatingScope $scope): ?bool
-	{
-		return $this->issetCheck($scope, static function (Type $type): ?bool {
-			$isNull = $type->isNull();
-			$isFalsey = $type->toBoolean()->isFalse();
-			if ($isNull->maybe()) {
-				return null;
-			}
-			if ($isFalsey->maybe()) {
-				return null;
-			}
-
-			if ($isNull->yes()) {
-				return $isFalsey->no();
-			}
-
-			return !$isFalsey->yes();
-		});
+		return new IssetabilityResolution(
+			IssetabilityLinkInfo::leaf($type, $this->expr, $this->expr instanceof Expr\NullsafePropertyFetch),
+			null,
+		);
 	}
 
 	/**

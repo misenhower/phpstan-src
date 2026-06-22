@@ -22,6 +22,7 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Node\CoalesceExpressionNode;
 use PHPStan\Reflection\InitializerExprTypeResolver;
 use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Constant\ConstantIntegerType;
@@ -195,6 +196,14 @@ final class AssignOpHandler implements ExprHandler
 			$toStringResult = $this->implicitToStringCallHelper->processImplicitToStringCall($nodeScopeResolver, $expr->expr, $scope);
 			$throwPoints = array_merge($throwPoints, $toStringResult->getThrowPoints());
 			$impurePoints = array_merge($impurePoints, $toStringResult->getImpurePoints());
+		}
+
+		if ($expr instanceof Expr\AssignOp\Coalesce) {
+			// the ??= left side is processed as an assignment target, not a read, so
+			// it carries no isset descriptor; read it on demand so NullCoalesceRule
+			// gets the chain's IssetabilityResolution off the carried result
+			$varReadResult = $nodeScopeResolver->processExprOnDemand($expr->var, $beforeScope, new ExpressionResultStorage());
+			$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new CoalesceExpressionNode($expr, $varReadResult, 'on left side of ??='), $beforeScope, $storage, $context);
 		}
 
 		return $this->expressionResultFactory->create(
