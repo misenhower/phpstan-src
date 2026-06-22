@@ -3056,18 +3056,7 @@ class NodeScopeResolver
 			return $expressionResult;
 		}
 
-		$expressionResult = $this->expressionResultFactory->create(
-			$scope,
-			beforeScope: $scope,
-			expr: $expr,
-			hasYield: false,
-			isAlwaysTerminating: false,
-			throwPoints: [],
-			impurePoints: [],
-		);
-		$this->storeExpressionResult($storage, $expr, $expressionResult);
-
-		return $expressionResult;
+		throw new ShouldNotHappenException(sprintf('Unhandled expr: %s', get_class($expr)));
 	}
 
 	/**
