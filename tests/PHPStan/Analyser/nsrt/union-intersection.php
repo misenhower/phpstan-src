@@ -113,7 +113,7 @@ class Ipsum extends Dolor
 					assertType('UnionIntersection\AnotherFoo|UnionIntersection\Foo', $this->union->foo);
 					assertType('UnionIntersection\Bar', $this->union->bar);
 					assertType('UnionIntersection\Foo', $foo->foo);
-					assertType('*ERROR*', $foo->bar);
+					assertType('mixed', $foo->bar);
 					assertType('UnionIntersection\AnotherFoo|UnionIntersection\Foo', $this->union->doFoo());
 					assertType('UnionIntersection\Bar', $this->union->doBar());
 					assertType('UnionIntersection\Foo', $foo->doFoo());

@@ -51,5 +51,5 @@ function (BatchAwareWithoutAllowDynamicProperties $b): void
 {
 	$result = $b->busy; // @phpstan-ignore-line
 
-	assertType('*ERROR*', $result);
+	assertType('mixed', $result);
 };

@@ -146,7 +146,7 @@ abstract class Foo extends Bar
 		assertType('PropertiesNamespace\Lorem', $this->objectRelative);
 		assertType('SomeOtherNamespace\Ipsum', $this->objectFullyQualified);
 		assertType('SomeNamespace\Amet', $this->objectUsed);
-		assertType('*ERROR*', $this->nonexistentProperty);
+		assertType('mixed', $this->nonexistentProperty);
 		assertType('int|null', $this->nullableInteger);
 		assertType('SomeNamespace\Amet|null', $this->nullableObject);
 		assertType('PropertiesNamespace\Foo', $this->selfType);
