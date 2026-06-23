@@ -194,7 +194,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		private PhpFunctionFromParserNodeReflection|null $function = null,
 		?string $namespace = null,
 		public array $expressionTypes = [],
-		public array $nativeExpressionTypes = [],
+		protected array $nativeExpressionTypes = [],
 		protected array $conditionalExpressions = [],
 		protected array $inClosureBindScopeClasses = [],
 		private ?ClosureType $anonymousFunctionReflection = null,
