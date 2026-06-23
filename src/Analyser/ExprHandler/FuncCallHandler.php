@@ -330,6 +330,14 @@ final class FuncCallHandler implements ExprHandler
 			$specifyContext,
 		);
 
+		// A type constraint on a (narrowable, i.e. non-side-effecting, non-first-class)
+		// function call narrows the call itself - the inside-out equivalent of
+		// createForExpr's FuncCall purity gate + tail entry. An impure call narrows to
+		// nothing.
+		$createTypesCallback = fn (MutatingScope $s, Type $type, TypeSpecifierContext $createContext): SpecifiedTypes => $this->isFuncCallNarrowable($nodeScopeResolver, $s, $expr, $nameResult)
+			? $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext)
+			: new SpecifiedTypes([], []);
+
 		// Store a preliminary result carrying the type/specify callbacks before the
 		// throw-point return type is computed: getFunctionThrowPoint() resolves the
 		// return type through dynamic return type extensions, one of which
@@ -349,6 +357,7 @@ final class FuncCallHandler implements ExprHandler
 			impurePoints: [],
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		));
 
 		if ($normalizedExpr->name instanceof Expr) {
@@ -667,6 +676,7 @@ final class FuncCallHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		);
 	}
 
