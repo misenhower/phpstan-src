@@ -113,6 +113,13 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 				$nullSafeTypes = $this->typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $s);
 				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s, $nodeScopeResolver)->intersectWith($nullSafeTypes->normalize($s, $nodeScopeResolver));
 			},
+			// Inside-out copy of TypeSpecifier::createNullsafeTypes(): the plain
+			// inner propertyFetch narrowed by $type, UNIONed with "receiver is not null".
+			// A receiver that is itself a ?-> surfaces through the parent handler
+			// composing the var result, not by walking the chain here.
+			createTypesCallback: fn (MutatingScope $s, Type $type, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->createSubjectTypes($s, $propertyFetch, $exprResult, $type, $context)->unionWith(
+				$this->defaultNarrowingHelper->createSubjectTypes($s, $expr->var, null, new NullType(), TypeSpecifierContext::createFalse()),
+			)->setRootExpr($expr),
 		);
 	}
 
