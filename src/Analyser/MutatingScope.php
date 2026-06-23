@@ -3193,6 +3193,33 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	}
 
 	/**
+	 * Certainty change for applySpecifiedTypes(): unlike setExpressionCertainty(),
+	 * it keeps the type already held for the expression instead of re-reading it
+	 * via getType(). getType() only reports the type of Yes-certainty holders, so
+	 * for a maybe-defined variable it broadens to the original type - which would
+	 * overwrite a co-applied narrowing (e.g. isset's $a -> null in the else branch).
+	 */
+	private function setExpressionCertaintyKeepingType(Expr $expr, TrinaryLogic $certainty): self
+	{
+		$exprString = $this->getNodeKey($expr);
+		if (!array_key_exists($exprString, $this->expressionTypes)) {
+			throw new ShouldNotHappenException();
+		}
+
+		$exprType = $this->expressionTypes[$exprString]->getType();
+		$nativeType = array_key_exists($exprString, $this->nativeExpressionTypes)
+			? $this->nativeExpressionTypes[$exprString]->getType()
+			: $exprType;
+
+		return $this->specifyExpressionType(
+			$expr,
+			$exprType,
+			$nativeType,
+			$certainty,
+		);
+	}
+
+	/**
 	 * Returns true when the type is a large union with intersection
 	 * members that carry HasOffsetValueType — a sign of combinatorial
 	 * growth from successive array|object offset access patterns.
@@ -3429,7 +3456,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				$expr = $issetExpr->getExpr();
 
 				if ($typeSpecification['sure']) {
-					$scope = $scope->setExpressionCertainty(
+					$scope = $scope->setExpressionCertaintyKeepingType(
 						$expr,
 						TrinaryLogic::createMaybe(),
 					);
