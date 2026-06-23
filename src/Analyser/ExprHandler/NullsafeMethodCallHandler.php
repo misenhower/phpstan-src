@@ -88,6 +88,27 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			$scope = $scope->mergeWith($scopeBeforeNullsafe);
 		}
 
+		// The `?->`'s own type on the asking scope. $receiverType is the receiver's
+		// real type, captured before it was ensured non-null; reading its stored
+		// result here would see the non-null device type and drop the
+		// short-circuit's null.
+		$nullsafeTypeCallback = static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver, $receiverType): Type {
+			if ($receiverType->isNull()->yes()) {
+				return new NullType();
+			}
+			if (!TypeCombinator::containsNull($receiverType)) {
+				return $exprResult->getTypeForScope($s);
+			}
+
+			// the plain method call on the null-removed scope is synthetic.
+			$truthyScope = $s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))));
+
+			return TypeCombinator::union(
+				$nodeScopeResolver->priceSyntheticOnDemand(new MethodCall($expr->var, $expr->name, $expr->args), $truthyScope),
+				new NullType(),
+			);
+		};
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -97,25 +118,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
-			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver, $receiverType): Type {
-				// $receiverType is the receiver's real type, captured before it was
-				// ensured non-null; reading its stored result here would see the
-				// non-null device type and drop the short-circuit's null.
-				if ($receiverType->isNull()->yes()) {
-					return new NullType();
-				}
-				if (!TypeCombinator::containsNull($receiverType)) {
-					return $exprResult->getTypeForScope($s);
-				}
-
-				// the plain method call on the null-removed scope is synthetic.
-				$truthyScope = $s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))));
-
-				return TypeCombinator::union(
-					$nodeScopeResolver->priceSyntheticOnDemand(new MethodCall($expr->var, $expr->name, $expr->args), $truthyScope),
-					new NullType(),
-				);
-			},
+			typeCallback: $nullsafeTypeCallback,
 			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall, $nodeScopeResolver): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
@@ -133,13 +136,38 @@ final class NullsafeMethodCallHandler implements ExprHandler
 				$nullSafeTypes = $this->typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $s);
 				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s, $nodeScopeResolver)->intersectWith($nullSafeTypes->normalize($s, $nodeScopeResolver));
 			},
-			// Inside-out copy of TypeSpecifier::createNullsafeTypes(): the plain
-			// inner methodCall narrowed by $type, UNIONed with "receiver is not null".
-			// A receiver that is itself a ?-> surfaces through the parent handler
-			// composing the var result, not by walking the chain here.
-			createTypesCallback: fn (MutatingScope $s, Type $type, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->createSubjectTypes($s, $methodCall, $exprResult, $type, $context)->unionWith(
-				$this->defaultNarrowingHelper->createSubjectTypes($s, $expr->var, null, new NullType(), TypeSpecifierContext::createFalse()),
-			)->setRootExpr($expr),
+			// Inside-out copy of TypeSpecifier::createForExpr()'s `?->` handling.
+			// The short-circuit's null surfaces here, never by walking the chain:
+			// a receiver that is itself a ?-> composes through the parent handler.
+			createTypesCallback: function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $methodCall, $exprResult, $nullsafeTypeCallback): SpecifiedTypes {
+				// null() context: createForExpr never computes $containsNull and
+				// emits no entry for the subject - behave the same.
+				if ($context->null()) {
+					return (new SpecifiedTypes())->setRootExpr($expr);
+				}
+
+				$nullsafeType = $nullsafeTypeCallback($s);
+				if ($context->true()) {
+					$containsNull = !$type->isNull()->no() && !$nullsafeType->isNull()->no();
+				} else {
+					$containsNull = !TypeCombinator::containsNull($type) && !$nullsafeType->isNull()->no();
+				}
+
+				// The ?-> may legitimately be null (e.g. narrowed to a nullable
+				// $type): keep the ?-> node's own key only, no plain chain, no
+				// receiver-not-null - exactly createForExpr's containsNull branch.
+				if ($containsNull) {
+					return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context)->setRootExpr($expr);
+				}
+
+				// !containsNull: the plain inner methodCall narrowed by $type
+				// (createNullsafeTypes), the original ?-> key (createForExpr's
+				// double-key), and "receiver is not null".
+				return $this->defaultNarrowingHelper->createSubjectTypes($s, $methodCall, $exprResult, $type, $context)
+					->unionWith($this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context))
+					->unionWith($this->defaultNarrowingHelper->createSubjectTypes($s, $expr->var, null, new NullType(), TypeSpecifierContext::createFalse()))
+					->setRootExpr($expr);
+			},
 		);
 	}
 
