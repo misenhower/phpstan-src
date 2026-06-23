@@ -102,15 +102,11 @@ final class DefaultNarrowingHelper
 			}
 		}
 
-		$exprString = $this->exprPrinter->printExpr($subject);
-		if ($context->true()) {
-			return new SpecifiedTypes([$exprString => [$subject, $type]], []);
-		}
-		if ($context->false()) {
-			return new SpecifiedTypes(sureNotTypes: [$exprString => [$subject, $type]]);
-		}
-
-		return new SpecifiedTypes([], []);
+		// No composable result (a synthetic node, or a subject whose handler wired
+		// no createTypesCallback): fall back to the raw-Expr create(), which does the
+		// structural fan-out (assignment / remembered wrapper) and createForExpr. For
+		// a plain subject this equals the single sure/sureNot entry it used to emit.
+		return $this->typeSpecifier->create($subject, $type, $context, $s);
 	}
 
 }

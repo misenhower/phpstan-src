@@ -10,6 +10,7 @@ use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\Instanceof_;
 use PhpParser\Node\Name;
+use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
@@ -64,6 +65,7 @@ final class EqualityTypeSpecifyingHelper
 		private TypeSpecifier $typeSpecifier,
 		private ReflectionProvider $reflectionProvider,
 		private ExprPrinter $exprPrinter,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -300,6 +302,10 @@ final class EqualityTypeSpecifyingHelper
 		// the operands and their subexpressions were processed during processExpr;
 		// read their stored results instead of re-walking via Scope::getType().
 		$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope->toMutatingScope());
+		// the operand's own stored result, to compose a type constraint inside-out
+		// (its createTypesCallback fans out an assignment / remembered wrapper / call
+		// / nullsafe exactly as TypeSpecifier::create() did structurally).
+		$getResult = static fn (Expr $e): ?ExpressionResult => $scope->toMutatingScope()->getCurrentExpressionResultStorage()?->findExpressionResult($e);
 
 		$rightType = $getType($rightExpr);
 
@@ -709,20 +715,13 @@ final class EqualityTypeSpecifyingHelper
 				&& $leftType->isSuperTypeOf($rightType)->yes()
 			)
 		) {
-			$leftTypes = $this->typeSpecifier->create(
+			$leftTypes = $this->defaultNarrowingHelper->createSubjectTypes(
+				$scope->toMutatingScope(),
 				$leftExpr,
+				$getResult($leftExpr),
 				$rightType,
 				$context,
-				$scope,
 			)->setRootExpr($expr);
-			if ($leftExpr instanceof AlwaysRememberedExpr) {
-				$leftTypes = $leftTypes->unionWith($this->typeSpecifier->create(
-					$unwrappedLeftExpr,
-					$rightType,
-					$context,
-					$scope,
-				))->setRootExpr($expr);
-			}
 			if ($types !== null) {
 				$types = $types->unionWith($leftTypes);
 			} else {
@@ -743,22 +742,12 @@ final class EqualityTypeSpecifyingHelper
 		}
 
 		if ($context->true()) {
-			$leftTypes = $this->typeSpecifier->create($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
-			$rightTypes = $this->typeSpecifier->create($rightExpr, $leftType, $context, $scope)->setRootExpr($expr);
-			if ($leftExpr instanceof AlwaysRememberedExpr) {
-				$leftTypes = $leftTypes->unionWith(
-					$this->typeSpecifier->create($unwrappedLeftExpr, $rightType, $context, $scope)->setRootExpr($expr),
-				);
-			}
-			if ($rightExpr instanceof AlwaysRememberedExpr) {
-				$rightTypes = $rightTypes->unionWith(
-					$this->typeSpecifier->create($unwrappedRightExpr, $leftType, $context, $scope)->setRootExpr($expr),
-				);
-			}
+			$leftTypes = $this->defaultNarrowingHelper->createSubjectTypes($scope->toMutatingScope(), $leftExpr, $getResult($leftExpr), $rightType, $context)->setRootExpr($expr);
+			$rightTypes = $this->defaultNarrowingHelper->createSubjectTypes($scope->toMutatingScope(), $rightExpr, $getResult($rightExpr), $leftType, $context)->setRootExpr($expr);
 			return $leftTypes->unionWith($rightTypes);
 		} elseif ($context->false()) {
-			return $this->typeSpecifier->create($leftExpr, $leftType, $context, $scope)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver)
-				->intersectWith($this->typeSpecifier->create($rightExpr, $rightType, $context, $scope)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver));
+			return $this->defaultNarrowingHelper->createSubjectTypes($scope->toMutatingScope(), $leftExpr, $getResult($leftExpr), $leftType, $context)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver)
+				->intersectWith($this->defaultNarrowingHelper->createSubjectTypes($scope->toMutatingScope(), $rightExpr, $getResult($rightExpr), $rightType, $context)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver));
 		}
 
 		return (new SpecifiedTypes([], []))->setRootExpr($expr);
