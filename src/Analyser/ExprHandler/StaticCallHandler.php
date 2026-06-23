@@ -259,6 +259,13 @@ final class StaticCallHandler implements ExprHandler
 			$specifyContext,
 		);
 
+		// A type constraint on a (narrowable, i.e. non-side-effecting) static call
+		// narrows the call itself - the inside-out equivalent of createForExpr's
+		// StaticCall purity gate + tail entry. An impure call narrows to nothing.
+		$createTypesCallback = fn (MutatingScope $s, Type $type, TypeSpecifierContext $createContext): SpecifiedTypes => $this->isStaticCallNarrowable($s, $expr, $classResult, $nodeScopeResolver)
+			? $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext)
+			: new SpecifiedTypes([], []);
+
 		// Store a preliminary result carrying the type/specify callbacks before the
 		// throw point is computed: the method throw point resolves the return type
 		// (resolveReturnType below) through dynamic static-method return type
@@ -278,6 +285,7 @@ final class StaticCallHandler implements ExprHandler
 			containsNullsafe: $containsNullsafe,
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		));
 
 		if ($methodReflection !== null) {
@@ -371,6 +379,7 @@ final class StaticCallHandler implements ExprHandler
 			containsNullsafe: $containsNullsafe,
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		);
 	}
 

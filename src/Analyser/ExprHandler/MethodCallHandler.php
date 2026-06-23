@@ -184,6 +184,13 @@ final class MethodCallHandler implements ExprHandler
 			$specifyContext,
 		);
 
+		// A type constraint on a (narrowable, i.e. non-side-effecting) method call
+		// narrows the call itself - the inside-out equivalent of createForExpr's
+		// MethodCall purity gate + tail entry. An impure call narrows to nothing.
+		$createTypesCallback = fn (MutatingScope $s, Type $type, TypeSpecifierContext $createContext): SpecifiedTypes => $this->isMethodCallNarrowable($s, $expr, $varResult)
+			? $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext)
+			: new SpecifiedTypes([], []);
+
 		// Store a preliminary result carrying the type/specify callbacks before the
 		// throw point is computed: the method throw point resolves the return type
 		// (resolveReturnType below) through dynamic return type extensions, which can
@@ -203,6 +210,7 @@ final class MethodCallHandler implements ExprHandler
 			containsNullsafe: $varResult->containsNullsafe(),
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		));
 
 		if ($methodReflection !== null) {
@@ -286,6 +294,7 @@ final class MethodCallHandler implements ExprHandler
 			containsNullsafe: $varResult->containsNullsafe(),
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		);
 
 		// the var was processed above as the receiver; read its already-computed
@@ -319,6 +328,7 @@ final class MethodCallHandler implements ExprHandler
 					containsNullsafe: $varResult->containsNullsafe(),
 					typeCallback: $typeCallback,
 					specifyTypesCallback: $specifyTypesCallback,
+					createTypesCallback: $createTypesCallback,
 				);
 			}
 		}
