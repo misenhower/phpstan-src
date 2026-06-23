@@ -12,6 +12,7 @@ use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
@@ -61,6 +62,14 @@ final class AlwaysRememberedExprHandler implements ExprHandler
 			impurePoints: $innerResult->getImpurePoints(),
 			typeCallback: static fn (MutatingScope $scope): Type => $scope->nativeTypesPromoted ? $expr->getNativeExprType() : $expr->getExprType(),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			// A type constraint on the remembered wrapper constrains both the wrapper
+			// node (under its __phpstanRemembered(...) key) and the inner expression -
+			// what TypeSpecifier::create() recovered by fanning the AlwaysRememberedExpr
+			// out into wrapper + inner. The inner composes through its own child result;
+			// raw-Expr callers still go through create()->createForExpr.
+			createTypesCallback: fn (MutatingScope $s, Type $type, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context)->unionWith(
+				$this->defaultNarrowingHelper->createSubjectTypes($s, $innerExpr, $innerResult, $type, $context),
+			),
 		);
 	}
 
