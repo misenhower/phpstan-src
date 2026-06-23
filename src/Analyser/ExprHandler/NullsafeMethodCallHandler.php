@@ -55,6 +55,10 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		$beforeScope = $scope;
 		$scopeBeforeNullsafe = $scope;
 
+		// the receiver's real (possibly null) type, captured before it is ensured
+		// non-null below: the short-circuit decision needs to know it can be null,
+		// which reading the ensured-non-null result would hide.
+		$receiverType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $scope);
 		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($nodeScopeResolver, $scope, $scope, $expr->var);
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafeMethodCall' => true]);
 		unset($attributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
@@ -74,11 +78,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		);
 		$scope = $this->nonNullabilityHelper->revertNonNullability($exprResult->getScope(), $nonNullabilityResult->getSpecifiedExpressions());
 
-		// the var was processed above as the receiver of $methodCall; read its
-		// stored result on the original scope instead of re-walking via getType().
-		$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $scopeBeforeNullsafe);
-
-		$varIsNull = $varType->isNull();
+		$varIsNull = $receiverType->isNull();
 		if ($varIsNull->yes()) {
 			// Arguments are never evaluated when the var is always null.
 			$scope = $scopeBeforeNullsafe;
@@ -97,13 +97,14 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
-			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver): Type {
-				// the var was processed above as the receiver of $methodCall.
-				$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $s);
-				if ($varType->isNull()->yes()) {
+			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver, $receiverType): Type {
+				// $receiverType is the receiver's real type, captured before it was
+				// ensured non-null; reading its stored result here would see the
+				// non-null device type and drop the short-circuit's null.
+				if ($receiverType->isNull()->yes()) {
 					return new NullType();
 				}
-				if (!TypeCombinator::containsNull($varType)) {
+				if (!TypeCombinator::containsNull($receiverType)) {
 					return $exprResult->getTypeForScope($s);
 				}
 

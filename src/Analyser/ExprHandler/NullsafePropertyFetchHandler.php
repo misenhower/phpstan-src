@@ -53,6 +53,10 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		$beforeScope = $scope;
+		// the receiver's real (possibly null) type, captured before it is ensured
+		// non-null below: the short-circuit decision needs to know it can be null,
+		// which reading the ensured-non-null result would hide.
+		$receiverType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $scope);
 		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($nodeScopeResolver, $scope, $scope, $expr->var);
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafePropertyFetch' => true]);
 		unset($attributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
@@ -73,14 +77,14 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
-			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver): Type {
-				// the var was processed above as the receiver of $propertyFetch -
-				// read its stored result instead of re-walking via Scope::getType().
-				$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $s);
-				if ($varType->isNull()->yes()) {
+			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver, $receiverType): Type {
+				// $receiverType is the receiver's real type, captured before it was
+				// ensured non-null; reading its stored result here would see the
+				// non-null device type and drop the short-circuit's null.
+				if ($receiverType->isNull()->yes()) {
 					return new NullType();
 				}
-				if (!TypeCombinator::containsNull($varType)) {
+				if (!TypeCombinator::containsNull($receiverType)) {
 					return $exprResult->getTypeForScope($s);
 				}
 
