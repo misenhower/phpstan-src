@@ -1866,7 +1866,13 @@ class NodeScopeResolver
 			$bodyCondResult = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep());
 			$bodyScope = $bodyCondResult->getTruthyScope();
 			$finalScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, $nodeCallback, $context)->filterOutLoopExitPoints();
-			$finalScope = $finalScopeResult->getScope()->filterByFalseyValue($stmt->cond);
+			$finalScope = $finalScopeResult->getScope();
+			// the loop condition's own result narrows the post-loop scope to its
+			// falsey branch, applied via the new-world applySpecifiedTypes.
+			$condFalsey = $bodyCondResult->getSpecifiedTypesForScope($finalScope, TypeSpecifierContext::createFalsey());
+			if ($condFalsey !== null) {
+				$finalScope = $finalScope->applySpecifiedTypes($condFalsey);
+			}
 
 			$alwaysIterates = false;
 			$neverIterates = false;
