@@ -441,6 +441,19 @@ class NodeScopeResolver
 	 * @param Node\Stmt[] $bodyStmts
 	 * @param Closure(string): bool $gotoNameMatcher
 	 */
+	/**
+	 * Narrows a scope by a (often synthetic) control-flow condition the new-world
+	 * way: resolve its narrowing through the scope's on-demand dispatcher and apply
+	 * it via applySpecifiedTypes, instead of the old-world filterBy*Value().
+	 */
+	private function narrowScopeWithCondition(MutatingScope $scope, Expr $expr, TypeSpecifierContext $context): MutatingScope
+	{
+		$specifiedTypes = $scope->specifyTypesOfNewWorldHandlerNode($expr, $context)
+			?? $this->typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+
+		return $scope->applySpecifiedTypes($specifiedTypes);
+	}
+
 	private function resolveBackwardGotoScope(
 		Node $parentNode,
 		array $bodyStmts,
@@ -1597,7 +1610,7 @@ class NodeScopeResolver
 			if ($context->isTopLevel()) {
 				$storage = $originalStorage->duplicate();
 
-				$originalScope = $this->polluteScopeWithAlwaysIterableForeach ? $scope->filterByTruthyValue($arrayComparisonExpr) : $scope;
+				$originalScope = $this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope;
 				$foreachIterateeType = $condResult->getTypeForScope($originalScope);
 				$foreachNativeIterateeType = $condResult->getNativeTypeForScope($originalScope);
 				$unrolledResult = $this->tryProcessUnrolledConstantArrayForeach($stmt, $originalScope, $originalStorage, $context, $foreachIterateeType, $foreachNativeIterateeType);
@@ -1610,7 +1623,7 @@ class NodeScopeResolver
 					$count = 0;
 					do {
 						$prevScope = $bodyScope;
-						$bodyScope = $bodyScope->mergeWith($this->polluteScopeWithAlwaysIterableForeach ? $scope->filterByTruthyValue($arrayComparisonExpr) : $scope);
+						$bodyScope = $bodyScope->mergeWith($this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope);
 						$storage = $originalStorage->duplicate();
 						$bodyScope = $this->enterForeach($bodyScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
 						$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
@@ -1630,7 +1643,7 @@ class NodeScopeResolver
 				}
 			}
 
-			$bodyScope = $bodyScope->mergeWith($this->polluteScopeWithAlwaysIterableForeach ? $scope->filterByTruthyValue($arrayComparisonExpr) : $scope);
+			$bodyScope = $bodyScope->mergeWith($this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope);
 			$storage = $originalStorage;
 			$bodyScope = $this->enterForeach($bodyScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
 			$finalPassContext = $unrolledTotalKeys !== null ? $context->enterUnrolledForeach($unrolledTotalKeys) : $context;
@@ -1779,7 +1792,7 @@ class NodeScopeResolver
 
 			$isIterableAtLeastOnce = $exprType->isIterableAtLeastOnce();
 			if ($isIterableAtLeastOnce->maybe() || $exprType->isIterable()->no()) {
-				$finalScope = $finalScope->mergeWith($scope->filterByTruthyValue(new BooleanOr(
+				$finalScope = $finalScope->mergeWith($this->narrowScopeWithCondition($scope, new BooleanOr(
 					new BinaryOp\Identical(
 						$stmt->expr,
 						new Array_([]),
@@ -1787,7 +1800,7 @@ class NodeScopeResolver
 					new FuncCall(new Name\FullyQualified('is_object'), [
 						new Arg($stmt->expr),
 					]),
-				)));
+				), TypeSpecifierContext::createTruthy()));
 			} elseif ($isIterableAtLeastOnce->no() || $finalScopeResult->isAlwaysTerminating()) {
 				$finalScope = $scope;
 			} elseif (!$this->polluteScopeWithAlwaysIterableForeach) {
@@ -2114,7 +2127,7 @@ class NodeScopeResolver
 			$finalScope = $finalScope->generalizeWith($loopScope);
 
 			if ($lastCondExpr !== null) {
-				$finalScope = $finalScope->filterByFalseyValue($lastCondExpr);
+				$finalScope = $this->narrowScopeWithCondition($finalScope, $lastCondExpr, TypeSpecifierContext::createFalsey());
 			}
 
 			$breakExitPoints = $finalScopeResult->getExitPointsByType(Break_::class);
@@ -2183,7 +2196,7 @@ class NodeScopeResolver
 					$hasYield = $hasYield || $caseResult->hasYield();
 					$throwPoints = array_merge($throwPoints, $caseResult->getThrowPoints());
 					$impurePoints = array_merge($impurePoints, $caseResult->getImpurePoints());
-					$branchScope = $caseResult->getScope()->filterByTruthyValue($condExpr);
+					$branchScope = $this->narrowScopeWithCondition($caseResult->getScope(), $condExpr, TypeSpecifierContext::createTruthy());
 				} else {
 					$hasDefaultCase = true;
 					$fullCondExpr = null;
@@ -2209,7 +2222,7 @@ class NodeScopeResolver
 					$alwaysTerminating = $alwaysTerminating && $branchFinalScopeResult->isAlwaysTerminating();
 					$prevScope = null;
 					if (isset($fullCondExpr)) {
-						$scopeForBranches = $scopeForBranches->filterByFalseyValue($fullCondExpr);
+						$scopeForBranches = $this->narrowScopeWithCondition($scopeForBranches, $fullCondExpr, TypeSpecifierContext::createFalsey());
 						$fullCondExpr = null;
 					}
 					if (!$branchFinalScopeResult->isAlwaysTerminating()) {
