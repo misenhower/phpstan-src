@@ -40,7 +40,6 @@ final class ScalarHandler implements ExprHandler
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
-		// TODO $typeSpecifier->specifyDefaultTypes($scope, $expr, $context) OR noop
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $scope,
