@@ -11,11 +11,11 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\EmptyExpressionNode;
@@ -33,7 +33,7 @@ final class EmptyHandler implements ExprHandler
 	public function __construct(
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
-		private TypeSpecifier $typeSpecifier,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -77,7 +77,7 @@ final class EmptyHandler implements ExprHandler
 					return new SpecifiedTypes();
 				}
 
-				return $this->typeSpecifier->specifyTypesInCondition($s, new BooleanOr(
+				return $this->defaultNarrowingHelper->specifyTypesForNode($s, new BooleanOr(
 					new Expr\BooleanNot(new Expr\Isset_([$expr->expr])),
 					new Expr\BooleanNot($expr->expr),
 				), $context)->setRootExpr($expr);
