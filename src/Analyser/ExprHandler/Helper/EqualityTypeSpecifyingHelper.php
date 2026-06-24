@@ -91,7 +91,7 @@ final class EqualityTypeSpecifyingHelper
 			}
 
 			if (!$context->null() && $constantType->getValue() === false) {
-				return $this->typeSpecifier->specifyTypesInCondition(
+				return $this->defaultNarrowingHelper->specifyTypesForNode(
 					$scope,
 					$exprNode,
 					$context->true() ? TypeSpecifierContext::createFalsey() : TypeSpecifierContext::createFalsey()->negate(),
@@ -99,7 +99,7 @@ final class EqualityTypeSpecifyingHelper
 			}
 
 			if (!$context->null() && $constantType->getValue() === true) {
-				return $this->typeSpecifier->specifyTypesInCondition(
+				return $this->defaultNarrowingHelper->specifyTypesForNode(
 					$scope,
 					$exprNode,
 					$context->true() ? TypeSpecifierContext::createTruthy() : TypeSpecifierContext::createTruthy()->negate(),
@@ -160,7 +160,7 @@ final class EqualityTypeSpecifyingHelper
 				&& isset($exprNode->getArgs()[0])
 				&& $constantType->isString()->yes()
 			) {
-				return $this->typeSpecifier->specifyTypesInCondition($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->specifyTypesForNode($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
 			}
 
 			if (
@@ -170,7 +170,7 @@ final class EqualityTypeSpecifyingHelper
 				&& $exprNode->name->toLowerString() === 'preg_match'
 				&& (new ConstantIntegerType(1))->isSuperTypeOf($constantType)->yes()
 			) {
-				return $this->typeSpecifier->specifyTypesInCondition($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->specifyTypesForNode($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
 			}
 
 			if (
@@ -180,7 +180,7 @@ final class EqualityTypeSpecifyingHelper
 				&& strtolower($exprNode->name->toString()) === 'class'
 				&& $constantType->isString()->yes()
 			) {
-				return $this->typeSpecifier->specifyTypesInCondition($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->specifyTypesForNode($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
 			}
 		}
 
@@ -191,7 +191,7 @@ final class EqualityTypeSpecifyingHelper
 
 		$leftBooleanType = $leftType->toBoolean();
 		if ($leftBooleanType instanceof ConstantBooleanType && $rightType->isBoolean()->yes()) {
-			return $this->typeSpecifier->specifyTypesInCondition(
+			return $this->defaultNarrowingHelper->specifyTypesForNode(
 				$scope,
 				new Expr\BinaryOp\Identical(
 					new ConstFetch(new Name($leftBooleanType->getValue() ? 'true' : 'false')),
@@ -203,7 +203,7 @@ final class EqualityTypeSpecifyingHelper
 
 		$rightBooleanType = $rightType->toBoolean();
 		if ($rightBooleanType instanceof ConstantBooleanType && $leftType->isBoolean()->yes()) {
-			return $this->typeSpecifier->specifyTypesInCondition(
+			return $this->defaultNarrowingHelper->specifyTypesForNode(
 				$scope,
 				new Expr\BinaryOp\Identical(
 					$expr->left,
@@ -235,7 +235,7 @@ final class EqualityTypeSpecifyingHelper
 			|| ($leftType->isFloat()->yes() && $rightType->isFloat()->yes())
 			|| ($leftType->isEnum()->yes() && $rightType->isEnum()->yes())
 		) {
-			return $this->typeSpecifier->specifyTypesInCondition($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
+			return $this->defaultNarrowingHelper->specifyTypesForNode($scope, new Expr\BinaryOp\Identical($expr->left, $expr->right), $context)->setRootExpr($expr);
 		}
 
 		$leftExprString = $this->exprPrinter->printExpr($expr->left);
@@ -464,7 +464,7 @@ final class EqualityTypeSpecifyingHelper
 			&& $unwrappedLeftExpr->name->toLowerString() === 'preg_match'
 			&& (new ConstantIntegerType(1))->isSuperTypeOf($rightType)->yes()
 		) {
-			return $this->typeSpecifier->specifyTypesInCondition(
+			return $this->defaultNarrowingHelper->specifyTypesForNode(
 				$scope,
 				$leftExpr,
 				$context,
@@ -615,7 +615,7 @@ final class EqualityTypeSpecifyingHelper
 						$scope,
 					)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope))->setRootExpr($expr);
 				}
-				return $this->typeSpecifier->specifyTypesInCondition(
+				return $this->defaultNarrowingHelper->specifyTypesForNode(
 					$scope,
 					new Instanceof_(
 						$unwrappedLeftExpr->class,
@@ -648,7 +648,7 @@ final class EqualityTypeSpecifyingHelper
 					)->unionWith($this->defaultNarrowingHelper->createForSubject($rightExpr, $leftType, $context, $scope)->setRootExpr($expr));
 				}
 
-				return $this->typeSpecifier->specifyTypesInCondition(
+				return $this->defaultNarrowingHelper->specifyTypesForNode(
 					$scope,
 					new Instanceof_(
 						$unwrappedRightExpr->class,
@@ -792,7 +792,7 @@ final class EqualityTypeSpecifyingHelper
 				return $types;
 			}
 
-			return $types->unionWith($this->typeSpecifier->specifyTypesInCondition(
+			return $types->unionWith($this->defaultNarrowingHelper->specifyTypesForNode(
 				$scope,
 				$exprNode,
 				$context->true() ? TypeSpecifierContext::createFalse() : TypeSpecifierContext::createFalse()->negate(),
@@ -805,7 +805,7 @@ final class EqualityTypeSpecifyingHelper
 				return $types;
 			}
 
-			return $types->unionWith($this->typeSpecifier->specifyTypesInCondition(
+			return $types->unionWith($this->defaultNarrowingHelper->specifyTypesForNode(
 				$scope,
 				$exprNode,
 				$context->true() ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createTrue()->negate(),
