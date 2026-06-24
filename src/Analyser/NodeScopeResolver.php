@@ -4084,6 +4084,7 @@ class NodeScopeResolver
 			return $aOriginal->getStartTokenPos() <=> $bOriginal->getStartTokenPos();
 		});
 
+		$argResults = [];
 		foreach ($processingOrder as $i) {
 			$arg = $args[$i];
 
@@ -4281,6 +4282,7 @@ class NodeScopeResolver
 				$this->callNodeCallbackWithExpression($nodeCallback, $arg->value, $scopeToPass, $storage, $context);
 				$arrowFunctionResult = $this->processArrowFunctionNode($stmt, $arg->value, $scopeToPass, $storage, $nodeCallback, $parameterType ?? null, $parameterNativeType);
 				$arrowFunctionExprResult = $arrowFunctionResult->getExpressionResult();
+				$argResults[spl_object_id($arg->value)] = $arrowFunctionExprResult;
 				if ($this->callCallbackImmediately($parameter, $parameterType, $calleeReflection)) {
 					$throwPoints = array_merge($throwPoints, array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->isExplicit() ? InternalThrowPoint::createExplicit($scope, $throwPoint->getType(), $arg->value, $throwPoint->canContainAnyThrowable()) : InternalThrowPoint::createImplicit($scope, $arg->value), $arrowFunctionExprResult->getThrowPoints()));
 					$impurePoints = array_merge($impurePoints, $arrowFunctionExprResult->getImpurePoints());
@@ -4320,6 +4322,7 @@ class NodeScopeResolver
 					$scopeToPass = $scopeToPass->enterExpressionAssign($arg->value);
 				}
 				$exprResult = $this->processExprNode($stmt, $arg->value, $scopeToPass, $storage, $nodeCallback, $context->enterDeep());
+				$argResults[spl_object_id($arg->value)] = $exprResult;
 				$throwPoints = array_merge($throwPoints, $exprResult->getThrowPoints());
 				$impurePoints = array_merge($impurePoints, $exprResult->getImpurePoints());
 				$isAlwaysTerminating = $isAlwaysTerminating || $exprResult->isAlwaysTerminating();
@@ -4474,6 +4477,7 @@ class NodeScopeResolver
 			typeCallback: static fn () => new MixedType(),
 			specifyTypesCallback: static fn () => new SpecifiedTypes(),),
 			$resolvedAcceptor,
+			$argResults,
 		);
 	}
 

@@ -14,6 +14,7 @@ use PhpParser\Node\Name;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ArgumentsNormalizer;
+use PHPStan\Analyser\ArgsResult;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
@@ -484,8 +485,8 @@ final class FuncCallHandler implements ExprHandler
 				$stmt,
 				$arrayArg,
 				new NativeTypeExpr(
-					$this->getArrayFunctionAppendingType($functionReflection, $scopeBeforeArgs, $normalizedExpr),
-					$this->getArrayFunctionAppendingType($functionReflection, $scopeBeforeArgs->doNotTreatPhpDocTypesAsCertain(), $normalizedExpr),
+					$this->getArrayFunctionAppendingType($functionReflection, $scopeBeforeArgs, $normalizedExpr, $argsResult),
+					$this->getArrayFunctionAppendingType($functionReflection, $scopeBeforeArgs->doNotTreatPhpDocTypesAsCertain(), $normalizedExpr, $argsResult),
 				),
 				$nodeCallback,
 			)->getScope();
@@ -740,19 +741,23 @@ final class FuncCallHandler implements ExprHandler
 		return null;
 	}
 
-	private function getArrayFunctionAppendingType(FunctionReflection $functionReflection, Scope $scope, FuncCall $expr): Type
+	private function getArrayFunctionAppendingType(FunctionReflection $functionReflection, Scope $scope, FuncCall $expr, ArgsResult $argsResult): Type
 	{
 		$arrayArg = $expr->getArgs()[0]->value;
-		$arrayType = $scope->getType($arrayArg);
+		$arrayArgResult = $argsResult->getArgResult($arrayArg);
+		// closure args have no ExpressionResult (ProcessClosureResult carries none);
+		// they fall back to the scope, every other arg reads its captured result.
+		$arrayType = $arrayArgResult !== null ? $arrayArgResult->getTypeForScope($scope->toMutatingScope()) : $scope->getType($arrayArg);
 		$callArgs = array_slice($expr->getArgs(), 1);
 
 		/**
 		 * @param Arg[] $callArgs
 		 * @param callable(?Type, Type, bool): void $setOffsetValueType
 		 */
-		$setOffsetValueTypes = static function (Scope $scope, array $callArgs, callable $setOffsetValueType, ?bool &$nonConstantArrayWasUnpacked = null): void {
+		$setOffsetValueTypes = static function (Scope $scope, array $callArgs, callable $setOffsetValueType, ?bool &$nonConstantArrayWasUnpacked = null) use ($argsResult): void {
 			foreach ($callArgs as $callArg) {
-				$callArgType = $scope->getType($callArg->value);
+				$callArgResult = $argsResult->getArgResult($callArg->value);
+				$callArgType = $callArgResult !== null ? $callArgResult->getTypeForScope($scope->toMutatingScope()) : $scope->getType($callArg->value);
 				if ($callArg->unpack) {
 					$constantArrays = $callArgType->getConstantArrays();
 					if (count($constantArrays) === 1) {
