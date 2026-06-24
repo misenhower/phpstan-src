@@ -18,6 +18,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
@@ -63,6 +64,7 @@ final class IssetHandler implements ExprHandler
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
 		private TypeSpecifier $typeSpecifier,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -215,7 +217,7 @@ final class IssetHandler implements ExprHandler
 
 					$type = $readType($issetExpr);
 					$isNullable = !$type->isNull()->no();
-					$exprType = $this->typeSpecifier->create(
+					$exprType = $this->defaultNarrowingHelper->createForSubject(
 						$issetExpr,
 						new NullType(),
 						$context->negate(),
@@ -229,7 +231,7 @@ final class IssetHandler implements ExprHandler
 							}
 
 							// variable cannot exist in !isset()
-							return $exprType->unionWith($this->typeSpecifier->create(
+							return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
 								new IssetExpr($issetExpr),
 								new NullType(),
 								$context,
@@ -239,7 +241,7 @@ final class IssetHandler implements ExprHandler
 
 						if ($isNullable) {
 							// reduces variable certainty to maybe
-							return $exprType->unionWith($this->typeSpecifier->create(
+							return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
 								new IssetExpr($issetExpr),
 								new NullType(),
 								$context->negate(),
@@ -248,7 +250,7 @@ final class IssetHandler implements ExprHandler
 						}
 
 						// variable cannot exist in !isset()
-						return $this->typeSpecifier->create(
+						return $this->defaultNarrowingHelper->createForSubject(
 							new IssetExpr($issetExpr),
 							new NullType(),
 							$context,
@@ -283,7 +285,7 @@ final class IssetHandler implements ExprHandler
 								if ($typesToRemove !== []) {
 									$typeToRemove = TypeCombinator::union(...$typesToRemove);
 
-									$result = $this->typeSpecifier->create(
+									$result = $this->defaultNarrowingHelper->createForSubject(
 										$issetExpr->var,
 										$typeToRemove,
 										TypeSpecifierContext::createFalse(),
@@ -292,7 +294,7 @@ final class IssetHandler implements ExprHandler
 
 									if ($s->hasExpressionType($issetExpr->var)->maybe()) {
 										$result = $result->unionWith(
-											$this->typeSpecifier->create(
+											$this->defaultNarrowingHelper->createForSubject(
 												new IssetExpr($issetExpr->var),
 												new NullType(),
 												TypeSpecifierContext::createTruthy(),
@@ -347,7 +349,7 @@ final class IssetHandler implements ExprHandler
 
 						if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
 							$types = $types->unionWith(
-								$this->typeSpecifier->create(
+								$this->defaultNarrowingHelper->createForSubject(
 									$var->var,
 									new HasOffsetType($dimType),
 									$context,
@@ -360,7 +362,7 @@ final class IssetHandler implements ExprHandler
 							$narrowedKey = AllowedArrayKeysTypes::narrowOffsetKeyType($varType, $dimType);
 							if ($narrowedKey !== null) {
 								$types = $types->unionWith(
-									$this->typeSpecifier->create(
+									$this->defaultNarrowingHelper->createForSubject(
 										$var->dim,
 										$narrowedKey,
 										$context,
@@ -371,7 +373,7 @@ final class IssetHandler implements ExprHandler
 
 							if ($varType->isArray()->yes()) {
 								$types = $types->unionWith(
-									$this->typeSpecifier->create(
+									$this->defaultNarrowingHelper->createForSubject(
 										$var->var,
 										new NonEmptyArrayType(),
 										$context,
@@ -387,7 +389,7 @@ final class IssetHandler implements ExprHandler
 						&& $var->name instanceof Identifier
 					) {
 						$types = $types->unionWith(
-							$this->typeSpecifier->create($var->var, new IntersectionType([
+							$this->defaultNarrowingHelper->createForSubject($var->var, new IntersectionType([
 								new ObjectWithoutClassType(),
 								new HasPropertyType($var->name->toString()),
 							]), TypeSpecifierContext::createTruthy(), $s)->setRootExpr($expr),
@@ -398,7 +400,7 @@ final class IssetHandler implements ExprHandler
 						&& $var->name instanceof VarLikeIdentifier
 					) {
 						$types = $types->unionWith(
-							$this->typeSpecifier->create($var->class, new IntersectionType([
+							$this->defaultNarrowingHelper->createForSubject($var->class, new IntersectionType([
 								new ObjectWithoutClassType(),
 								new HasPropertyType($var->name->toString()),
 							]), TypeSpecifierContext::createTruthy(), $s)->setRootExpr($expr),
@@ -406,7 +408,7 @@ final class IssetHandler implements ExprHandler
 					}
 
 					$types = $types->unionWith(
-						$this->typeSpecifier->create($var, new NullType(), TypeSpecifierContext::createFalse(), $s)->setRootExpr($expr),
+						$this->defaultNarrowingHelper->createForSubject($var, new NullType(), TypeSpecifierContext::createFalse(), $s)->setRootExpr($expr),
 					);
 				}
 

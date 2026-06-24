@@ -402,7 +402,7 @@ final class BinaryOpHandler implements ExprHandler
 								if (count($countables) > 0) {
 									$countableType = TypeCombinator::union(...$countables);
 
-									return $this->typeSpecifier->create($expr->right->getArgs()[0]->value, $countableType, $context, $scope)->setRootExpr($expr);
+									return $this->defaultNarrowingHelper->createForSubject($expr->right->getArgs()[0]->value, $countableType, $context, $scope)->setRootExpr($expr);
 								}
 							}
 
@@ -413,7 +413,7 @@ final class BinaryOpHandler implements ExprHandler
 								}
 
 								$result = $result->unionWith(
-									$this->typeSpecifier->create($expr->right->getArgs()[0]->value, $newType, $context, $scope)->setRootExpr($expr),
+									$this->defaultNarrowingHelper->createForSubject($expr->right->getArgs()[0]->value, $newType, $context, $scope)->setRootExpr($expr),
 								);
 							}
 						}
@@ -430,7 +430,7 @@ final class BinaryOpHandler implements ExprHandler
 							$arrayArg = $expr->right->getArgs()[0]->value;
 							$dimFetch = new Expr\ArrayDimFetch($arrayArg, $expr->left);
 							$result = $result->unionWith(
-								$this->typeSpecifier->create($dimFetch, $argType->getIterableValueType(), TypeSpecifierContext::createTrue(), $scope)->setRootExpr($expr),
+								$this->defaultNarrowingHelper->createForSubject($dimFetch, $argType->getIterableValueType(), TypeSpecifierContext::createTrue(), $scope)->setRootExpr($expr),
 							);
 						}
 					}
@@ -460,7 +460,7 @@ final class BinaryOpHandler implements ExprHandler
 							$arrayArg = $expr->right->left->getArgs()[0]->value;
 							$dimFetch = new Expr\ArrayDimFetch($arrayArg, $expr->left);
 							$result = $result->unionWith(
-								$this->typeSpecifier->create($dimFetch, $countArgType->getIterableValueType(), TypeSpecifierContext::createTrue(), $scope)->setRootExpr($expr),
+								$this->defaultNarrowingHelper->createForSubject($dimFetch, $countArgType->getIterableValueType(), TypeSpecifierContext::createTrue(), $scope)->setRootExpr($expr),
 							);
 						}
 					}
@@ -504,7 +504,7 @@ final class BinaryOpHandler implements ExprHandler
 									$accessory = new AccessoryNonFalsyStringType();
 								}
 
-								$result = $result->unionWith($this->typeSpecifier->create($expr->right->getArgs()[0]->value, $accessory, $context, $scope)->setRootExpr($expr));
+								$result = $result->unionWith($this->defaultNarrowingHelper->createForSubject($expr->right->getArgs()[0]->value, $accessory, $context, $scope)->setRootExpr($expr));
 							}
 						}
 					}
@@ -563,7 +563,7 @@ final class BinaryOpHandler implements ExprHandler
 					if ($context->true()) {
 						if (!$expr->left instanceof Scalar && !($expr->left instanceof Expr\UnaryMinus && $expr->left->expr instanceof Scalar)) {
 							$result = $result->unionWith(
-								$this->typeSpecifier->create(
+								$this->defaultNarrowingHelper->createForSubject(
 									$expr->left,
 									$orEqual ? $rightType->getSmallerOrEqualType($this->phpVersion) : $rightType->getSmallerType($this->phpVersion),
 									TypeSpecifierContext::createTruthy(),
@@ -573,7 +573,7 @@ final class BinaryOpHandler implements ExprHandler
 						}
 						if (!$expr->right instanceof Scalar && !($expr->right instanceof Expr\UnaryMinus && $expr->right->expr instanceof Scalar)) {
 							$result = $result->unionWith(
-								$this->typeSpecifier->create(
+								$this->defaultNarrowingHelper->createForSubject(
 									$expr->right,
 									$orEqual ? $leftType->getGreaterOrEqualType($this->phpVersion) : $leftType->getGreaterType($this->phpVersion),
 									TypeSpecifierContext::createTruthy(),
@@ -584,7 +584,7 @@ final class BinaryOpHandler implements ExprHandler
 					} elseif ($context->false()) {
 						if (!$expr->left instanceof Scalar && !($expr->left instanceof Expr\UnaryMinus && $expr->left->expr instanceof Scalar)) {
 							$result = $result->unionWith(
-								$this->typeSpecifier->create(
+								$this->defaultNarrowingHelper->createForSubject(
 									$expr->left,
 									$orEqual ? $rightType->getGreaterType($this->phpVersion) : $rightType->getGreaterOrEqualType($this->phpVersion),
 									TypeSpecifierContext::createTruthy(),
@@ -594,7 +594,7 @@ final class BinaryOpHandler implements ExprHandler
 						}
 						if (!$expr->right instanceof Scalar && !($expr->right instanceof Expr\UnaryMinus && $expr->right->expr instanceof Scalar)) {
 							$result = $result->unionWith(
-								$this->typeSpecifier->create(
+								$this->defaultNarrowingHelper->createForSubject(
 									$expr->right,
 									$orEqual ? $leftType->getSmallerType($this->phpVersion) : $leftType->getSmallerOrEqualType($this->phpVersion),
 									TypeSpecifierContext::createTruthy(),

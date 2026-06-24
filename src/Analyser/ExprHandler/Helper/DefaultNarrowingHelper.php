@@ -5,6 +5,7 @@ namespace PHPStan\Analyser\ExprHandler\Helper;
 use PhpParser\Node\Expr;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
@@ -107,6 +108,24 @@ final class DefaultNarrowingHelper
 		// structural fan-out (assignment / remembered wrapper) and createForExpr. For
 		// a plain subject this equals the single sure/sureNot entry it used to emit.
 		return $this->typeSpecifier->create($subject, $type, $context, $s);
+	}
+
+	/**
+	 * The inside-out create() for a raw subject: narrows it through its own stored
+	 * result's createTypesCallback, falling back to create() when there is none.
+	 * Same signature as TypeSpecifier::create() so call sites swap mechanically.
+	 */
+	public function createForSubject(Expr $subject, Type $type, TypeSpecifierContext $context, Scope $scope): SpecifiedTypes
+	{
+		$mutatingScope = $scope->toMutatingScope();
+
+		return $this->createSubjectTypes(
+			$mutatingScope,
+			$subject,
+			$mutatingScope->getCurrentExpressionResultStorage()?->findExpressionResult($subject),
+			$type,
+			$context,
+		);
 	}
 
 }

@@ -12,7 +12,6 @@ use PHPStan\Analyser\ExpressionTypeHolder;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Type\NeverType;
@@ -31,7 +30,7 @@ final class ConditionalExpressionHolderHelper
 {
 
 	public function __construct(
-		private TypeSpecifier $typeSpecifier,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -109,7 +108,7 @@ final class ConditionalExpressionHolderHelper
 			}
 
 			$types = $types->unionWith(
-				$this->typeSpecifier->create($targetExpr, $unionType, TypeSpecifierContext::createTrue(), $scope),
+				$this->defaultNarrowingHelper->createForSubject($targetExpr, $unionType, TypeSpecifierContext::createTrue(), $scope),
 			);
 		}
 
