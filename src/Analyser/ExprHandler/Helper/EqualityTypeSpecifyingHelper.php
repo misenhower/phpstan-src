@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler\Helper;
 
+use Closure;
 use Countable;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
@@ -10,6 +11,7 @@ use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\Instanceof_;
 use PhpParser\Node\Name;
+use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
@@ -70,7 +72,10 @@ final class EqualityTypeSpecifyingHelper
 	}
 
 
-	public function specifyTypesForEqual(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Equal $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
+	/**
+	 * @param Closure(Expr): ?ExpressionResult $resultFor
+	 */
+	public function specifyTypesForEqual(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Equal $expr, Scope $scope, TypeSpecifierContext $context, Closure $resultFor): SpecifiedTypes
 	{
 		$expressions = $this->findTypeExpressionsFromBinaryOperation($nodeScopeResolver, $scope, $expr);
 		if ($expressions !== null) {
@@ -91,17 +96,19 @@ final class EqualityTypeSpecifyingHelper
 			}
 
 			if (!$context->null() && $constantType->getValue() === false) {
-				return $this->defaultNarrowingHelper->specifyTypesForNode(
-					$scope,
+				return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+					$scope->toMutatingScope(),
 					$exprNode,
+					$resultFor($exprNode),
 					$context->true() ? TypeSpecifierContext::createFalsey() : TypeSpecifierContext::createFalsey()->negate(),
 				)->setRootExpr($expr);
 			}
 
 			if (!$context->null() && $constantType->getValue() === true) {
-				return $this->defaultNarrowingHelper->specifyTypesForNode(
-					$scope,
+				return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+					$scope->toMutatingScope(),
 					$exprNode,
+					$resultFor($exprNode),
 					$context->true() ? TypeSpecifierContext::createTruthy() : TypeSpecifierContext::createTruthy()->negate(),
 				)->setRootExpr($expr);
 			}
@@ -254,7 +261,10 @@ final class EqualityTypeSpecifyingHelper
 			: $leftTypes->normalize($scope, $nodeScopeResolver)->intersectWith($rightTypes->normalize($scope, $nodeScopeResolver));
 	}
 
-	public function specifyTypesForIdentical(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
+	/**
+	 * @param Closure(Expr): ?ExpressionResult $resultFor
+	 */
+	public function specifyTypesForIdentical(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context, Closure $resultFor): SpecifiedTypes
 	{
 		$leftExpr = $expr->left;
 		$rightExpr = $expr->right;
@@ -264,12 +274,12 @@ final class EqualityTypeSpecifyingHelper
 			$specifiedTypes = $this->specifyTypesForNormalizedIdentical($nodeScopeResolver, new Expr\BinaryOp\Identical(
 				$rightExpr,
 				$leftExpr,
-			), $scope, $context);
+			), $scope, $context, $resultFor);
 		} else {
 			$specifiedTypes = $this->specifyTypesForNormalizedIdentical($nodeScopeResolver, new Expr\BinaryOp\Identical(
 				$leftExpr,
 				$rightExpr,
-			), $scope, $context);
+			), $scope, $context, $resultFor);
 		}
 
 		// merge result of fn1() === fn2() and fn2() === fn1()
@@ -278,14 +288,17 @@ final class EqualityTypeSpecifyingHelper
 				$this->specifyTypesForNormalizedIdentical($nodeScopeResolver, new Expr\BinaryOp\Identical(
 					$rightExpr,
 					$leftExpr,
-				), $scope, $context),
+				), $scope, $context, $resultFor),
 			);
 		}
 
 		return $specifiedTypes;
 	}
 
-	private function specifyTypesForNormalizedIdentical(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context): SpecifiedTypes
+	/**
+	 * @param Closure(Expr): ?ExpressionResult $resultFor
+	 */
+	private function specifyTypesForNormalizedIdentical(NodeScopeResolver $nodeScopeResolver, Expr\BinaryOp\Identical $expr, Scope $scope, TypeSpecifierContext $context, Closure $resultFor): SpecifiedTypes
 	{
 		$leftExpr = $expr->left;
 		$rightExpr = $expr->right;
@@ -464,9 +477,10 @@ final class EqualityTypeSpecifyingHelper
 			&& $unwrappedLeftExpr->name->toLowerString() === 'preg_match'
 			&& (new ConstantIntegerType(1))->isSuperTypeOf($rightType)->yes()
 		) {
-			return $this->defaultNarrowingHelper->specifyTypesForNode(
-				$scope,
+			return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+				$scope->toMutatingScope(),
 				$leftExpr,
+				$resultFor($leftExpr),
 				$context,
 			)->setRootExpr($expr);
 		}

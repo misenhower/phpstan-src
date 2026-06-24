@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler;
 
+use Closure;
 use Countable;
 use DivisionByZeroError;
 use PhpParser\Node\Expr;
@@ -246,8 +247,9 @@ final class BinaryOpHandler implements ExprHandler
 				throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
 			},
 			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): SpecifiedTypes {
+				$resultFor = static fn (Expr $e): ?ExpressionResult => $e === $expr->left ? $leftResult : ($e === $expr->right ? $rightResult : null);
 				if ($expr instanceof BinaryOp\Identical) {
-					return $this->equalityTypeSpecifyingHelper->specifyTypesForIdentical($nodeScopeResolver, $expr, $scope, $context);
+					return $this->equalityTypeSpecifyingHelper->specifyTypesForIdentical($nodeScopeResolver, $expr, $scope, $context, $resultFor);
 				}
 
 				if ($expr instanceof BinaryOp\NotIdentical) {
@@ -267,7 +269,7 @@ final class BinaryOpHandler implements ExprHandler
 				}
 
 				if ($expr instanceof BinaryOp\Equal) {
-					return $this->equalityTypeSpecifyingHelper->specifyTypesForEqual($nodeScopeResolver, $expr, $scope, $context);
+					return $this->equalityTypeSpecifyingHelper->specifyTypesForEqual($nodeScopeResolver, $expr, $scope, $context, $resultFor);
 				}
 
 				if ($expr instanceof BinaryOp\NotEqual) {
