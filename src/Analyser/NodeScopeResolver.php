@@ -1245,11 +1245,12 @@ class NodeScopeResolver
 				$this->callNodeCallback($nodeCallback, new NoopExpressionNode($stmt->expr, $hasAssign), $scope, $storage);
 			}
 			$scope = $result->getScope();
-			$scope = $scope->filterBySpecifiedTypes($this->typeSpecifier->specifyTypesInCondition(
-				$scope,
-				$stmt->expr,
-				TypeSpecifierContext::createNull(),
-			));
+			// the expression statement was just processed; read its narrowing from
+			// the result instead of re-resolving it via specifyTypesInCondition().
+			$specifiedTypes = $result->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createNull());
+			if ($specifiedTypes !== null) {
+				$scope = $scope->filterBySpecifiedTypes($specifiedTypes);
+			}
 			$hasYield = $result->hasYield();
 			$throwPoints = $result->getThrowPoints();
 			$impurePoints = $result->getImpurePoints();
