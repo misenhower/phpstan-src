@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler;
 
+use PHPStan\Analyser\SpecifiedTypes;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Scalar;
 use PhpParser\Node\Scalar\InterpolatedString;
@@ -49,6 +50,7 @@ final class ScalarHandler implements ExprHandler
 			throwPoints: [],
 			impurePoints: [],
 			typeCallback: fn (Scope $scope) => $this->initializerExprTypeResolver->getType($expr, InitializerExprContext::fromScope($scope)),
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);
 	}
 

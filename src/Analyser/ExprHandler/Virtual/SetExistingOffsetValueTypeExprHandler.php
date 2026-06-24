@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler\Virtual;
 
+use PHPStan\Analyser\SpecifiedTypes;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
@@ -55,6 +56,7 @@ final class SetExistingOffsetValueTypeExprHandler implements ExprHandler
 				$dimResult->getTypeForScope($s),
 				$valueResult->getTypeForScope($s),
 			),
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);
 	}
 

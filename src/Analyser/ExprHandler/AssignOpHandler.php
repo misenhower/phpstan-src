@@ -3,6 +3,7 @@
 namespace PHPStan\Analyser\ExprHandler;
 
 use DivisionByZeroError;
+use PHPStan\Type\MixedType;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\AssignOp;
 use PhpParser\Node\Expr\BinaryOp;
@@ -176,6 +177,8 @@ final class AssignOpHandler implements ExprHandler
 						$isAlwaysTerminating,
 						$exprResult->getThrowPoints(),
 						$exprResult->getImpurePoints(),
+						typeCallback: static fn () => new MixedType(),
+						specifyTypesCallback: static fn () => new SpecifiedTypes(),
 					);
 				}
 

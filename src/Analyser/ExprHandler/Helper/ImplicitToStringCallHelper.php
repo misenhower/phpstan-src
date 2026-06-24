@@ -2,6 +2,8 @@
 
 namespace PHPStan\Analyser\ExprHandler\Helper;
 
+use PHPStan\Analyser\SpecifiedTypes;
+use PHPStan\Type\MixedType;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Identifier;
 use PHPStan\Analyser\ExpressionContext;
@@ -55,6 +57,8 @@ final class ImplicitToStringCallHelper
 				isAlwaysTerminating: false,
 				throwPoints: [],
 				impurePoints: [],
+				typeCallback: static fn () => new MixedType(),
+				specifyTypesCallback: static fn () => new SpecifiedTypes(),
 			);
 		}
 
@@ -93,6 +97,8 @@ final class ImplicitToStringCallHelper
 			isAlwaysTerminating: false,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
+			typeCallback: static fn () => new MixedType(),
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);
 	}
 

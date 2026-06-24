@@ -6,6 +6,7 @@ use ArrayAccess;
 use Closure;
 use IteratorAggregate;
 use Override;
+use PHPStan\Analyser\SpecifiedTypes;
 use PhpParser\Comment\Doc;
 use PhpParser\Modifiers;
 use PhpParser\Node;
@@ -3062,6 +3063,7 @@ class NodeScopeResolver
 				// the first-class callable closure type lives on the *CallableNode
 				// result; delegate so getType() of the original CallLike answers from it
 				typeCallback: static fn (MutatingScope $s): Type => $newExprResult->getTypeForScope($s),
+				specifyTypesCallback: static fn () => new SpecifiedTypes(),
 			);
 			$this->storeExpressionResult($storage, $expr, $expressionResult);
 			return $expressionResult;
@@ -3584,7 +3586,9 @@ class NodeScopeResolver
 		$this->callNodeCallback($nodeCallback, new InArrowFunctionNode($refinedArrowFunctionType, $expr), $refinedArrowFunctionScope, $storage);
 
 		return new ProcessArrowFunctionResult(
-			$this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $expr, hasYield: false, isAlwaysTerminating: $exprResult->isAlwaysTerminating(), throwPoints: $exprResult->getThrowPoints(), impurePoints: $exprResult->getImpurePoints()),
+			$this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $expr, hasYield: false, isAlwaysTerminating: $exprResult->isAlwaysTerminating(), throwPoints: $exprResult->getThrowPoints(), impurePoints: $exprResult->getImpurePoints(),
+			typeCallback: static fn () => new MixedType(),
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),),
 			$arrowFunctionScope,
 			$closureTypeThrowPoints,
 			$closureTypeImpurePoints,
@@ -4184,6 +4188,8 @@ class NodeScopeResolver
 						$closureResult->getInvalidateExpressions(),
 					),
 					nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+					typeCallback: null,
+					specifyTypesCallback: static fn () => new SpecifiedTypes(),
 				));
 
 				$uses = [];
@@ -4275,6 +4281,8 @@ class NodeScopeResolver
 						$arrowFunctionResult->getInvalidateExpressions(),
 					),
 					nativeType: $arrowFunctionClosureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+					typeCallback: null,
+					specifyTypesCallback: static fn () => new SpecifiedTypes(),
 				));
 			} else {
 				$exprType = $this->readStoredOrPriceOnDemand($arg->value, $scope);
@@ -4433,7 +4441,9 @@ class NodeScopeResolver
 
 		// not storing this, it's scope after processing all args
 		return new ArgsResult(
-			$this->expressionResultFactory->create($scope, $scope, $callLike, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints),
+			$this->expressionResultFactory->create($scope, $scope, $callLike, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints,
+			typeCallback: static fn () => new MixedType(),
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),),
 			$resolvedAcceptor,
 		);
 	}
@@ -4737,7 +4747,9 @@ class NodeScopeResolver
 			$assignedExpr,
 			new VirtualAssignNodeCallback($nodeCallback),
 			ExpressionContext::createDeep(),
-			fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $assignedExpr, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: []),
+			fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $assignedExpr, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: [],
+			typeCallback: static fn () => new MixedType(),
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),),
 			false,
 		);
 	}

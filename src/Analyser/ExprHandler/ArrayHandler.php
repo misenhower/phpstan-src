@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler;
 
+use PHPStan\Analyser\SpecifiedTypes;
 use PhpParser\Node\Arg;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\Array_;
@@ -124,6 +125,7 @@ final class ArrayHandler implements ExprHandler
 
 				return $type;
 			},
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);
 	}
 

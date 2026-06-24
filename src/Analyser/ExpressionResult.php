@@ -5,6 +5,7 @@ namespace PHPStan\Analyser;
 use PhpParser\Node\Expr;
 use PHPStan\DependencyInjection\GenerateFactory;
 use PHPStan\DependencyInjection\Type\ExpressionTypeResolverExtensionRegistryProvider;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeUtils;
 
@@ -53,17 +54,26 @@ final class ExpressionResult
 		private bool $isAlwaysTerminating,
 		private array $throwPoints,
 		private array $impurePoints,
+		?callable $typeCallback,
+		?callable $specifyTypesCallback,
 		private bool $containsNullsafe = false,
 		private ?IssetabilityDescriptor $issetabilityDescriptor = null,
 		?callable $truthyScopeCallback = null,
 		?callable $falseyScopeCallback = null,
-		?callable $typeCallback = null,
-		?callable $specifyTypesCallback = null,
 		?callable $createTypesCallback = null,
 		private ?Type $type = null,
 		private ?Type $nativeType = null,
 	)
 	{
+		// A precomputed type and a lazy typeCallback are mutually exclusive; phpdoc
+		// and native types are precomputed together or not at all.
+		if ($typeCallback !== null && $type !== null) {
+			throw new ShouldNotHappenException('ExpressionResult cannot have both a typeCallback and a precomputed type.');
+		}
+		if (($type === null) !== ($nativeType === null)) {
+			throw new ShouldNotHappenException('ExpressionResult type and nativeType must both be set or both be null.');
+		}
+
 		$this->truthyScopeCallback = $truthyScopeCallback;
 		$this->falseyScopeCallback = $falseyScopeCallback;
 		$this->typeCallback = $typeCallback;

@@ -77,6 +77,7 @@ final class ClosureHandler implements ExprHandler
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $c) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $c),
 			type: $type,
 			nativeType: $nativeType,
+			typeCallback: null,
 		);
 	}
 

@@ -90,6 +90,7 @@ final class PipeHandler implements ExprHandler
 				throwPoints: [],
 				impurePoints: [],
 				typeCallback: static fn (MutatingScope $s): Type => $callableNodeResult->getTypeForScope($s),
+				specifyTypesCallback: static fn () => new SpecifiedTypes(),
 			));
 		}
 

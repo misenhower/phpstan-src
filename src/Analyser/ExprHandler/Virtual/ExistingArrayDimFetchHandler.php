@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler\Virtual;
 
+use PHPStan\Analyser\SpecifiedTypes;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
@@ -50,6 +51,7 @@ final class ExistingArrayDimFetchHandler implements ExprHandler
 			throwPoints: [],
 			impurePoints: [],
 			typeCallback: static fn (MutatingScope $s): Type => $arrayDimFetchResult->getTypeForScope($s),
+			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);
 	}
 

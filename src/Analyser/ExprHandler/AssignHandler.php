@@ -170,6 +170,7 @@ final class AssignHandler implements ExprHandler
 					throwPoints: $throwPoints,
 					impurePoints: $impurePoints,
 					typeCallback: static fn ($scope) => $result->getTypeForScope($scope),
+					specifyTypesCallback: static fn () => new SpecifiedTypes(),
 				);
 			},
 			true,
@@ -637,6 +638,7 @@ final class AssignHandler implements ExprHandler
 						throwPoints: [],
 						impurePoints: [],
 						typeCallback: static fn (): Type => new NeverType(),
+						specifyTypesCallback: static fn () => new SpecifiedTypes(),
 					));
 
 				} else {
@@ -655,6 +657,7 @@ final class AssignHandler implements ExprHandler
 						throwPoints: [],
 						impurePoints: [],
 						typeCallback: static fn (MutatingScope $s): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch->var, $s)->getOffsetValueType($nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $s)),
+						specifyTypesCallback: static fn () => new SpecifiedTypes(),
 					));
 					$result = $nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, $nodeCallback, $context->enterDeep());
 					$hasYield = $hasYield || $result->hasYield();
@@ -1004,7 +1007,9 @@ final class AssignHandler implements ExprHandler
 					$getOffsetValueTypeExpr,
 					$nodeCallback,
 					$context,
-					fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $getOffsetValueTypeExpr, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: []),
+					fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $getOffsetValueTypeExpr, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: [],
+					typeCallback: static fn () => new MixedType(),
+					specifyTypesCallback: static fn () => new SpecifiedTypes(),),
 					$enterExpressionAssign,
 				);
 				$scope = $result->getScope();
@@ -1102,7 +1107,9 @@ final class AssignHandler implements ExprHandler
 		}
 
 		// stored where processAssignVar is called
-		return $this->expressionResultFactory->create($scope, $beforeScope, $var, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints);
+		return $this->expressionResultFactory->create($scope, $beforeScope, $var, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints,
+	typeCallback: static fn () => new MixedType(),
+	specifyTypesCallback: static fn () => new SpecifiedTypes(),);
 	}
 
 	private function createArrayDimFetchConditionalExpressionHolder(
