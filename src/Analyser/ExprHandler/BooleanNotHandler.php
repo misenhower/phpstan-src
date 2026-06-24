@@ -14,7 +14,6 @@ use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Type\BooleanType;
@@ -30,7 +29,6 @@ final class BooleanNotHandler implements ExprHandler
 
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
-		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
@@ -66,12 +64,14 @@ final class BooleanNotHandler implements ExprHandler
 
 				return new BooleanType();
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
-				return $this->typeSpecifier->specifyTypesInCondition($s, $expr->expr, $context->negate())->setRootExpr($expr);
+				// The negated operand was processed above; compose its narrowing
+				// directly from its result rather than re-resolving the node.
+				return $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->expr, $exprResult, $context->negate())->setRootExpr($expr);
 			},
 		);
 	}

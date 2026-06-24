@@ -203,7 +203,7 @@ final class IssetHandler implements ExprHandler
 						throw new ShouldNotHappenException();
 					}
 
-					return $this->typeSpecifier->specifyTypesInCondition($s, $andChain, $context)->setRootExpr($expr);
+					return $this->defaultNarrowingHelper->specifyTypesForNode($s, $andChain, $context)->setRootExpr($expr);
 				}
 
 				$issetExpr = $expr->vars[0];
