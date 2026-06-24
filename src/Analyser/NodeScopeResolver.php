@@ -1234,7 +1234,6 @@ class NodeScopeResolver
 			if ($stmt->expr instanceof Expr\Throw_) {
 				$scope = $stmtScope;
 			}
-			$earlyTerminationExpr = $this->findEarlyTerminatingExpr($stmt->expr, $scope);
 			$hasAssign = false;
 			$currentScope = $scope;
 			$result = $this->processExprNode($stmt, $stmt->expr, $scope, $storage, static function (Node $node, Scope $scope) use ($nodeCallback, $currentScope, &$hasAssign): void {
@@ -1247,6 +1246,7 @@ class NodeScopeResolver
 				}
 				$nodeCallback($node, $scope);
 			}, ExpressionContext::createTopLevel());
+			$earlyTerminationExpr = $this->findEarlyTerminatingExpr($stmt->expr, $scope);
 			$throwPoints = array_filter($result->getThrowPoints(), static fn ($throwPoint) => $throwPoint->isExplicit());
 			if (
 				count($result->getImpurePoints()) === 0
@@ -2897,12 +2897,6 @@ class NodeScopeResolver
 			return $expr;
 		}
 
-		// Scope::getType() must stay here (not a scope-state side effect): for a
-		// `$x[...] ??= []` expression it returns getType()'s cached resolvedTypes
-		// value, computed during loop convergence when the left side was maybe-set
-		// (so the coalesced value keeps its optional array{} branch). The
-		// side-effect-free helpers re-price on the converged scope and drop that
-		// branch, regressing bug-13623. See AssignHandler::processAssignVar.
 		$exprType = $scope->getType($expr);
 		if ($exprType instanceof NeverType && $exprType->isExplicit()) {
 			return $expr;
