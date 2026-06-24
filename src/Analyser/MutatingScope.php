@@ -1254,6 +1254,18 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			}
 		}
 
+		if (
+			NodeScopeResolver::$guardNewWorld
+			&& isset(NodeScopeResolver::$guardRealExprIds[spl_object_id($node)])
+			&& !isset(NodeScopeResolver::$guardProcessedExprIds[spl_object_id($node)])
+		) {
+			throw new ShouldNotHappenException(sprintf(
+				'specifyTypesOfNewWorldHandlerNode() asked about non-synthetic %s on line %d before it was processed by processExprNode() - it should consume the node\'s ExpressionResult instead.',
+				get_class($node),
+				$node->getStartLine(),
+			));
+		}
+
 		// a synthetic node, or no analysis in progress
 		$onDemandResult = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
 			$node,

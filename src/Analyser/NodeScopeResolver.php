@@ -2953,7 +2953,34 @@ class NodeScopeResolver
 			return $result->getTypeForScope($scope);
 		}
 
+		$this->guardAgainstUnprocessedRealNode($expr, __FUNCTION__);
+
 		return $this->priceSyntheticOnDemand($expr, $scope);
+	}
+
+	/**
+	 * Fires the PHPSTAN_GUARD_NW diagnostic when a real (non-synthetic) AST node
+	 * reaches an on-demand pricing path without having been processed and stored
+	 * by processExprNode() first. Mirrors the guard in MutatingScope::getType():
+	 * such a node should be answered from its stored ExpressionResult, never
+	 * re-priced as if it were synthetic. Dormant unless PHPSTAN_GUARD_NW=1.
+	 */
+	private function guardAgainstUnprocessedRealNode(Expr $expr, string $caller): void
+	{
+		if (
+			!self::$guardNewWorld
+			|| !isset(self::$guardRealExprIds[spl_object_id($expr)])
+			|| isset(self::$guardProcessedExprIds[spl_object_id($expr)])
+		) {
+			return;
+		}
+
+		throw new ShouldNotHappenException(sprintf(
+			'%s() asked about non-synthetic %s on line %d before it was processed by processExprNode() - it should consume the node\'s ExpressionResult instead.',
+			$caller,
+			get_class($expr),
+			$expr->getStartLine(),
+		));
 	}
 
 	/**
@@ -2978,6 +3005,8 @@ class NodeScopeResolver
 		if ($result !== null) {
 			return $result->getNativeTypeForScope($scope);
 		}
+
+		$this->guardAgainstUnprocessedRealNode($expr, __FUNCTION__);
 
 		return $this->priceSyntheticOnDemandNative($expr, $scope);
 	}
