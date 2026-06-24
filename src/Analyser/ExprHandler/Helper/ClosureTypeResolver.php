@@ -100,8 +100,6 @@ final class ClosureTypeResolver
 		if ($expr instanceof ArrowFunction) {
 			$arrowScope = $scope->enterArrowFunctionWithoutReflection($expr, $callableParameters, $nativeCallableParameters);
 
-			$returnType = $this->resolveArrowFunctionReturnType($scope, $arrowScope, $expr);
-
 			$arrowFunctionImpurePoints = [];
 			$invalidateExpressions = [];
 			$arrowFunctionExprResult = $this->nodeScopeResolver->processExprNode(
@@ -136,6 +134,10 @@ final class ClosureTypeResolver
 			);
 			$throwPoints = array_map(static fn ($throwPoint) => $throwPoint->toPublic(), $arrowFunctionExprResult->getThrowPoints());
 			$impurePoints = array_merge($arrowFunctionImpurePoints, $arrowFunctionExprResult->getImpurePoints());
+
+			// the body was processed just above; resolve the return type from its stored
+			// result rather than reading the still-unprocessed body expression
+			$returnType = $this->resolveArrowFunctionReturnType($scope, $arrowScope, $expr);
 
 			return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, []);
 		}
