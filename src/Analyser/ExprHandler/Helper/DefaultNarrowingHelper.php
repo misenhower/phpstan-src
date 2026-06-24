@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler\Helper;
 
+use Closure;
 use PhpParser\Node\Expr;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\MutatingScope;
@@ -129,16 +130,22 @@ final class DefaultNarrowingHelper
 	/**
 	 * The inside-out create() for a raw subject: narrows it through its own stored
 	 * result's createTypesCallback, falling back to create() when there is none.
-	 * Same signature as TypeSpecifier::create() so call sites swap mechanically.
+	 * When the caller already holds the subject's result (e.g. an operand a parent
+	 * handler just processed) it passes a $resultFor lookup so composition uses that
+	 * captured result directly instead of a storage lookup - so a remembered-wrapper
+	 * operand fans out to wrapper + inner without the caller unwrapping it.
+	 *
+	 * @param (Closure(Expr): ?ExpressionResult)|null $resultFor
 	 */
-	public function createForSubject(Expr $subject, Type $type, TypeSpecifierContext $context, Scope $scope): SpecifiedTypes
+	public function createForSubject(Expr $subject, Type $type, TypeSpecifierContext $context, Scope $scope, ?Closure $resultFor = null): SpecifiedTypes
 	{
 		$mutatingScope = $scope->toMutatingScope();
+		$subjectResult = $resultFor !== null ? $resultFor($subject) : null;
 
 		return $this->createSubjectTypes(
 			$mutatingScope,
 			$subject,
-			$mutatingScope->getCurrentExpressionResultStorage()?->findExpressionResult($subject),
+			$subjectResult ?? $mutatingScope->getCurrentExpressionResultStorage()?->findExpressionResult($subject),
 			$type,
 			$context,
 		);

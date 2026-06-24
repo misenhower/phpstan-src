@@ -92,7 +92,7 @@ final class EqualityTypeSpecifyingHelper
 					new ConstantStringType(''),
 					new ConstantArrayType([], []),
 				];
-				return $this->defaultNarrowingHelper->createForSubject($exprNode, new UnionType($trueTypes), $context, $scope)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->createForSubject($exprNode, new UnionType($trueTypes), $context, $scope, $resultFor)->setRootExpr($expr);
 			}
 
 			if (!$context->null() && $constantType->getValue() === false) {
@@ -134,7 +134,7 @@ final class EqualityTypeSpecifyingHelper
 						new ConstantStringType('0'),
 					];
 				}
-				return $this->defaultNarrowingHelper->createForSubject($exprNode, new UnionType($trueTypes), $context, $scope)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->createForSubject($exprNode, new UnionType($trueTypes), $context, $scope, $resultFor)->setRootExpr($expr);
 			}
 
 			if (!$context->null() && $constantType->getValue() === '') {
@@ -156,7 +156,7 @@ final class EqualityTypeSpecifyingHelper
 						new ConstantStringType(''),
 					];
 				}
-				return $this->defaultNarrowingHelper->createForSubject($exprNode, new UnionType($trueTypes), $context, $scope)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->createForSubject($exprNode, new UnionType($trueTypes), $context, $scope, $resultFor)->setRootExpr($expr);
 			}
 
 			if (
@@ -225,7 +225,7 @@ final class EqualityTypeSpecifyingHelper
 			&& $rightType->isArray()->yes()
 			&& $leftType->isConstantArray()->yes() && $leftType->isIterableAtLeastOnce()->no()
 		) {
-			return $this->defaultNarrowingHelper->createForSubject($expr->right, new NonEmptyArrayType(), $context->negate(), $scope)->setRootExpr($expr);
+			return $this->defaultNarrowingHelper->createForSubject($expr->right, new NonEmptyArrayType(), $context->negate(), $scope, $resultFor)->setRootExpr($expr);
 		}
 
 		if (
@@ -233,7 +233,7 @@ final class EqualityTypeSpecifyingHelper
 			&& $leftType->isArray()->yes()
 			&& $rightType->isConstantArray()->yes() && $rightType->isIterableAtLeastOnce()->no()
 		) {
-			return $this->defaultNarrowingHelper->createForSubject($expr->left, new NonEmptyArrayType(), $context->negate(), $scope)->setRootExpr($expr);
+			return $this->defaultNarrowingHelper->createForSubject($expr->left, new NonEmptyArrayType(), $context->negate(), $scope, $resultFor)->setRootExpr($expr);
 		}
 
 		if (
@@ -253,8 +253,8 @@ final class EqualityTypeSpecifyingHelper
 			}
 		}
 
-		$leftTypes = $this->defaultNarrowingHelper->createForSubject($expr->left, $leftType, $context, $scope)->setRootExpr($expr);
-		$rightTypes = $this->defaultNarrowingHelper->createForSubject($expr->right, $rightType, $context, $scope)->setRootExpr($expr);
+		$leftTypes = $this->defaultNarrowingHelper->createForSubject($expr->left, $leftType, $context, $scope, $resultFor)->setRootExpr($expr);
+		$rightTypes = $this->defaultNarrowingHelper->createForSubject($expr->right, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
 
 		return $context->true()
 			? $leftTypes->unionWith($rightTypes)
@@ -353,21 +353,21 @@ final class EqualityTypeSpecifyingHelper
 					&& !$rightType->isConstantScalarValue()->yes()
 					&& ($leftArrayType->isIterableAtLeastOnce()->yes() || $rightArrayType->isIterableAtLeastOnce()->yes())
 				) {
-					$arrayTypes = $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NonEmptyArrayType(), $context, $scope)->setRootExpr($expr);
+					$arrayTypes = $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NonEmptyArrayType(), $context, $scope, $resultFor)->setRootExpr($expr);
 					return $arrayTypes->unionWith(
-						$this->defaultNarrowingHelper->createForSubject($unwrappedRightExpr->getArgs()[0]->value, new NonEmptyArrayType(), $context, $scope)->setRootExpr($expr),
+						$this->defaultNarrowingHelper->createForSubject($unwrappedRightExpr->getArgs()[0]->value, new NonEmptyArrayType(), $context, $scope, $resultFor)->setRootExpr($expr),
 					);
 				}
 			}
 
 			if (IntegerRangeType::fromInterval(null, -1)->isSuperTypeOf($rightType)->yes()) {
-				return $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NeverType(), $context, $scope)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NeverType(), $context, $scope, $resultFor)->setRootExpr($expr);
 			}
 
 			$argType = $getType($unwrappedLeftExpr->getArgs()[0]->value);
 			$isZero = (new ConstantIntegerType(0))->isSuperTypeOf($rightType);
 			if ($isZero->yes()) {
-				$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
+				$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
 
 				if ($context->truthy() && !$argType->isArray()->yes()) {
 					$newArgType = new UnionType([
@@ -379,24 +379,24 @@ final class EqualityTypeSpecifyingHelper
 				}
 
 				return $funcTypes->unionWith(
-					$this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, $newArgType, $context, $scope)->setRootExpr($expr),
+					$this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, $newArgType, $context, $scope, $resultFor)->setRootExpr($expr),
 				);
 			}
 
 			$specifiedTypes = $this->typeSpecifier->specifyTypesForCountFuncCall($unwrappedLeftExpr, $argType, $rightType, $context, $scope, $expr);
 			if ($specifiedTypes !== null) {
 				if ($leftExpr !== $unwrappedLeftExpr) {
-					$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
+					$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
 					return $specifiedTypes->unionWith($funcTypes);
 				}
 				return $specifiedTypes;
 			}
 
 			if ($context->truthy() && $argType->isArray()->yes()) {
-				$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
+				$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
 				if (IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($rightType)->yes()) {
 					return $funcTypes->unionWith(
-						$this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NonEmptyArrayType(), $context, $scope)->setRootExpr($expr),
+						$this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NonEmptyArrayType(), $context, $scope, $resultFor)->setRootExpr($expr),
 					);
 				}
 
@@ -415,27 +415,27 @@ final class EqualityTypeSpecifyingHelper
 			&& $rightType->isInteger()->yes()
 		) {
 			if (IntegerRangeType::fromInterval(null, -1)->isSuperTypeOf($rightType)->yes()) {
-				return $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NeverType(), $context, $scope)->setRootExpr($expr);
+				return $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new NeverType(), $context, $scope, $resultFor)->setRootExpr($expr);
 			}
 
 			$isZero = (new ConstantIntegerType(0))->isSuperTypeOf($rightType);
 			if ($isZero->yes()) {
-				$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
+				$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
 				return $funcTypes->unionWith(
-					$this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new ConstantStringType(''), $context, $scope)->setRootExpr($expr),
+					$this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, new ConstantStringType(''), $context, $scope, $resultFor)->setRootExpr($expr),
 				);
 			}
 
 			if ($context->truthy() && IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($rightType)->yes()) {
 				$argType = $getType($unwrappedLeftExpr->getArgs()[0]->value);
 				if ($argType->isString()->yes()) {
-					$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
+					$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
 
 					$accessory = new AccessoryNonEmptyStringType();
 					if (IntegerRangeType::fromInterval(2, null)->isSuperTypeOf($rightType)->yes()) {
 						$accessory = new AccessoryNonFalsyStringType();
 					}
-					$valueTypes = $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, $accessory, $context, $scope)->setRootExpr($expr);
+					$valueTypes = $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr->getArgs()[0]->value, $accessory, $context, $scope, $resultFor)->setRootExpr($expr);
 
 					return $funcTypes->unionWith($valueTypes);
 				}
@@ -460,10 +460,10 @@ final class EqualityTypeSpecifyingHelper
 				$argType = $getType($args[0]->value);
 				if ($argType->isArray()->yes()) {
 					if ($bothDirections) {
-						return $this->defaultNarrowingHelper->createForSubject($args[0]->value, new NonEmptyArrayType(), $context->negate(), $scope)->setRootExpr($expr);
+						return $this->defaultNarrowingHelper->createForSubject($args[0]->value, new NonEmptyArrayType(), $context->negate(), $scope, $resultFor)->setRootExpr($expr);
 					}
 					if ($context->falsey()) {
-						return $this->defaultNarrowingHelper->createForSubject($args[0]->value, new NonEmptyArrayType(), $context->negate(), $scope)->setRootExpr($expr);
+						return $this->defaultNarrowingHelper->createForSubject($args[0]->value, new NonEmptyArrayType(), $context->negate(), $scope, $resultFor)->setRootExpr($expr);
 					}
 				}
 			}
@@ -501,7 +501,8 @@ final class EqualityTypeSpecifyingHelper
 					new ObjectType($constantStringTypes[0]->getValue(), classReflection: $this->reflectionProvider->getClass($constantStringTypes[0]->getValue())->asFinal()),
 					$context,
 					$scope,
-				)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope))->setRootExpr($expr);
+					$resultFor,
+				)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor))->setRootExpr($expr);
 			}
 			if ($rightType->getClassStringObjectType()->isObject()->yes()) {
 				return $this->defaultNarrowingHelper->createForSubject(
@@ -509,7 +510,8 @@ final class EqualityTypeSpecifyingHelper
 					$rightType->getClassStringObjectType(),
 					$context,
 					$scope,
-				)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope))->setRootExpr($expr);
+					$resultFor,
+				)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor))->setRootExpr($expr);
 			}
 		}
 
@@ -536,6 +538,7 @@ final class EqualityTypeSpecifyingHelper
 						TypeCombinator::intersect($rightType, new AccessoryLowercaseStringType()),
 						$context,
 						$scope,
+						$resultFor,
 					)->setRootExpr($expr);
 				}
 				if (in_array(strtolower($unwrappedLeftExpr->name->toString()), ['strtoupper', 'mb_strtoupper'], true)) {
@@ -544,6 +547,7 @@ final class EqualityTypeSpecifyingHelper
 						TypeCombinator::intersect($rightType, new AccessoryUppercaseStringType()),
 						$context,
 						$scope,
+						$resultFor,
 					)->setRootExpr($expr);
 				}
 
@@ -553,6 +557,7 @@ final class EqualityTypeSpecifyingHelper
 						TypeCombinator::intersect($argType, new AccessoryNonFalsyStringType()),
 						$context,
 						$scope,
+						$resultFor,
 					)->setRootExpr($expr));
 				}
 
@@ -561,6 +566,7 @@ final class EqualityTypeSpecifyingHelper
 					TypeCombinator::intersect($argType, new AccessoryNonEmptyStringType()),
 					$context,
 					$scope,
+					$resultFor,
 				)->setRootExpr($expr));
 			}
 		}
@@ -583,7 +589,7 @@ final class EqualityTypeSpecifyingHelper
 
 			if ($types !== null) {
 				if ($leftExpr !== $unwrappedLeftExpr) {
-					$types = $types->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr));
+					$types = $types->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr));
 				}
 				return $types;
 			}
@@ -599,11 +605,11 @@ final class EqualityTypeSpecifyingHelper
 				$unwrappedExprNode = $exprNode->getExpr();
 			}
 
-			$specifiedType = $this->specifyTypesForConstantBinaryExpression($unwrappedExprNode, $constantType, $context, $scope, $expr);
+			$specifiedType = $this->specifyTypesForConstantBinaryExpression($unwrappedExprNode, $constantType, $context, $scope, $expr, $resultFor);
 			if ($specifiedType !== null) {
 				if ($exprNode !== $unwrappedExprNode) {
 					$specifiedType = $specifiedType->unionWith(
-						$this->defaultNarrowingHelper->createForSubject($exprNode, $constantType, $context, $scope)->setRootExpr($expr),
+						$this->defaultNarrowingHelper->createForSubject($exprNode, $constantType, $context, $scope, $resultFor)->setRootExpr($expr),
 					);
 				}
 				return $specifiedType;
@@ -627,7 +633,8 @@ final class EqualityTypeSpecifyingHelper
 						new ObjectType($constantStrings[0]->getValue(), classReflection: $this->reflectionProvider->getClass($constantStrings[0]->getValue())->asFinal()),
 						$context,
 						$scope,
-					)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope))->setRootExpr($expr);
+						$resultFor,
+					)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor))->setRootExpr($expr);
 				}
 				return $this->defaultNarrowingHelper->specifyTypesForNode(
 					$scope,
@@ -636,7 +643,7 @@ final class EqualityTypeSpecifyingHelper
 						new Name($constantStrings[0]->getValue()),
 					),
 					$context,
-				)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope))->setRootExpr($expr);
+				)->unionWith($this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor))->setRootExpr($expr);
 			}
 		}
 
@@ -659,7 +666,8 @@ final class EqualityTypeSpecifyingHelper
 						new ObjectType($constantStrings[0]->getValue(), classReflection: $this->reflectionProvider->getClass($constantStrings[0]->getValue())->asFinal()),
 						$context,
 						$scope,
-					)->unionWith($this->defaultNarrowingHelper->createForSubject($rightExpr, $leftType, $context, $scope)->setRootExpr($expr));
+						$resultFor,
+					)->unionWith($this->defaultNarrowingHelper->createForSubject($rightExpr, $leftType, $context, $scope, $resultFor)->setRootExpr($expr));
 				}
 
 				return $this->defaultNarrowingHelper->specifyTypesForNode(
@@ -669,7 +677,7 @@ final class EqualityTypeSpecifyingHelper
 						new Name($constantStrings[0]->getValue()),
 					),
 					$context,
-				)->unionWith($this->defaultNarrowingHelper->createForSubject($rightExpr, $leftType, $context, $scope)->setRootExpr($expr));
+				)->unionWith($this->defaultNarrowingHelper->createForSubject($rightExpr, $leftType, $context, $scope, $resultFor)->setRootExpr($expr));
 			}
 		}
 
@@ -678,16 +686,8 @@ final class EqualityTypeSpecifyingHelper
 			if ($identicalType instanceof ConstantBooleanType) {
 				$never = new NeverType();
 				$contextForTypes = $identicalType->getValue() ? $context->negate() : $context;
-				if ($leftExpr instanceof AlwaysRememberedExpr) {
-					$leftTypes = $this->defaultNarrowingHelper->createForSubject($unwrappedLeftExpr, $never, $contextForTypes, $scope)->setRootExpr($expr);
-				} else {
-					$leftTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $never, $contextForTypes, $scope)->setRootExpr($expr);
-				}
-				if ($rightExpr instanceof AlwaysRememberedExpr) {
-					$rightTypes = $this->defaultNarrowingHelper->createForSubject($unwrappedRightExpr, $never, $contextForTypes, $scope)->setRootExpr($expr);
-				} else {
-					$rightTypes = $this->defaultNarrowingHelper->createForSubject($rightExpr, $never, $contextForTypes, $scope)->setRootExpr($expr);
-				}
+				$leftTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $never, $contextForTypes, $scope, $resultFor)->setRootExpr($expr);
+				$rightTypes = $this->defaultNarrowingHelper->createForSubject($rightExpr, $never, $contextForTypes, $scope, $resultFor)->setRootExpr($expr);
 				return $leftTypes->unionWith($rightTypes);
 			}
 		}
@@ -706,15 +706,8 @@ final class EqualityTypeSpecifyingHelper
 				$leftType,
 				$context,
 				$scope,
+				$resultFor,
 			)->setRootExpr($expr);
-			if ($rightExpr instanceof AlwaysRememberedExpr) {
-				$types = $types->unionWith($this->defaultNarrowingHelper->createForSubject(
-					$unwrappedRightExpr,
-					$leftType,
-					$context,
-					$scope,
-				))->setRootExpr($expr);
-			}
 		}
 		if (
 			count($rightType->getFiniteTypes()) === 1
@@ -725,7 +718,7 @@ final class EqualityTypeSpecifyingHelper
 				&& $leftType->isSuperTypeOf($rightType)->yes()
 			)
 		) {
-			$leftTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
+			$leftTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
 			if ($types !== null) {
 				$types = $types->unionWith($leftTypes);
 			} else {
@@ -746,12 +739,12 @@ final class EqualityTypeSpecifyingHelper
 		}
 
 		if ($context->true()) {
-			$leftTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope)->setRootExpr($expr);
-			$rightTypes = $this->defaultNarrowingHelper->createForSubject($rightExpr, $leftType, $context, $scope)->setRootExpr($expr);
+			$leftTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
+			$rightTypes = $this->defaultNarrowingHelper->createForSubject($rightExpr, $leftType, $context, $scope, $resultFor)->setRootExpr($expr);
 			return $leftTypes->unionWith($rightTypes);
 		} elseif ($context->false()) {
-			return $this->defaultNarrowingHelper->createForSubject($leftExpr, $leftType, $context, $scope)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver)
-				->intersectWith($this->defaultNarrowingHelper->createForSubject($rightExpr, $rightType, $context, $scope)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver));
+			return $this->defaultNarrowingHelper->createForSubject($leftExpr, $leftType, $context, $scope, $resultFor)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver)
+				->intersectWith($this->defaultNarrowingHelper->createForSubject($rightExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr)->normalize($scope, $nodeScopeResolver));
 		}
 
 		return (new SpecifiedTypes([], []))->setRootExpr($expr);
@@ -792,36 +785,42 @@ final class EqualityTypeSpecifyingHelper
 		return null;
 	}
 
+	/**
+	 * @param Closure(Expr): ?ExpressionResult $resultFor
+	 */
 	private function specifyTypesForConstantBinaryExpression(
 		Expr $exprNode,
 		Type $constantType,
 		TypeSpecifierContext $context,
 		Scope $scope,
 		Expr $rootExpr,
+		Closure $resultFor,
 	): ?SpecifiedTypes
 	{
 		if (!$context->null() && $constantType->isFalse()->yes()) {
-			$types = $this->defaultNarrowingHelper->createForSubject($exprNode, $constantType, $context, $scope)->setRootExpr($rootExpr);
+			$types = $this->defaultNarrowingHelper->createForSubject($exprNode, $constantType, $context, $scope, $resultFor)->setRootExpr($rootExpr);
 			if (!$context->true() && ($exprNode instanceof Expr\NullsafeMethodCall || $exprNode instanceof Expr\NullsafePropertyFetch)) {
 				return $types;
 			}
 
-			return $types->unionWith($this->defaultNarrowingHelper->specifyTypesForNode(
-				$scope,
+			return $types->unionWith($this->defaultNarrowingHelper->getChildSpecifiedTypes(
+				$scope->toMutatingScope(),
 				$exprNode,
+				$resultFor($exprNode),
 				$context->true() ? TypeSpecifierContext::createFalse() : TypeSpecifierContext::createFalse()->negate(),
 			)->setRootExpr($rootExpr));
 		}
 
 		if (!$context->null() && $constantType->isTrue()->yes()) {
-			$types = $this->defaultNarrowingHelper->createForSubject($exprNode, $constantType, $context, $scope)->setRootExpr($rootExpr);
+			$types = $this->defaultNarrowingHelper->createForSubject($exprNode, $constantType, $context, $scope, $resultFor)->setRootExpr($rootExpr);
 			if (!$context->true() && ($exprNode instanceof Expr\NullsafeMethodCall || $exprNode instanceof Expr\NullsafePropertyFetch)) {
 				return $types;
 			}
 
-			return $types->unionWith($this->defaultNarrowingHelper->specifyTypesForNode(
-				$scope,
+			return $types->unionWith($this->defaultNarrowingHelper->getChildSpecifiedTypes(
+				$scope->toMutatingScope(),
 				$exprNode,
+				$resultFor($exprNode),
 				$context->true() ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createTrue()->negate(),
 			)->setRootExpr($rootExpr));
 		}
