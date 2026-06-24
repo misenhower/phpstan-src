@@ -261,7 +261,7 @@ final class MethodCallHandler implements ExprHandler
 							$acceptorForGenerics instanceof ExtendedParametersAcceptor ? $acceptorForGenerics->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
 							TemplateTypeVariance::createCovariant(),
 						),
-						$scope->getNativeType($normalizedExpr->var),
+						$varResult->getNativeTypeForScope($scope),
 					);
 				}
 			}

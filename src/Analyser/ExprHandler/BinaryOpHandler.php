@@ -150,14 +150,14 @@ final class BinaryOpHandler implements ExprHandler
 				}
 
 				if ($expr instanceof BinaryOp\Equal) {
-					return $this->resolveEqualType($nodeScopeResolver, $scope, $expr);
+					return $this->resolveEqualType($scope, $expr, $leftResult, $rightResult);
 				}
 
 				if ($expr instanceof BinaryOp\NotEqual) {
 					// negation of the Equal result - direct computation avoids
 					// synthesizing a BooleanNot node (which would route through
 					// on-demand re-processing once BooleanNot is migrated)
-					$equalType = $this->resolveEqualType($nodeScopeResolver, $scope, new BinaryOp\Equal($expr->left, $expr->right))->toBoolean();
+					$equalType = $this->resolveEqualType($scope, new BinaryOp\Equal($expr->left, $expr->right), $leftResult, $rightResult)->toBoolean();
 					if ($equalType->isTrue()->yes()) {
 						return new ConstantBooleanType(false);
 					}
@@ -626,7 +626,7 @@ final class BinaryOpHandler implements ExprHandler
 	 * The boolean result of a `==` comparison, including the same-variable
 	 * special case. Shared by the Equal and NotEqual type callbacks.
 	 */
-	private function resolveEqualType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, BinaryOp\Equal $expr): Type
+	private function resolveEqualType(MutatingScope $scope, BinaryOp\Equal $expr, ExpressionResult $leftResult, ExpressionResult $rightResult): Type
 	{
 		if (
 			$expr->left instanceof Variable
@@ -638,10 +638,9 @@ final class BinaryOpHandler implements ExprHandler
 			return new ConstantBooleanType(true);
 		}
 
-		// the operands were processed during processExpr; read their stored
-		// results instead of re-walking via Scope::getType().
-		$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->left, $scope);
-		$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->right, $scope);
+		// the operands were processed during processExpr; use their results' types.
+		$leftType = $leftResult->getTypeForScope($scope);
+		$rightType = $rightResult->getTypeForScope($scope);
 
 		return $this->initializerExprTypeResolver->resolveEqualType($leftType, $rightType)->type;
 	}
