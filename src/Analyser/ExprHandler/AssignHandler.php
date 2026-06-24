@@ -37,7 +37,6 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\ExistingArrayDimFetch;
@@ -93,7 +92,6 @@ final class AssignHandler implements ExprHandler
 {
 
 	public function __construct(
-		private TypeSpecifier $typeSpecifier,
 		private PhpVersion $phpVersion,
 		private ExprPrinter $exprPrinter,
 		private MatchHandler $matchHandler,
@@ -472,8 +470,8 @@ final class AssignHandler implements ExprHandler
 						$if = $assignedExpr->cond;
 					}
 					$condScope = $nodeScopeResolver->processExprNode($stmt, $assignedExpr->cond, $scope, $storage->duplicate(), new NoopNodeCallback(), ExpressionContext::createDeep())->getScope();
-					$truthySpecifiedTypes = $this->typeSpecifier->specifyTypesInCondition($condScope, $assignedExpr->cond, TypeSpecifierContext::createTruthy());
-					$falseySpecifiedTypes = $this->typeSpecifier->specifyTypesInCondition($condScope, $assignedExpr->cond, TypeSpecifierContext::createFalsey());
+					$truthySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($condScope, $assignedExpr->cond, TypeSpecifierContext::createTruthy());
+					$falseySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($condScope, $assignedExpr->cond, TypeSpecifierContext::createFalsey());
 					$truthyScope = $condScope->filterBySpecifiedTypes($truthySpecifiedTypes);
 					$falsyScope = $condScope->filterBySpecifiedTypes($falseySpecifiedTypes);
 					$truthyType = $nodeScopeResolver->readStoredOrPriceOnDemand($if, $truthyScope);
@@ -504,12 +502,12 @@ final class AssignHandler implements ExprHandler
 				// a fast path (equals() has no such shortcut, and no-op removal is the common
 				// case here).
 				if ($truthyType !== $type && !$truthyType->equals($type)) {
-					$truthySpecifiedTypes = $this->typeSpecifier->specifyTypesInCondition($scope, $assignedExpr, TypeSpecifierContext::createTruthy());
+					$truthySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($scope, $assignedExpr, TypeSpecifierContext::createTruthy());
 					$conditionalExpressions = $this->processSureTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $truthySpecifiedTypes, $truthyType, $impurePoints, $assignedExpr);
 					$conditionalExpressions = $this->processSureNotTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $truthySpecifiedTypes, $truthyType, $impurePoints, $assignedExpr);
 
 					$falseyType = TypeCombinator::intersect($type, StaticTypeFactory::falsey());
-					$falseySpecifiedTypes = $this->typeSpecifier->specifyTypesInCondition($scope, $assignedExpr, TypeSpecifierContext::createFalsey());
+					$falseySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($scope, $assignedExpr, TypeSpecifierContext::createFalsey());
 					$conditionalExpressions = $this->processSureTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $falseySpecifiedTypes, $falseyType, $impurePoints, $assignedExpr);
 					$conditionalExpressions = $this->processSureNotTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $falseySpecifiedTypes, $falseyType, $impurePoints, $assignedExpr);
 				}
@@ -539,12 +537,12 @@ final class AssignHandler implements ExprHandler
 					}
 
 					$notIdenticalConditionExpr = new Expr\BinaryOp\NotIdentical($assignedExpr, $astNode);
-					$notIdenticalSpecifiedTypes = $this->typeSpecifier->specifyTypesInCondition($scope, $notIdenticalConditionExpr, TypeSpecifierContext::createTrue());
+					$notIdenticalSpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($scope, $notIdenticalConditionExpr, TypeSpecifierContext::createTrue());
 					$conditionalExpressions = $this->processSureTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $notIdenticalSpecifiedTypes, $withoutFalseyType, $impurePoints, $assignedExpr);
 					$conditionalExpressions = $this->processSureNotTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $notIdenticalSpecifiedTypes, $withoutFalseyType, $impurePoints, $assignedExpr);
 
 					$identicalConditionExpr = new Expr\BinaryOp\Identical($assignedExpr, $astNode);
-					$identicalSpecifiedTypes = $this->typeSpecifier->specifyTypesInCondition($scope, $identicalConditionExpr, TypeSpecifierContext::createTrue());
+					$identicalSpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($scope, $identicalConditionExpr, TypeSpecifierContext::createTrue());
 					$conditionalExpressions = $this->processSureTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $identicalSpecifiedTypes, $falseyType, $impurePoints, $assignedExpr);
 					$conditionalExpressions = $this->processSureNotTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $identicalSpecifiedTypes, $falseyType, $impurePoints, $assignedExpr);
 				}
