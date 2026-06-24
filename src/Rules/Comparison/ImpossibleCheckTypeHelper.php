@@ -315,7 +315,11 @@ final class ImpossibleCheckTypeHelper
 		}
 
 		$typeSpecifierScope = $this->treatPhpDocTypesAsCertain ? $scope : $scope->doNotTreatPhpDocTypesAsCertain();
-		$specifiedTypes = $this->typeSpecifier->specifyTypesInCondition($typeSpecifierScope, $node, $this->determineContext($typeSpecifierScope, $node));
+		$typeSpecifierContext = $this->determineContext($typeSpecifierScope, $node);
+		// the condition expression was already analysed; read its narrowing from its
+		// result (via the scope's on-demand dispatcher) instead of specifyTypesInCondition().
+		$specifiedTypes = $typeSpecifierScope->specifyTypesOfNewWorldHandlerNode($node, $typeSpecifierContext)
+			?? $this->typeSpecifier->specifyDefaultTypes($typeSpecifierScope, $node, $typeSpecifierContext);
 
 		// don't validate types on overwrite
 		if ($specifiedTypes->shouldOverwrite()) {
