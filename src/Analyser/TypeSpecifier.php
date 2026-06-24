@@ -13,7 +13,6 @@ use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Name;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\DependencyInjection\Container;
-use PHPStan\Node\Expr\AlwaysRememberedExpr;
 use PHPStan\Node\Expr\TypeExpr;
 use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Reflection\Assertions;
@@ -512,11 +511,6 @@ final class TypeSpecifier
 		}
 
 		$specifiedExprs = [];
-		if ($expr instanceof AlwaysRememberedExpr) {
-			$specifiedExprs[] = $expr;
-			$expr = $expr->expr;
-		}
-
 		if ($expr instanceof Expr\Assign) {
 			$specifiedExprs[] = $expr->var;
 			$specifiedExprs[] = $expr->expr;
