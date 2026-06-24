@@ -1063,7 +1063,7 @@ final class FuncCallHandler implements ExprHandler
 					$specifiedTypes = $this->typeSpecifier->specifyTypesFromAsserts($context, $expr, $asserts, $resolvedParametersAcceptor, $scope);
 					if ($specifiedTypes !== null) {
 						return $specifiedTypes
-							->unionWith($this->typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $scope))
+							->unionWith($this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context))
 							->setRootExpr($specifiedTypes->getRootExpr());
 					}
 				}

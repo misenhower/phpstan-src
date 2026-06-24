@@ -20,7 +20,6 @@ use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Printer\ExprPrinter;
@@ -39,7 +38,6 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 	public function __construct(
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
-		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
@@ -113,7 +111,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 					$context,
 				)->setRootExpr($expr);
 
-				$nullSafeTypes = $this->typeSpecifier->handleDefaultTruthyOrFalseyContext($context, $expr, $s);
+				$nullSafeTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s, $nodeScopeResolver)->intersectWith($nullSafeTypes->normalize($s, $nodeScopeResolver));
 			},
 			// Inside-out copy of TypeSpecifier::createForExpr()'s `?->` handling.
