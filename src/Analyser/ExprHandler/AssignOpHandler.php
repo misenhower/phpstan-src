@@ -60,7 +60,7 @@ final class AssignOpHandler implements ExprHandler
 	{
 		$beforeScope = $scope;
 
-		$typeCallback = function (MutatingScope $s) use ($expr, $nodeScopeResolver): Type {
+		$typeCallback = function (MutatingScope $s) use ($expr, $nodeScopeResolver, $beforeScope): Type {
 			// $expr->var and $expr->expr were processed during this handler's
 			// processExpr (the var as the assignment target, the value expr by the
 			// inner closure below), so their ExpressionResults are stored - read
@@ -68,11 +68,17 @@ final class AssignOpHandler implements ExprHandler
 			$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $s);
 
 			if ($expr instanceof Expr\AssignOp\Coalesce) {
-				// the coalesce is synthetic - price it on demand against the
-				// current storage, mirroring resolveTypeOfNewWorldHandlerNode().
+				// The coalesce is synthetic; price it on demand. The ??= left is stored
+				// as an assignment target (no isset descriptor), so inject a read result
+				// of it (with the descriptor) - otherwise the coalesce resolves a
+				// descriptor-less leaf that reads as definitely-set and drops the `??`
+				// branch, losing the optional offset natively (bug-13623).
 				$coalesce = new BinaryOp\Coalesce($expr->var, $expr->expr, $expr->getAttributes());
+				$varReadResult = $nodeScopeResolver->processExprOnDemand($expr->var, $beforeScope, new ExpressionResultStorage());
+				$coalesceStorage = ($s->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage())->duplicate();
+				$nodeScopeResolver->storeExpressionResult($coalesceStorage, $expr->var, $varReadResult);
 
-				return $nodeScopeResolver->priceSyntheticOnDemand($coalesce, $s);
+				return $nodeScopeResolver->processExprOnDemand($coalesce, $s, $coalesceStorage)->getTypeForScope($s);
 			}
 
 			if ($expr instanceof Expr\AssignOp\Concat) {
