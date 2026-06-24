@@ -1249,7 +1249,7 @@ class NodeScopeResolver
 			// the result instead of re-resolving it via specifyTypesInCondition().
 			$specifiedTypes = $result->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createNull());
 			if ($specifiedTypes !== null) {
-				$scope = $scope->filterBySpecifiedTypes($specifiedTypes);
+				$scope = $scope->applySpecifiedTypes($specifiedTypes);
 			}
 			$hasYield = $result->hasYield();
 			$throwPoints = $result->getThrowPoints();
