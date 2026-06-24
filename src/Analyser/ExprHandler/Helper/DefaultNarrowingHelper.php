@@ -37,11 +37,10 @@ final class DefaultNarrowingHelper
 	/**
 	 * The narrowing of an already-processed child expression in the given
 	 * boolean context: answered by the child result's specifyTypesCallback.
-	 * Until the child's handler migrates its narrowing - or when the child
-	 * is a synthetic node with no result - this bridges through the
-	 * old-world dispatcher, which answers converted handlers from stored
-	 * results, so the bridge terminates. The bridge dies in 3.0 together
-	 * with TypeSpecifier::specifyTypesInCondition().
+	 * When the child wired no callback, or is a synthetic node with no result,
+	 * it is processed on demand and asked for its narrowing - the same path
+	 * TypeSpecifier::specifyTypesInCondition() routes handler-supported nodes
+	 * through, but without the old-world dispatcher.
 	 */
 	public function getChildSpecifiedTypes(MutatingScope $s, Expr $childExpr, ?ExpressionResult $childResult, TypeSpecifierContext $context): SpecifiedTypes
 	{
@@ -52,7 +51,12 @@ final class DefaultNarrowingHelper
 			}
 		}
 
-		return $this->typeSpecifier->specifyTypesInCondition($s, $childExpr, $context);
+		if ($childExpr instanceof Expr\CallLike && $childExpr->isFirstClassCallable()) {
+			return (new SpecifiedTypes([], []))->setRootExpr($childExpr);
+		}
+
+		return $s->specifyTypesOfNewWorldHandlerNode($childExpr, $context)
+			?? $this->specifyDefaultTypes($childExpr, $context);
 	}
 
 	public function specifyDefaultTypes(Expr $expr, TypeSpecifierContext $context): SpecifiedTypes
