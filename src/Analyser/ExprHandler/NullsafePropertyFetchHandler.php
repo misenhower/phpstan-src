@@ -104,7 +104,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
-				$types = $this->typeSpecifier->specifyTypesInCondition(
+				$types = $this->defaultNarrowingHelper->specifyTypesForNode(
 					$s,
 					new BooleanAnd(
 						new NotIdentical($expr->var, new ConstFetch(new Name('null'))),
