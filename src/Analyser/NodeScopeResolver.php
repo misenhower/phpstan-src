@@ -4310,13 +4310,13 @@ class NodeScopeResolver
 					specifyTypesCallback: static fn () => new SpecifiedTypes(),
 				));
 			} else {
-				$exprType = $this->readStoredOrPriceOnDemand($arg->value, $scope);
 				$enterExpressionAssignForByRef = $assignByReference && $arg->value instanceof ArrayDimFetch && $arg->value->dim === null;
 				if ($enterExpressionAssignForByRef) {
 					$scopeToPass = $scopeToPass->enterExpressionAssign($arg->value);
 				}
 				$exprResult = $this->processExprNode($stmt, $arg->value, $scopeToPass, $storage, $nodeCallback, $context->enterDeep());
 				$argResults[spl_object_id($arg->value)] = $exprResult;
+				$exprType = $exprResult->getTypeForScope($scope);
 				$throwPoints = array_merge($throwPoints, $exprResult->getThrowPoints());
 				$impurePoints = array_merge($impurePoints, $exprResult->getImpurePoints());
 				$isAlwaysTerminating = $isAlwaysTerminating || $exprResult->isAlwaysTerminating();
