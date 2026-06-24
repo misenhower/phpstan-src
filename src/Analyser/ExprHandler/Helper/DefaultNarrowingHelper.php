@@ -51,12 +51,24 @@ final class DefaultNarrowingHelper
 			}
 		}
 
-		if ($childExpr instanceof Expr\CallLike && $childExpr->isFirstClassCallable()) {
-			return (new SpecifiedTypes([], []))->setRootExpr($childExpr);
+		return $this->specifyTypesForNode($s, $childExpr, $context);
+	}
+
+	/**
+	 * Narrows an arbitrary (often synthetic) node in the given boolean context by
+	 * processing it on demand and asking its result, the inside-out replacement
+	 * for TypeSpecifier::specifyTypesInCondition() on the handler path. A node not
+	 * stored is processed on demand; a node whose handler wired no specifyTypesCallback
+	 * (or no handler) yields the default truthy/falsey narrowing.
+	 */
+	public function specifyTypesForNode(Scope $scope, Expr $node, TypeSpecifierContext $context): SpecifiedTypes
+	{
+		if ($node instanceof Expr\CallLike && $node->isFirstClassCallable()) {
+			return (new SpecifiedTypes([], []))->setRootExpr($node);
 		}
 
-		return $s->specifyTypesOfNewWorldHandlerNode($childExpr, $context)
-			?? $this->specifyDefaultTypes($childExpr, $context);
+		return $scope->toMutatingScope()->specifyTypesOfNewWorldHandlerNode($node, $context)
+			?? $this->specifyDefaultTypes($node, $context);
 	}
 
 	public function specifyDefaultTypes(Expr $expr, TypeSpecifierContext $context): SpecifiedTypes

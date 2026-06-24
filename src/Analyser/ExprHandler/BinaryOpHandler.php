@@ -259,7 +259,7 @@ final class BinaryOpHandler implements ExprHandler
 						return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 					}
 
-					return $this->typeSpecifier->specifyTypesInCondition(
+					return $this->defaultNarrowingHelper->specifyTypesForNode(
 						$scope,
 						new BinaryOp\Identical($expr->left, $expr->right),
 						$context->negate(),
@@ -276,7 +276,7 @@ final class BinaryOpHandler implements ExprHandler
 						return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 					}
 
-					return $this->typeSpecifier->specifyTypesInCondition(
+					return $this->defaultNarrowingHelper->specifyTypesForNode(
 						$scope,
 						new BinaryOp\Equal($expr->left, $expr->right),
 						$context->negate(),
@@ -308,7 +308,7 @@ final class BinaryOpHandler implements ExprHandler
 							return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 						}
 
-						return $this->typeSpecifier->specifyTypesInCondition(
+						return $this->defaultNarrowingHelper->specifyTypesForNode(
 							$scope,
 							$inverseOperator,
 							$context->negate(),
@@ -480,7 +480,7 @@ final class BinaryOpHandler implements ExprHandler
 						// 0 < preg_match or 1 <= preg_match becomes 1 === preg_match
 						$newExpr = new BinaryOp\Identical($expr->right, new Scalar\Int_(1));
 
-						return $this->typeSpecifier->specifyTypesInCondition($scope, $newExpr, $context)->setRootExpr($expr);
+						return $this->defaultNarrowingHelper->specifyTypesForNode($scope, $newExpr, $context)->setRootExpr($expr);
 					}
 
 					if (
@@ -608,11 +608,11 @@ final class BinaryOpHandler implements ExprHandler
 				}
 
 				if ($expr instanceof BinaryOp\Greater) {
-					return $this->typeSpecifier->specifyTypesInCondition($scope, new BinaryOp\Smaller($expr->right, $expr->left), $context)->setRootExpr($expr);
+					return $this->defaultNarrowingHelper->specifyTypesForNode($scope, new BinaryOp\Smaller($expr->right, $expr->left), $context)->setRootExpr($expr);
 				}
 
 				if ($expr instanceof BinaryOp\GreaterOrEqual) {
-					return $this->typeSpecifier->specifyTypesInCondition($scope, new BinaryOp\SmallerOrEqual($expr->right, $expr->left), $context)->setRootExpr($expr);
+					return $this->defaultNarrowingHelper->specifyTypesForNode($scope, new BinaryOp\SmallerOrEqual($expr->right, $expr->left), $context)->setRootExpr($expr);
 				}
 
 				return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
