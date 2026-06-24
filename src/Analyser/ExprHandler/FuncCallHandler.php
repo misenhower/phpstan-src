@@ -320,6 +320,7 @@ final class FuncCallHandler implements ExprHandler
 			$expr,
 			$nameResult,
 			$s->nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+			$argsResult,
 		);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,
@@ -388,7 +389,7 @@ final class FuncCallHandler implements ExprHandler
 			// never re-running processArgs) - asking Scope::getType() for the
 			// FuncCall here would re-enter this handler on demand, as its result is
 			// not stored yet.
-			$returnType = $this->resolveReturnType($nodeScopeResolver, $scope, $expr, $nameResult, $resolvedParametersAcceptor);
+			$returnType = $this->resolveReturnType($nodeScopeResolver, $scope, $expr, $nameResult, $resolvedParametersAcceptor, $argsResult);
 			// The early structural check above (line ~180) only sees the unresolved
 			// acceptor return type; a conditional-return never (e.g.
 			// `($x is Foo ? never : string)`) only resolves to never once the actual
@@ -521,13 +522,18 @@ final class FuncCallHandler implements ExprHandler
 			&& count($normalizedExpr->getArgs()) >= 2
 		) {
 			$arrayArg = $normalizedExpr->getArgs()[0]->value;
-			$arrayArgType = $scope->getType($arrayArg);
-			$arrayArgNativeType = $scope->getNativeType($arrayArg);
+			$arrayArgResult = $argsResult->getArgResult($arrayArg);
+			$arrayArgType = $arrayArgResult !== null ? $arrayArgResult->getTypeForScope($scope) : $scope->getType($arrayArg);
+			$arrayArgNativeType = $arrayArgResult !== null ? $arrayArgResult->getNativeTypeForScope($scope) : $scope->getNativeType($arrayArg);
 
-			$offsetType = $scopeBeforeArgs->getType($normalizedExpr->getArgs()[1]->value);
+			$offsetArg = $normalizedExpr->getArgs()[1]->value;
+			$offsetArgResult = $argsResult->getArgResult($offsetArg);
+			$offsetType = $offsetArgResult !== null ? $offsetArgResult->getTypeForScope($scopeBeforeArgs) : $scopeBeforeArgs->getType($offsetArg);
 
 			if (isset($normalizedExpr->getArgs()[2])) {
-				$lengthType = $scopeBeforeArgs->getType($normalizedExpr->getArgs()[2]->value);
+				$lengthArg = $normalizedExpr->getArgs()[2]->value;
+				$lengthArgResult = $argsResult->getArgResult($lengthArg);
+				$lengthType = $lengthArgResult !== null ? $lengthArgResult->getTypeForScope($scopeBeforeArgs) : $scopeBeforeArgs->getType($lengthArg);
 			} else {
 				$lengthType = new NullType();
 			}
@@ -899,17 +905,24 @@ final class FuncCallHandler implements ExprHandler
 	 *
 	 * @param FuncCall $expr
 	 */
-	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor): Type
+	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor, ArgsResult $argsResult): Type
 	{
 		// the operands/arguments were processed during processExpr; read their
 		// already computed results instead of re-walking via Scope::getType().
 		// Synthetic nodes the resolver builds (e.g. Clone_, call_user_func's inner
 		// FuncCall) are priced on demand by the same helper.
-		$getType = static function (Expr $e) use ($expr, $nameResult, $scope, $nodeScopeResolver): Type {
+		$getType = static function (Expr $e) use ($expr, $nameResult, $scope, $nodeScopeResolver, $argsResult): Type {
 			if ($nameResult !== null && $e === $expr->name) {
 				return $nameResult->getTypeForScope($scope);
 			}
 
+			$argResult = $argsResult->getArgResult($e);
+			if ($argResult !== null) {
+				return $argResult->getTypeForScope($scope);
+			}
+
+			// Synthetic nodes (call_user_func's inner FuncCall, clone-with's Clone_)
+			// have no captured arg result; they are priced on demand.
 			return $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
 		};
 
