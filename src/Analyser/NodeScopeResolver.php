@@ -4028,33 +4028,14 @@ class NodeScopeResolver
 		$gatheredTypes = [];
 		$gatheredUnpack = false;
 		$gatheredHasName = false;
+		$gatheredArgTypeByIndex = [];
 
-		// Metadata acceptor: drives the per-arg by-ref/variadic matching. Selected
-		// ONCE from all arg types gathered on the initial scope (mirrors the
-		// original ParametersAcceptorSelector::selectFromArgs()), so multi-variant
-		// selection - which depends on the total argument count - is stable across
-		// the per-arg loop rather than flapping as the prefix grows.
-		$metadataAcceptor = null;
-		if ($parametersAcceptors !== []) {
-			$fastPath = count($parametersAcceptors) === 1;
-			if ($fastPath) {
-				$metadataAcceptor = $parametersAcceptors[0];
-			} else {
-				$metadataTypes = [];
-				$metadataUnpack = false;
-				$metadataHasName = false;
-				foreach ($args as $i => $arg) {
-					$originalArg = $arg->getAttribute(ArgumentsNormalizer::ORIGINAL_ARG_ATTRIBUTE) ?? $arg;
-					if ($arg->value instanceof Expr\Closure || $arg->value instanceof Expr\ArrowFunction) {
-						$argType = $this->gatherClosureArgType($parametersAcceptors, $i, $arg->value, $scope);
-					} else {
-						$argType = $this->readStoredOrPriceOnDemand($arg->value, $scope);
-					}
-					$this->addGatheredArgType($metadataTypes, $metadataUnpack, $metadataHasName, $originalArg, $i, $argType);
-				}
-				$metadataAcceptor = $this->selectArgsMetadataAcceptor($args, $metadataTypes, $parametersAcceptors, $namedArgumentsVariants, $metadataHasName, $metadataUnpack, $scope);
-			}
-		}
+		// Metadata acceptor base - NO forward read. The per-argument resolution below picks the
+		// count-correct variant (the by-ref/variadic STRUCTURE is variant-stable except where it is
+		// keyed off the argument count, e.g. sscanf - and the count is known structurally) and
+		// resolves generic parameter types from the args gathered so far; the call's return type
+		// comes from the post-loop resolved acceptor.
+		$metadataAcceptor = $parametersAcceptors[0] ?? null;
 
 		$hasYield = false;
 		$throwPoints = [];
@@ -4106,19 +4087,28 @@ class NodeScopeResolver
 				// contribution (a TValue from its return) participates in the final
 				// resolution (see gatherClosureArgType()).
 				$originalArgForGather = $arg->getAttribute(ArgumentsNormalizer::ORIGINAL_ARG_ATTRIBUTE) ?? $arg;
-				$this->addGatheredArgType($gatheredTypes, $gatheredUnpack, $gatheredHasName, $originalArgForGather, $i, $this->gatherClosureArgType($parametersAcceptors, $i, $arg->value, $scope));
+				$gatheredArgTypeByIndex[$i] = $this->gatherClosureArgType($parametersAcceptors, $i, $arg->value, $scope);
+				$this->addGatheredArgType($gatheredTypes, $gatheredUnpack, $gatheredHasName, $originalArgForGather, $i, $gatheredArgTypeByIndex[$i]);
 			}
 
 			$argMetadataAcceptor = $metadataAcceptor;
 			if (
 				$metadataAcceptor !== null
-				&& ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($metadataAcceptor)
+				&& (count($parametersAcceptors) > 1 || ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($metadataAcceptor))
 			) {
-				// The single metadata acceptor still carries template / late-resolvable parameter
-				// types (a generic callable(T), a by-ref out-type). Resolve them from the arg types
-				// gathered SO FAR: closures sort last and by-ref out-params follow the args that pin
-				// them, so every determining sibling is already processed (single-pass, no forward read).
-				$argMetadataAcceptor = $this->selectArgsMetadataAcceptor($args, $gatheredTypes, $parametersAcceptors, $namedArgumentsVariants, $gatheredHasName, $gatheredUnpack, $scope);
+				// Resolve the acceptor for this argument from the args gathered SO FAR, padded to the
+				// full argument count with mixed. Closures sort last and by-ref out-params follow the
+				// args that pin them, so determining siblings are already processed; the mixed pad keeps
+				// the argument COUNT correct so the by-ref/variadic variant stays stable (e.g. sscanf),
+				// while processed siblings resolve a generic callable(T) parameter. No forward read.
+				$paddedTypes = [];
+				$paddedUnpack = false;
+				$paddedHasName = false;
+				foreach ($args as $j => $paddedArg) {
+					$paddedOriginalArg = $paddedArg->getAttribute(ArgumentsNormalizer::ORIGINAL_ARG_ATTRIBUTE) ?? $paddedArg;
+					$this->addGatheredArgType($paddedTypes, $paddedUnpack, $paddedHasName, $paddedOriginalArg, $j, $gatheredArgTypeByIndex[$j] ?? new MixedType());
+				}
+				$argMetadataAcceptor = $this->selectArgsMetadataAcceptor($args, $paddedTypes, $parametersAcceptors, $namedArgumentsVariants, $paddedHasName, $paddedUnpack, $scope);
 			}
 			$parameters = $argMetadataAcceptor?->getParameters();
 
@@ -4370,7 +4360,8 @@ class NodeScopeResolver
 					}
 				}
 
-				$this->addGatheredArgType($gatheredTypes, $gatheredUnpack, $gatheredHasName, $originalArg, $i, $exprResult->getTypeForScope($scope));
+				$gatheredArgTypeByIndex[$i] = $exprResult->getTypeForScope($scope);
+				$this->addGatheredArgType($gatheredTypes, $gatheredUnpack, $gatheredHasName, $originalArg, $i, $gatheredArgTypeByIndex[$i]);
 			}
 
 			if ($assignByReference && $lookForUnset) {
@@ -4413,7 +4404,7 @@ class NodeScopeResolver
 		$writebackAcceptor = $metadataAcceptor;
 		if (
 			$metadataAcceptor !== null
-			&& ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($metadataAcceptor)
+			&& (count($parametersAcceptors) > 1 || ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($metadataAcceptor))
 		) {
 			$writebackAcceptor = $resolvedAcceptor;
 		}
