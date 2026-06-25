@@ -190,7 +190,13 @@ final class FuncCallHandler implements ExprHandler
 			&& $functionReflection->getName() === 'clone'
 			&& count($normalizedExpr->getArgs()) === 2
 		) {
-			$clonePropertiesArgType = $scope->getType($normalizedExpr->getArgs()[1]->value);
+			// process the clone arguments as reads so the cloned object and the
+			// properties array resolve from stored results instead of unprocessed
+			// nodes; processArgs() below processes them again as clone()'s arguments,
+			// so the NoopNodeCallback here avoids duplicate node-callbacks.
+			$nodeScopeResolver->processExprNode($stmt, $normalizedExpr->getArgs()[0]->value, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
+			$clonePropertiesArgResult = $nodeScopeResolver->processExprNode($stmt, $normalizedExpr->getArgs()[1]->value, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
+			$clonePropertiesArgType = $clonePropertiesArgResult->getTypeForScope($scope);
 			$cloneExpr = new TypeExpr($scope->getType(new Expr\Clone_($normalizedExpr->getArgs()[0]->value)));
 			$clonePropertiesArgTypeConstantArrays = $clonePropertiesArgType->getConstantArrays();
 			foreach ($clonePropertiesArgTypeConstantArrays as $clonePropertiesArgTypeConstantArray) {
