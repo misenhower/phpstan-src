@@ -87,6 +87,7 @@ use PHPStan\Node\Expr\PropertyInitializationExpr;
 use PHPStan\Node\Expr\TypeExpr;
 use PHPStan\Node\Expr\UnsetOffsetExpr;
 use PHPStan\Node\FinallyExitPointsNode;
+use PHPStan\Node\FunctionCallExpressionNode;
 use PHPStan\Node\FunctionCallableNode;
 use PHPStan\Node\FunctionReturnStatementsNode;
 use PHPStan\Node\InArrowFunctionNode;
@@ -99,6 +100,7 @@ use PHPStan\Node\InPropertyHookNode;
 use PHPStan\Node\InstantiationCallableNode;
 use PHPStan\Node\InTraitNode;
 use PHPStan\Node\InvalidateExprNode;
+use PHPStan\Node\MethodCallExpressionNode;
 use PHPStan\Node\MethodCallableNode;
 use PHPStan\Node\MethodReturnStatementsNode;
 use PHPStan\Node\NoopExpressionNode;
@@ -106,6 +108,7 @@ use PHPStan\Node\PropertyAssignNode;
 use PHPStan\Node\PropertyHookReturnStatementsNode;
 use PHPStan\Node\PropertyHookStatementNode;
 use PHPStan\Node\ReturnStatement;
+use PHPStan\Node\StaticMethodCallExpressionNode;
 use PHPStan\Node\StaticMethodCallableNode;
 use PHPStan\Node\UnreachableStatementNode;
 use PHPStan\Node\VariableAssignNode;
@@ -3102,6 +3105,16 @@ class NodeScopeResolver
 		if ($exprHandler !== null) {
 			$expressionResult = $exprHandler->processExpr($this, $stmt, $expr, $scope, $storage, $nodeCallback, $context);
 			$this->storeExpressionResult($storage, $expr, $expressionResult);
+			// the call is now processed and stored; emit a virtual node so
+			// impossible-check rules read its specified types from the result
+			// instead of asking the scope before the call node is processed
+			if ($expr instanceof FuncCall) {
+				$this->callNodeCallbackWithExpression($nodeCallback, new FunctionCallExpressionNode($expr, $expressionResult), $scope, $storage, $context);
+			} elseif ($expr instanceof MethodCall) {
+				$this->callNodeCallbackWithExpression($nodeCallback, new MethodCallExpressionNode($expr, $expressionResult), $scope, $storage, $context);
+			} elseif ($expr instanceof StaticCall) {
+				$this->callNodeCallbackWithExpression($nodeCallback, new StaticMethodCallExpressionNode($expr, $expressionResult), $scope, $storage, $context);
+			}
 			return $expressionResult;
 		}
 

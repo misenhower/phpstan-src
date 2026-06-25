@@ -57,7 +57,7 @@ final class ConstantConditionRuleHelper
 				|| $expr instanceof Expr\StaticCall
 			) && !$expr->isFirstClassCallable()
 		) {
-			$isAlways = $this->impossibleCheckTypeHelper->findSpecifiedType($scope, $expr);
+			$isAlways = $this->impossibleCheckTypeHelper->findSpecifiedTypeFromScope($scope, $expr);
 			if ($isAlways !== null) {
 				return true;
 			}

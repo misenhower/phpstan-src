@@ -9,6 +9,7 @@ use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
@@ -62,10 +63,42 @@ final class ImpossibleCheckTypeHelper
 	public function findSpecifiedType(
 		Scope $scope,
 		Expr $node,
+		ExpressionResult $nodeResult,
 		array &$reasons = [],
 	): ?bool
 	{
-		$specifiedValue = $this->getSpecifiedType($scope, $node, $reasons);
+		return $this->doFindSpecifiedType($scope, $node, $nodeResult, $reasons);
+	}
+
+	/**
+	 * Variant for callers without an ExpressionResult to read from: the
+	 * type-specifying-functions extension (runs while the call's own type is still
+	 * being computed) and ConstantConditionRuleHelper (the condition is already
+	 * processed on the scope). The narrowing is asked of the scope instead.
+	 *
+	 * @param list<string> $reasons populated with human-readable explanations of why the
+	 * result is "always false" (empty for the "always true" / inconclusive results)
+	 */
+	public function findSpecifiedTypeFromScope(
+		Scope $scope,
+		Expr $node,
+		array &$reasons = [],
+	): ?bool
+	{
+		return $this->doFindSpecifiedType($scope, $node, null, $reasons);
+	}
+
+	/**
+	 * @param list<string> $reasons
+	 */
+	private function doFindSpecifiedType(
+		Scope $scope,
+		Expr $node,
+		?ExpressionResult $nodeResult,
+		array &$reasons,
+	): ?bool
+	{
+		$specifiedValue = $this->getSpecifiedType($scope, $node, $reasons, $nodeResult);
 		$reasons = array_values(array_unique($reasons));
 
 		/**
@@ -98,6 +131,7 @@ final class ImpossibleCheckTypeHelper
 		Scope $scope,
 		Expr $node,
 		array &$reasons = [],
+		?ExpressionResult $nodeResult = null,
 	): ?bool
 	{
 		if ($node instanceof FuncCall) {
@@ -316,9 +350,12 @@ final class ImpossibleCheckTypeHelper
 
 		$typeSpecifierScope = $this->treatPhpDocTypesAsCertain ? $scope : $scope->doNotTreatPhpDocTypesAsCertain();
 		$typeSpecifierContext = $this->determineContext($typeSpecifierScope, $node);
-		// the condition expression was already analysed; read its narrowing from its
-		// result (via the scope's on-demand dispatcher) instead of specifyTypesInCondition().
-		$specifiedTypes = $typeSpecifierScope->specifyTypesOfNewWorldHandlerNode($node, $typeSpecifierContext)
+		// the condition expression was already analysed; read its narrowing straight
+		// from its already-computed ExpressionResult (carried by the virtual node)
+		// instead of asking the scope to specify it before the call is processed.
+		$specifiedTypes = ($nodeResult !== null
+			? $nodeResult->getSpecifiedTypesForScope($typeSpecifierScope, $typeSpecifierContext)
+			: $typeSpecifierScope->specifyTypesOfNewWorldHandlerNode($node, $typeSpecifierContext))
 			?? $this->typeSpecifier->specifyDefaultTypes($typeSpecifierScope, $node, $typeSpecifierContext);
 
 		// don't validate types on overwrite
