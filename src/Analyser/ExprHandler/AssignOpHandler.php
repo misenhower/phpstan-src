@@ -20,6 +20,7 @@ use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -59,6 +60,24 @@ final class AssignOpHandler implements ExprHandler
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		$beforeScope = $scope;
+
+		if (
+			!$expr instanceof Expr\AssignOp\Coalesce
+			&& ($expr->var instanceof Expr\Variable
+				|| $expr->var instanceof Expr\PropertyFetch
+				|| $expr->var instanceof Expr\StaticPropertyFetch)
+		) {
+			// `$lvalue OP= ...` reads the old value of `$lvalue`; processAssignVar()
+			// processes a Variable/property target only as an assignment target, never
+			// the whole lvalue as a read, so it never stores its ExpressionResult.
+			// Process it here as a read so the typeCallback below consumes the stored
+			// result instead of pricing the unprocessed lvalue on demand (single-pass
+			// inside-out). The NoopNodeCallback avoids duplicate reports:
+			// processAssignVar() already presents the target (and its sub-expressions)
+			// to the node callback. (An ArrayDimFetch target is stored by
+			// processAssignVar itself, so it is left out here.)
+			$nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
+		}
 
 		$typeCallback = function (MutatingScope $s) use ($expr, $nodeScopeResolver, $beforeScope): Type {
 			// $expr->var and $expr->expr were processed during this handler's
