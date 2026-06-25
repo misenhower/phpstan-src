@@ -596,18 +596,6 @@ final class ParametersAcceptorSelector
 			return false;
 		}
 
-		if ((bool) $args[0]->getAttribute(ArrayFilterArgVisitor::ATTRIBUTE_NAME)) {
-			return true;
-		}
-
-		if ((bool) $args[0]->getAttribute(ArrayWalkArgVisitor::ATTRIBUTE_NAME)) {
-			return true;
-		}
-
-		if ((bool) $args[0]->getAttribute(ArrayFindArgVisitor::ATTRIBUTE_NAME)) {
-			return true;
-		}
-
 		if ($args[0]->getAttribute(ClosureBindToVarVisitor::ATTRIBUTE_NAME) !== null) {
 			return true;
 		}
