@@ -4036,8 +4036,7 @@ class NodeScopeResolver
 		// the per-arg loop rather than flapping as the prefix grows.
 		$metadataAcceptor = null;
 		if ($parametersAcceptors !== []) {
-			$fastPath = count($parametersAcceptors) === 1
-				&& !ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($parametersAcceptors[0]);
+			$fastPath = count($parametersAcceptors) === 1;
 			if ($fastPath) {
 				$metadataAcceptor = $parametersAcceptors[0];
 			} else {
@@ -4110,7 +4109,18 @@ class NodeScopeResolver
 				$this->addGatheredArgType($gatheredTypes, $gatheredUnpack, $gatheredHasName, $originalArgForGather, $i, $this->gatherClosureArgType($parametersAcceptors, $i, $arg->value, $scope));
 			}
 
-			$parameters = $metadataAcceptor?->getParameters();
+			$argMetadataAcceptor = $metadataAcceptor;
+			if (
+				$metadataAcceptor !== null
+				&& ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($metadataAcceptor)
+			) {
+				// The single metadata acceptor still carries template / late-resolvable parameter
+				// types (a generic callable(T), a by-ref out-type). Resolve them from the arg types
+				// gathered SO FAR: closures sort last and by-ref out-params follow the args that pin
+				// them, so every determining sibling is already processed (single-pass, no forward read).
+				$argMetadataAcceptor = $this->selectArgsMetadataAcceptor($args, $gatheredTypes, $parametersAcceptors, $namedArgumentsVariants, $gatheredHasName, $gatheredUnpack, $scope);
+			}
+			$parameters = $argMetadataAcceptor?->getParameters();
 
 			$assignByReference = false;
 			$parameter = null;
@@ -4137,7 +4147,7 @@ class NodeScopeResolver
 						$parameterNativeType = $matchedParameter->getNativeType();
 					}
 					$parameter = $matchedParameter;
-				} elseif (count($parameters) > 0 && $metadataAcceptor->isVariadic()) {
+				} elseif (count($parameters) > 0 && $argMetadataAcceptor->isVariadic()) {
 					$lastParameter = array_last($parameters);
 					$assignByReference = $lastParameter->passedByReference()->createsNewVariable();
 					$parameterType = $lastParameter->getType();
@@ -4396,16 +4406,25 @@ class NodeScopeResolver
 		}
 
 		// The by-ref OUT writeback reads the metadata acceptor: it is selected from
-		// the full argument count (stable variant) and its parameters are already
-		// generic-resolved, so OUT types are correct without re-flapping the variant.
-		$writebackParameters = $metadataAcceptor?->getParameters();
+		// the full argument count (stable variant). When that single acceptor still
+		// carries templates (fast path), its OUT types need generic-resolving from the
+		// now-complete gathered arg types - the post-loop $resolvedAcceptor is exactly
+		// that (same variant, resolved); otherwise the metadata acceptor is already resolved.
+		$writebackAcceptor = $metadataAcceptor;
+		if (
+			$metadataAcceptor !== null
+			&& ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($metadataAcceptor)
+		) {
+			$writebackAcceptor = $resolvedAcceptor;
+		}
+		$writebackParameters = $writebackAcceptor?->getParameters();
 		if ($writebackParameters !== null) {
 			foreach ($args as $i => $arg) {
 				$assignByReference = false;
 				$currentParameter = null;
 				if (isset($writebackParameters[$i])) {
 					$currentParameter = $writebackParameters[$i];
-				} elseif (count($writebackParameters) > 0 && $metadataAcceptor->isVariadic()) {
+				} elseif (count($writebackParameters) > 0 && $writebackAcceptor->isVariadic()) {
 					$currentParameter = array_last($writebackParameters);
 				}
 
