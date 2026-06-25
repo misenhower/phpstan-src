@@ -312,7 +312,6 @@ class NodeScopeResolver
 	 * @api
 	 * @param Node[] $nodes
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
-	 * @param (callable(MutatingScope): MutatingScope)|null $closureBindScopeFactory
 	 */
 	public function processNodes(
 		array $nodes,
@@ -456,6 +455,10 @@ class NodeScopeResolver
 		return $scope->applySpecifiedTypes($specifiedTypes);
 	}
 
+	/**
+	 * @param Node\Stmt[] $bodyStmts
+	 * @param Closure(string): bool $gotoNameMatcher
+	 */
 	private function resolveBackwardGotoScope(
 		Node $parentNode,
 		array $bodyStmts,
@@ -3987,6 +3990,7 @@ class NodeScopeResolver
 	 * @param ParametersAcceptor[] $parametersAcceptors
 	 * @param ParametersAcceptor[]|null $namedArgumentsVariants
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
+	 * @param (callable(MutatingScope): MutatingScope)|null $closureBindScopeFactory
 	 */
 	public function processArgs(
 		Node\Stmt $stmt,
