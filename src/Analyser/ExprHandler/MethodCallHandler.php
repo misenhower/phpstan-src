@@ -21,6 +21,7 @@ use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
@@ -83,9 +84,14 @@ final class MethodCallHandler implements ExprHandler
 			&& strtolower($expr->name->name) === 'call'
 			&& isset($expr->getArgs()[0])
 		) {
+			// process the new-$this argument as a read so enterClosureCall() consumes
+			// its stored ExpressionResult instead of reading the unprocessed node via
+			// Scope::getType(). processArgs() below processes it again as call()'s first
+			// argument; the NoopNodeCallback here avoids a duplicate node-callback.
+			$newThisResult = $nodeScopeResolver->processExprNode($stmt, $expr->getArgs()[0]->value, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 			$closureCallScope = $scope->enterClosureCall(
-				$scope->getType($expr->getArgs()[0]->value),
-				$scope->getNativeType($expr->getArgs()[0]->value),
+				$newThisResult->getTypeForScope($scope),
+				$newThisResult->getNativeTypeForScope($scope),
 			);
 		}
 
