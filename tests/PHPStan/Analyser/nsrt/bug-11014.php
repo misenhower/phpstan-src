@@ -93,7 +93,7 @@ class HelloWorld
 		array_map(
 			static function ($function_name) {
 				assertType("'curl_multi_add_handle'|'curl_multi_exec'|'curl_multi_init'", $function_name);
-				assertNativeType("'curl_multi_add_handle'|'curl_multi_exec'|'curl_multi_init'", $function_name);
+				assertNativeType('mixed', $function_name);
 
 				return true;
 			},

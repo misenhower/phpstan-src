@@ -596,10 +596,6 @@ final class ParametersAcceptorSelector
 			return false;
 		}
 
-		if ($args[0]->value->getAttribute(ArrayMapArgVisitor::ATTRIBUTE_NAME) !== null) {
-			return true;
-		}
-
 		if ((bool) $args[0]->getAttribute(ArrayFilterArgVisitor::ATTRIBUTE_NAME)) {
 			return true;
 		}
