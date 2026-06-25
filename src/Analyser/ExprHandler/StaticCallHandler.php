@@ -103,7 +103,7 @@ final class StaticCallHandler implements ExprHandler
 		$variants = [];
 		$namedArgumentsVariants = null;
 		$methodReflection = null;
-		$closureBindScope = null;
+		$closureBindScopeFactory = null;
 		if ($expr->name instanceof Identifier) {
 			if ($expr->class instanceof Name) {
 				$classType = $scope->resolveTypeByName($expr->class);
@@ -122,42 +122,44 @@ final class StaticCallHandler implements ExprHandler
 						$declaringClass->getName() === 'Closure'
 						&& strtolower($methodName) === 'bind'
 					) {
-						$thisType = null;
-						$nativeThisType = null;
-						if (isset($expr->getArgs()[1])) {
-							$argType = $scope->getType($expr->getArgs()[1]->value);
-							if ($argType->isNull()->yes()) {
-								$thisType = null;
-							} else {
-								$thisType = $argType;
-							}
-
-							$nativeArgType = $scope->getNativeType($expr->getArgs()[1]->value);
-							if ($nativeArgType->isNull()->yes()) {
-								$nativeThisType = null;
-							} else {
-								$nativeThisType = $nativeArgType;
-							}
-						}
-						$scopeClasses = ['static'];
-						if (isset($expr->getArgs()[2])) {
-							$argValue = $expr->getArgs()[2]->value;
-							$argValueType = $scope->getType($argValue);
-
-							$directClassNames = $argValueType->getObjectClassNames();
-							if (count($directClassNames) > 0) {
-								$scopeClasses = $directClassNames;
-								$thisTypes = [];
-								foreach ($directClassNames as $directClassName) {
-									$thisTypes[] = new ObjectType($directClassName);
+						$closureBindScopeFactory = static function (MutatingScope $boundScope) use ($expr): MutatingScope {
+							$thisType = null;
+							$nativeThisType = null;
+							if (isset($expr->getArgs()[1])) {
+								$argType = $boundScope->getType($expr->getArgs()[1]->value);
+								if ($argType->isNull()->yes()) {
+									$thisType = null;
+								} else {
+									$thisType = $argType;
 								}
-								$thisType = TypeCombinator::union(...$thisTypes);
-							} else {
-								$thisType = $argValueType->getClassStringObjectType();
-								$scopeClasses = $thisType->getObjectClassNames();
+	
+								$nativeArgType = $boundScope->getNativeType($expr->getArgs()[1]->value);
+								if ($nativeArgType->isNull()->yes()) {
+									$nativeThisType = null;
+								} else {
+									$nativeThisType = $nativeArgType;
+								}
 							}
-						}
-						$closureBindScope = $scope->enterClosureBind($thisType, $nativeThisType, $scopeClasses);
+							$scopeClasses = ['static'];
+							if (isset($expr->getArgs()[2])) {
+								$argValue = $expr->getArgs()[2]->value;
+								$argValueType = $boundScope->getType($argValue);
+	
+								$directClassNames = $argValueType->getObjectClassNames();
+								if (count($directClassNames) > 0) {
+									$scopeClasses = $directClassNames;
+									$thisTypes = [];
+									foreach ($directClassNames as $directClassName) {
+										$thisTypes[] = new ObjectType($directClassName);
+									}
+									$thisType = TypeCombinator::union(...$thisTypes);
+								} else {
+									$thisType = $argValueType->getClassStringObjectType();
+									$scopeClasses = $thisType->getObjectClassNames();
+								}
+							}
+							return $boundScope->enterClosureBind($thisType, $nativeThisType, $scopeClasses);
+						};
 					}
 				} else {
 					$throwPoints[] = InternalThrowPoint::createImplicit($scope, $expr);
@@ -221,7 +223,7 @@ final class StaticCallHandler implements ExprHandler
 			$returnType = $parametersAcceptor->getReturnType();
 			$isAlwaysTerminating = $isAlwaysTerminating || ($returnType instanceof NeverType && $returnType->isExplicit());
 		}
-		$argsResult = $nodeScopeResolver->processArgs($stmt, $methodReflection, null, $variants, $namedArgumentsVariants, $normalizedExpr, $scope, $storage, $nodeCallback, $context, $closureBindScope);
+		$argsResult = $nodeScopeResolver->processArgs($stmt, $methodReflection, null, $variants, $namedArgumentsVariants, $normalizedExpr, $scope, $storage, $nodeCallback, $context, $closureBindScopeFactory);
 		$resolvedParametersAcceptor = $argsResult->getResolvedParametersAcceptor();
 		$scope = $argsResult->getScope();
 		$nodeScopeResolver->processDroppedArgs($stmt, $expr, $normalizedExpr, $scope, $storage, $context);

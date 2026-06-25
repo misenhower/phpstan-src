@@ -312,6 +312,7 @@ class NodeScopeResolver
 	 * @api
 	 * @param Node[] $nodes
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
+	 * @param (callable(MutatingScope): MutatingScope)|null $closureBindScopeFactory
 	 */
 	public function processNodes(
 		array $nodes,
@@ -3998,7 +3999,7 @@ class NodeScopeResolver
 		ExpressionResultStorage $storage,
 		callable $nodeCallback,
 		ExpressionContext $context,
-		?MutatingScope $closureBindScope = null,
+		?callable $closureBindScopeFactory = null,
 	): ArgsResult
 	{
 		$args = $callLike->getArgs();
@@ -4159,14 +4160,14 @@ class NodeScopeResolver
 
 			$originalScope = $scope;
 			$scopeToPass = $scope;
-			if ($i === 0 && $closureBindScope !== null && ($arg->value instanceof Expr\Closure || $arg->value instanceof Expr\ArrowFunction)) {
-				$scopeToPass = $closureBindScope;
+			if ($i === 0 && $closureBindScopeFactory !== null && ($arg->value instanceof Expr\Closure || $arg->value instanceof Expr\ArrowFunction)) {
+				$scopeToPass = $closureBindScopeFactory($scope);
 			}
 
 			if ($arg->value instanceof Expr\Closure) {
 				$restoreThisScope = null;
 				if (
-					$closureBindScope === null
+					$closureBindScopeFactory === null
 					&& $parameter instanceof ExtendedParameterReflection
 					&& !$arg->value->static
 				) {
@@ -4255,7 +4256,7 @@ class NodeScopeResolver
 				}
 			} elseif ($arg->value instanceof Expr\ArrowFunction) {
 				if (
-					$closureBindScope === null
+					$closureBindScopeFactory === null
 					&& $parameter instanceof ExtendedParameterReflection
 					&& !$arg->value->static
 				) {
@@ -4354,7 +4355,7 @@ class NodeScopeResolver
 				$scope = $scope->popInFunctionCall();
 			}
 
-			if ($i !== 0 || $closureBindScope === null) {
+			if ($i !== 0 || $closureBindScopeFactory === null) {
 				continue;
 			}
 
