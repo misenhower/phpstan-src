@@ -604,10 +604,6 @@ final class ParametersAcceptorSelector
 			return true;
 		}
 
-		if ((bool) $args[0]->getAttribute(ImplodeArgVisitor::ATTRIBUTE_NAME)) {
-			return true;
-		}
-
 		if ((bool) $args[0]->getAttribute(ArrayWalkArgVisitor::ATTRIBUTE_NAME)) {
 			return true;
 		}
