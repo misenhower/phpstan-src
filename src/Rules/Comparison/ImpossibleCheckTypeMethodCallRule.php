@@ -28,6 +28,7 @@ final class ImpossibleCheckTypeMethodCallRule implements Rule
 		private ImpossibleCheckTypeHelper $impossibleCheckTypeHelper,
 		private PossiblyImpureTipHelper $possiblyImpureTipHelper,
 		private ConstantConditionInTraitHelper $constantConditionInTraitHelper,
+		private FunctionCallConstantConditionHelper $functionCallConstantConditionHelper,
 		#[AutowiredParameter]
 		private bool $treatPhpDocTypesAsCertain,
 		#[AutowiredParameter]
@@ -50,6 +51,7 @@ final class ImpossibleCheckTypeMethodCallRule implements Rule
 		if (!$methodCall->name instanceof Node\Identifier) {
 			return [];
 		}
+		$methodName = $methodCall->name->name;
 
 		$reasons = [];
 		$isAlways = $this->impossibleCheckTypeHelper->findSpecifiedType($scope, $methodCall, $nodeResult, $reasons);
@@ -57,6 +59,8 @@ final class ImpossibleCheckTypeMethodCallRule implements Rule
 			$this->constantConditionInTraitHelper->emitNoError(self::class, $scope, $methodCall);
 			return [];
 		}
+
+		$this->functionCallConstantConditionHelper->emitImpossibleCheckReported($scope, $methodCall);
 
 		$addTip = function (RuleErrorBuilder $ruleErrorBuilder) use ($scope, $methodCall, $nodeResult, $reasons): RuleErrorBuilder {
 			if ($reasons !== []) {
@@ -81,7 +85,7 @@ final class ImpossibleCheckTypeMethodCallRule implements Rule
 		};
 
 		if (!$isAlways) {
-			$method = $this->getMethod($methodCall->var, $methodCall->name->name, $scope);
+			$method = $this->getMethod($methodCall->var, $methodName, $scope);
 			$errorBuilder = $addTip(RuleErrorBuilder::message(sprintf(
 				'Call to method %s::%s()%s will always evaluate to false.',
 				$method->getDeclaringClass()->getDisplayName(),
@@ -103,7 +107,7 @@ final class ImpossibleCheckTypeMethodCallRule implements Rule
 			return [];
 		}
 
-		$method = $this->getMethod($methodCall->var, $methodCall->name->name, $scope);
+		$method = $this->getMethod($methodCall->var, $methodName, $scope);
 		$errorBuilder = $addTip(RuleErrorBuilder::message(sprintf(
 			'Call to method %s::%s()%s will always evaluate to true.',
 			$method->getDeclaringClass()->getDisplayName(),

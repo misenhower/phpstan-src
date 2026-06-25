@@ -25,6 +25,7 @@ final class ImpossibleCheckTypeFunctionCallRule implements Rule
 		private ImpossibleCheckTypeHelper $impossibleCheckTypeHelper,
 		private PossiblyImpureTipHelper $possiblyImpureTipHelper,
 		private ConstantConditionInTraitHelper $constantConditionInTraitHelper,
+		private FunctionCallConstantConditionHelper $functionCallConstantConditionHelper,
 		#[AutowiredParameter]
 		private bool $treatPhpDocTypesAsCertain,
 		#[AutowiredParameter]
@@ -55,6 +56,8 @@ final class ImpossibleCheckTypeFunctionCallRule implements Rule
 			$this->constantConditionInTraitHelper->emitNoError(self::class, $scope, $funcCall);
 			return [];
 		}
+
+		$this->functionCallConstantConditionHelper->emitImpossibleCheckReported($scope, $funcCall);
 
 		$addTip = function (RuleErrorBuilder $ruleErrorBuilder) use ($scope, $funcCall, $nodeResult, $reasons): RuleErrorBuilder {
 			if ($reasons !== []) {
