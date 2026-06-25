@@ -600,14 +600,6 @@ final class ParametersAcceptorSelector
 			return true;
 		}
 
-		if ((bool) $args[0]->getAttribute(CurlSetOptArgVisitor::ATTRIBUTE_NAME)) {
-			return true;
-		}
-
-		if (isset($args[1]) && (bool) $args[1]->getAttribute(CurlSetOptArrayArgVisitor::ATTRIBUTE_NAME)) {
-			return true;
-		}
-
 		if ((bool) $args[0]->getAttribute(ArrayFilterArgVisitor::ATTRIBUTE_NAME)) {
 			return true;
 		}
