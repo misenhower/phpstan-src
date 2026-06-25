@@ -246,8 +246,6 @@ final class FuncCallHandler implements ExprHandler
 
 			if ($firstParamName !== null) {
 				$arrayWalkArrayArg = $normalizedExpr->getArgs()[0]->value;
-				$arrayWalkOriginalArrayType = $scope->getType($arrayWalkArrayArg);
-				$arrayWalkOriginalArrayNativeType = $scope->getNativeType($arrayWalkArrayArg);
 
 				$nodeCallbackForArgs = static function (Node $node, Scope $scope) use ($nodeCallback, $callbackArg, $firstParamName, &$arrayWalkValueTypes): void {
 					if ($node instanceof ClosureReturnStatementsNode && $node->getClosureExpr() === $callbackArg) {
@@ -293,6 +291,8 @@ final class FuncCallHandler implements ExprHandler
 		$isAlwaysTerminating = $isAlwaysTerminating || $argsResult->isAlwaysTerminating();
 
 		if ($arrayWalkValueTypes !== null && $arrayWalkArrayArg !== null) {
+			$arrayWalkOriginalArrayType = $scope->getType($arrayWalkArrayArg);
+			$arrayWalkOriginalArrayNativeType = $scope->getNativeType($arrayWalkArrayArg);
 			$arrayWalkValueType = $arrayWalkValueTypes[0];
 			$arrayWalkValueNativeType = $arrayWalkValueTypes[1];
 			$newArrayType = $arrayWalkOriginalArrayType->mapValueType(static fn (Type $type): Type => $arrayWalkValueType);
