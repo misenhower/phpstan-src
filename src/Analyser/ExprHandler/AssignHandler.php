@@ -642,12 +642,17 @@ final class AssignHandler implements ExprHandler
 					));
 
 				} else {
-					$offsetTypes[] = [$nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $scope), $dimFetch];
-					$offsetNativeTypes[] = [$nodeScopeResolver->readStoredOrPriceOnDemandNative($dimExpr, $scope), $dimFetch];
-
 					if ($enterExpressionAssign) {
 						$scope->enterExpressionAssign($dimExpr);
 					}
+					// process the dimension first, then consume its ExpressionResult
+					// (single-pass inside-out) rather than reading it before processExprNode()
+					$result = $nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, $nodeCallback, $context->enterDeep());
+					$offsetTypes[] = [$result->getTypeForScope($scope), $dimFetch];
+					$offsetNativeTypes[] = [$result->getNativeTypeForScope($scope), $dimFetch];
+					$hasYield = $hasYield || $result->hasYield();
+					$throwPoints = array_merge($throwPoints, $result->getThrowPoints());
+
 					$nodeScopeResolver->storeExpressionResult($storage, $dimFetch, $this->expressionResultFactory->create(
 						$scope,
 						beforeScope: $scope,
@@ -659,9 +664,6 @@ final class AssignHandler implements ExprHandler
 						typeCallback: static fn (MutatingScope $s): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch->var, $s)->getOffsetValueType($nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $s)),
 						specifyTypesCallback: static fn () => new SpecifiedTypes(),
 					));
-					$result = $nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, $nodeCallback, $context->enterDeep());
-					$hasYield = $hasYield || $result->hasYield();
-					$throwPoints = array_merge($throwPoints, $result->getThrowPoints());
 					$scope = $result->getScope();
 
 					if ($enterExpressionAssign) {
