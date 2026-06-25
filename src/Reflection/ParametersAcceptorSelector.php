@@ -640,6 +640,11 @@ final class ParametersAcceptorSelector
 			return true;
 		}
 
+		return self::hasAcceptorTemplateOrLateResolvableParameterType($acceptor);
+	}
+
+	public static function hasAcceptorTemplateOrLateResolvableParameterType(ParametersAcceptor $acceptor): bool
+	{
 		foreach ($acceptor->getParameters() as $parameter) {
 			if (
 				$parameter instanceof ExtendedParameterReflection

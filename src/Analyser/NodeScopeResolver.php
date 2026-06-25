@@ -4037,7 +4037,7 @@ class NodeScopeResolver
 		$metadataAcceptor = null;
 		if ($parametersAcceptors !== []) {
 			$fastPath = count($parametersAcceptors) === 1
-				&& !ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableType($parametersAcceptors[0])
+				&& !ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($parametersAcceptors[0])
 				&& !ParametersAcceptorSelector::argsHaveIntrinsicArgOverride($args);
 			if ($fastPath) {
 				$metadataAcceptor = $parametersAcceptors[0];
