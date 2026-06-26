@@ -672,26 +672,22 @@ final class AssignHandler implements ExprHandler
 				}
 			}
 
-			// SKIPPED (single-pass inside-out invariant): these two reads must stay as
-			// Scope::getType()/getNativeType(). This is NOT a scope-state side effect
-			// (assignExpression cannot reproduce it): getType() returns its cached
-			// resolvedTypes value, computed during loop convergence when a `$x[...] ??=
-			// []` left side was still maybe-set, so the coalesced value keeps its
-			// optional array{} branch. The side-effect-free helpers re-price on the
-			// converged (definitely-set) scope, where CoalesceHandler drops the array{}
-			// branch (issetCheck === true) - which regresses bug-13623. The optionality
-			// lives in the loop history the converged scope no longer carries.
-			$valueToWrite = $scope->getType($assignedExpr);
-			$nativeValueToWrite = $scope->getNativeType($assignedExpr);
+			// 3. eval assigned expr first, then read the assigned value on the pre-eval
+			// scope - so the read consumes the now-stored result of $assignedExpr (and
+			// of its operands) instead of pricing unprocessed nodes (mirrors the
+			// Variable branch above). The ??= left side's optional array{} branch is
+			// preserved by the coalesce typeCallback carrying the isset descriptor, not
+			// by reading a stale resolvedTypes cache (bug-13623).
 			$scopeBeforeAssignEval = $scope;
-
-			// 3. eval assigned expr
 			$result = $processExprCallback($scope);
 			$hasYield = $hasYield || $result->hasYield();
 			$throwPoints = array_merge($throwPoints, $result->getThrowPoints());
 			$impurePoints = array_merge($impurePoints, $result->getImpurePoints());
 			$isAlwaysTerminating = $isAlwaysTerminating || $result->isAlwaysTerminating();
 			$scope = $result->getScope();
+
+			$valueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scopeBeforeAssignEval);
+			$nativeValueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scopeBeforeAssignEval);
 
 			$varType = $varResult->getTypeForScope($scope);
 			$varNativeType = $varResult->getNativeTypeForScope($scope);
