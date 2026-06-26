@@ -13,7 +13,7 @@ interface ExpressionResultFactory
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
 	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
-	 * @param (callable(MutatingScope, Expr): Type)|null $typeCallback
+	 * @param (callable(MutatingScope): Type)|null $typeCallback
 	 * @param (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 */

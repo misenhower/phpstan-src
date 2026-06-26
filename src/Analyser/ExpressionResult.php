@@ -13,7 +13,7 @@ use PHPStan\Type\TypeUtils;
 final class ExpressionResult
 {
 
-	/** @var (callable(MutatingScope, Expr): Type)|null */
+	/** @var (callable(MutatingScope): Type)|null */
 	private $typeCallback;
 
 	/** @var (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null */
@@ -39,7 +39,7 @@ final class ExpressionResult
 	/**
 	 * @param InternalThrowPoint[] $throwPoints
 	 * @param ImpurePoint[] $impurePoints
-	 * @param (callable(MutatingScope, Expr): Type)|null $typeCallback
+	 * @param (callable(MutatingScope): Type)|null $typeCallback
 	 * @param (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
@@ -206,7 +206,7 @@ final class ExpressionResult
 		}
 
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope)) {
-			return $this->cachedType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($this->beforeScope, $this->expr));
+			return $this->cachedType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($this->beforeScope));
 		}
 
 		return $this->cachedType = $this->beforeScope->getType($this->expr);
@@ -223,7 +223,7 @@ final class ExpressionResult
 		}
 
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope->doNotTreatPhpDocTypesAsCertain())) {
-			return $this->cachedNativeType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($this->beforeScope->doNotTreatPhpDocTypesAsCertain(), $this->expr));
+			return $this->cachedNativeType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($this->beforeScope->doNotTreatPhpDocTypesAsCertain()));
 		}
 
 		return $this->cachedNativeType = $this->beforeScope->getNativeType($this->expr);
@@ -305,7 +305,7 @@ final class ExpressionResult
 		}
 
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($scope)) {
-			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($scope, $this->expr));
+			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($scope));
 		}
 
 		return $scope->getType($this->expr);
@@ -320,7 +320,7 @@ final class ExpressionResult
 
 		$nativeScope = $scope->doNotTreatPhpDocTypesAsCertain();
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($nativeScope)) {
-			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($nativeScope, $this->expr));
+			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($nativeScope));
 		}
 
 		return $scope->getNativeType($this->expr);
