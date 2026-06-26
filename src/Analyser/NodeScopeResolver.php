@@ -1619,8 +1619,12 @@ class NodeScopeResolver
 				$storage = $originalStorage->duplicate();
 
 				$originalScope = $this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope;
-				$foreachIterateeType = $condResult->getTypeForScope($originalScope);
-				$foreachNativeIterateeType = $condResult->getNativeTypeForScope($originalScope);
+				// $originalScope may narrow the iteratee to a non-empty array - a genuinely
+				// different scope than its own - so reprocess it there rather than re-running
+				// its result on a foreign scope.
+				$iterateeResult = $this->processExprOnDemand($stmt->expr, $originalScope, new ExpressionResultStorage());
+				$foreachIterateeType = $iterateeResult->getType();
+				$foreachNativeIterateeType = $iterateeResult->getNativeType();
 				$unrolledResult = $this->tryProcessUnrolledConstantArrayForeach($stmt, $originalScope, $originalStorage, $context, $foreachIterateeType, $foreachNativeIterateeType);
 				if ($unrolledResult !== null) {
 					$bodyScope = $unrolledResult['bodyScope'];
@@ -1896,9 +1900,10 @@ class NodeScopeResolver
 			$bodyScope = $bodyCondResult->getTruthyScope();
 			$finalScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, $nodeCallback, $context)->filterOutLoopExitPoints();
 			$finalScope = $finalScopeResult->getScope();
-			// the loop condition's own result narrows the post-loop scope to its
-			// falsey branch, applied via the new-world applySpecifiedTypes.
-			$condFalsey = $bodyCondResult->getSpecifiedTypesForScope($finalScope, TypeSpecifierContext::createFalsey());
+			// the loop condition narrows the post-loop scope to its falsey branch;
+			// $finalScope (after the body ran) is a different scope than the condition's
+			// own, so reprocess the condition there rather than re-running its result.
+			$condFalsey = $this->processExprOnDemand($stmt->cond, $finalScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($finalScope, TypeSpecifierContext::createFalsey());
 			if ($condFalsey !== null) {
 				$finalScope = $finalScope->applySpecifiedTypes($condFalsey);
 			}
