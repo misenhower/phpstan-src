@@ -1730,11 +1730,16 @@ class NodeScopeResolver
 						// the narrowed value-var type in place of the broader dim fetch type so
 						// the loop's final array rewrite below picks up the sharper element type.
 						if ($originalValueExpr !== null && $scopeWithIterableValueType->hasExpressionType($originalValueExpr)->yes()) {
-							$valueVarType = $this->readStoredOrPriceOnDemand($stmt->valueVar, $scopeWithIterableValueType);
+							// read the loop value variable's narrowed type directly by name -
+							// it is an assigned (not processExprNode-processed) variable, so
+							// getVariableType() consumes its tracked type without pricing the
+							// unprocessed node on demand. ($originalValueExpr !== null implies
+							// the value var is a string-named Variable.)
+							$valueVarType = $scopeWithIterableValueType->getVariableType($stmt->valueVar->name);
 							if ($dimFetchType->isSuperTypeOf($valueVarType)->yes()) {
 								$dimFetchType = $valueVarType;
 							}
-							$valueVarNativeType = $this->readStoredOrPriceOnDemand($stmt->valueVar, $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain());
+							$valueVarNativeType = $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain()->getVariableType($stmt->valueVar->name);
 							if ($dimFetchNativeType->isSuperTypeOf($valueVarNativeType)->yes()) {
 								$dimFetchNativeType = $valueVarNativeType;
 							}
@@ -1742,9 +1747,12 @@ class NodeScopeResolver
 						$keyLoopTypes[] = $this->readStoredOrPriceOnDemand($keyVarExpr, $scopeWithIterableValueType);
 						$keyLoopNativeTypes[] = $this->readStoredOrPriceOnDemand($keyVarExpr, $scopeWithIterableValueType);
 					} else {
-						// No key variable: the narrowed value var is the array element type directly.
-						$dimFetchType = $this->readStoredOrPriceOnDemand($stmt->valueVar, $scopeWithIterableValueType);
-						$dimFetchNativeType = $this->readStoredOrPriceOnDemand($stmt->valueVar, $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain());
+						// No key variable: the narrowed value var is the array element type
+						// directly. Read it by name (assigned, not processExprNode-processed);
+						// no key var implies $originalValueExpr !== null, so the value var is
+						// a string-named Variable.
+						$dimFetchType = $scopeWithIterableValueType->getVariableType($stmt->valueVar->name);
+						$dimFetchNativeType = $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain()->getVariableType($stmt->valueVar->name);
 					}
 					$arrayDimFetchLoopTypes[] = $dimFetchType;
 					$arrayDimFetchLoopNativeTypes[] = $dimFetchNativeType;
