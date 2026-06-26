@@ -1707,7 +1707,11 @@ class NodeScopeResolver
 				$finalScope = $unrolledEndScope;
 			}
 
-			$exprType = $condResult->getTypeForScope($scope);
+			// $scope is the post-loop scope; the body may have modified the iteratee
+			// (e.g. $arr[] = ...), a genuinely different scope than the iteratee's own,
+			// so reprocess it there to observe the modified type.
+			$iterateeResult = $this->processExprOnDemand($stmt->expr, $scope, new ExpressionResultStorage());
+			$exprType = $iterateeResult->getType();
 			$hasExpr = $scope->hasExpressionType($stmt->expr);
 			if (
 				count($breakExitPoints) === 0
@@ -1768,7 +1772,7 @@ class NodeScopeResolver
 				$valueTypeChanged = !$arrayDimFetchLoopType->equals($exprType->getIterableValueType());
 				$keyTypeChanged = false;
 				$keyLoopType = $exprType->getIterableKeyType();
-				$keyLoopNativeType = $condResult->getNativeTypeForScope($scope)->getIterableKeyType();
+				$keyLoopNativeType = $iterateeResult->getNativeType()->getIterableKeyType();
 				if ($keyVarExpr !== null) {
 					$keyLoopType = TypeCombinator::union(...$keyLoopTypes);
 					$keyLoopNativeType = TypeCombinator::union(...$keyLoopNativeTypes);
@@ -1784,7 +1788,7 @@ class NodeScopeResolver
 						$newExprType = $newExprType->mapKeyType(static fn (Type $type): Type => $keyLoopType);
 					}
 
-					$nativeExprType = $condResult->getNativeTypeForScope($scope);
+					$nativeExprType = $iterateeResult->getNativeType();
 					$newExprNativeType = $nativeExprType;
 					if ($valueTypeChanged) {
 						$newExprNativeType = $newExprNativeType->mapValueType(static fn (Type $type): Type => $arrayDimFetchLoopNativeType);
