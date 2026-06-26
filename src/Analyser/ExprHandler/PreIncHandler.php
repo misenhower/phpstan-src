@@ -22,6 +22,7 @@ use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\Accessory\AccessoryLiteralStringType;
 use PHPStan\Type\BenevolentUnionType;
 use PHPStan\Type\Constant\ConstantIntegerType;
+use PHPStan\Type\ConstantTypeHelper;
 use PHPStan\Type\FloatType;
 use PHPStan\Type\IntegerType;
 use PHPStan\Type\IntersectionType;
@@ -80,7 +81,7 @@ final class PreIncHandler implements ExprHandler
 						++$varValue;
 					}
 
-					$newTypes[] = $s->getTypeFromValue($varValue);
+					$newTypes[] = ConstantTypeHelper::getTypeFromValue($varValue);
 				}
 				return TypeCombinator::union(...$newTypes);
 			} elseif ($varType->isString()->yes()) {
