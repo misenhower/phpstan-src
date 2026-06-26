@@ -2249,7 +2249,10 @@ class NodeScopeResolver
 				}
 			}
 
-			$exhaustive = $condResult->getTypeForScope($scopeForBranches) instanceof NeverType;
+			// $scopeForBranches is the subject narrowed by "none of the cases matched";
+			// that is a genuinely different scope than the subject's own, so reprocess
+			// the subject there rather than re-running its result on a foreign scope.
+			$exhaustive = $this->processExprOnDemand($stmt->cond, $scopeForBranches, new ExpressionResultStorage())->getType() instanceof NeverType;
 
 			if (!$hasDefaultCase && !$exhaustive) {
 				$alwaysTerminating = false;
