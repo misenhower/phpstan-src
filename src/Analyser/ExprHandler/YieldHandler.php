@@ -73,6 +73,10 @@ final class YieldHandler implements ExprHandler
 			$isAlwaysTerminating = $isAlwaysTerminating || $valueResult->isAlwaysTerminating();
 		}
 
+		// the enclosing function is lexical - the generator TSend type does not
+		// vary with the scope the callback is later invoked on - resolve it once here.
+		$functionReflection = $beforeScope->getFunction();
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -81,8 +85,7 @@ final class YieldHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: static function (MutatingScope $scope): Type {
-				$functionReflection = $scope->getFunction();
+			typeCallback: static function () use ($functionReflection): Type {
 				if ($functionReflection === null) {
 					return new MixedType();
 				}

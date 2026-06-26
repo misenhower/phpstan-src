@@ -14,7 +14,6 @@ use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\Scope;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Reflection\InitializerExprContext;
 use PHPStan\Reflection\InitializerExprTypeResolver;
@@ -40,6 +39,10 @@ final class ScalarHandler implements ExprHandler
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
+		// a literal's type and its initializer context (file/namespace/class) are
+		// lexical - identical on every scope - so build the context once here.
+		$initializerExprContext = InitializerExprContext::fromScope($scope);
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $scope,
@@ -48,7 +51,7 @@ final class ScalarHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: fn (Scope $scope) => $this->initializerExprTypeResolver->getType($expr, InitializerExprContext::fromScope($scope)),
+			typeCallback: fn () => $this->initializerExprTypeResolver->getType($expr, $initializerExprContext),
 			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);
 	}

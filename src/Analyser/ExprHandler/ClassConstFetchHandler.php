@@ -73,6 +73,11 @@ final class ClassConstFetchHandler implements ExprHandler
 			$isAlwaysTerminating = $isAlwaysTerminating || $nameResult->isAlwaysTerminating();
 		}
 
+		// the enclosing class is lexical - fixed at this node, identical on every
+		// (possibly narrowed) scope the callback may later be invoked with - so
+		// resolve it once here instead of reading it off the callback's scope.
+		$classReflection = $beforeScope->isInClass() ? $beforeScope->getClassReflection() : null;
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -81,7 +86,7 @@ final class ClassConstFetchHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (MutatingScope $scope) use ($expr, $classResult): Type {
+			typeCallback: function (MutatingScope $scope) use ($expr, $classResult, $classReflection): Type {
 				if (!$expr->name instanceof Identifier) {
 					return new MixedType();
 				}
@@ -89,7 +94,7 @@ final class ClassConstFetchHandler implements ExprHandler
 				return $this->initializerExprTypeResolver->getClassConstFetchTypeByReflection(
 					$expr->class,
 					$expr->name->name,
-					$scope->isInClass() ? $scope->getClassReflection() : null,
+					$classReflection,
 					// getClassConstFetchTypeByReflection only invokes this for $expr->class
 					// when it is an Expr, which is exactly when $classResult exists
 					static function (Expr $e) use ($classResult, $scope): Type {
