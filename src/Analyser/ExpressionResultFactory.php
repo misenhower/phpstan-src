@@ -14,7 +14,7 @@ interface ExpressionResultFactory
 	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
 	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
 	 * @param (callable(MutatingScope): Type)|null $typeCallback
-	 * @param (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null $specifyTypesCallback
+	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 */
 	public function create(
@@ -26,7 +26,7 @@ interface ExpressionResultFactory
 		array $throwPoints,
 		array $impurePoints,
 		?callable $typeCallback,
-		?callable $specifyTypesCallback,
+		callable $specifyTypesCallback,
 		bool $containsNullsafe = false,
 		?IssetabilityDescriptor $issetabilityDescriptor = null,
 		?callable $truthyScopeCallback = null,

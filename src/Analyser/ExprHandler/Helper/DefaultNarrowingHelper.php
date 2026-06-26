@@ -46,10 +46,7 @@ final class DefaultNarrowingHelper
 	public function getChildSpecifiedTypes(MutatingScope $s, Expr $childExpr, ?ExpressionResult $childResult, TypeSpecifierContext $context): SpecifiedTypes
 	{
 		if ($childResult !== null) {
-			$types = $childResult->getSpecifiedTypesForScope($s, $context);
-			if ($types !== null) {
-				return $types;
-			}
+			return $childResult->getSpecifiedTypesForScope($s, $context);
 		}
 
 		return $this->specifyTypesForNode($s, $childExpr, $context);

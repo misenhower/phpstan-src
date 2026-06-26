@@ -16,7 +16,7 @@ final class ExpressionResult
 	/** @var (callable(MutatingScope): Type)|null */
 	private $typeCallback;
 
-	/** @var (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null */
+	/** @var callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes */
 	private $specifyTypesCallback;
 
 	/** @var (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null */
@@ -40,7 +40,7 @@ final class ExpressionResult
 	 * @param InternalThrowPoint[] $throwPoints
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(MutatingScope): Type)|null $typeCallback
-	 * @param (callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes)|null $specifyTypesCallback
+	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
 	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
@@ -55,7 +55,7 @@ final class ExpressionResult
 		private array $throwPoints,
 		private array $impurePoints,
 		?callable $typeCallback,
-		?callable $specifyTypesCallback,
+		callable $specifyTypesCallback,
 		private bool $containsNullsafe = false,
 		private ?IssetabilityDescriptor $issetabilityDescriptor = null,
 		?callable $truthyScopeCallback = null,
@@ -150,13 +150,9 @@ final class ExpressionResult
 		}
 
 		if ($this->truthyScopeCallback === null) {
-			if ($this->specifyTypesCallback !== null) {
-				return $this->truthyScope = $this->scope->applySpecifiedTypes(
-					($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createTruthy()),
-				);
-			}
-
-			return $this->truthyScope = $this->scope->filterByTruthyValue($this->expr);
+			return $this->truthyScope = $this->scope->applySpecifiedTypes(
+				($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createTruthy()),
+			);
 		}
 
 		$callback = $this->truthyScopeCallback;
@@ -170,13 +166,9 @@ final class ExpressionResult
 		}
 
 		if ($this->falseyScopeCallback === null) {
-			if ($this->specifyTypesCallback !== null) {
-				return $this->falseyScope = $this->scope->applySpecifiedTypes(
-					($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createFalsey()),
-				);
-			}
-
-			return $this->falseyScope = $this->scope->filterByFalseyValue($this->expr);
+			return $this->falseyScope = $this->scope->applySpecifiedTypes(
+				($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createFalsey()),
+			);
 		}
 
 		$callback = $this->falseyScopeCallback;
@@ -254,17 +246,9 @@ final class ExpressionResult
 		return $this->type !== null || $this->typeCallback !== null;
 	}
 
-	/**
-	 * Re-evaluates the narrowing on a different scope (e.g. the one an old-world
-	 * caller holds). Returns null when the handler wired no specifyTypesCallback -
-	 * the caller falls back to default truthy/falsey narrowing.
-	 */
-	public function getSpecifiedTypesForScope(MutatingScope $scope, TypeSpecifierContext $context): ?SpecifiedTypes
+	/** Evaluates this expression's narrowing on the given scope. */
+	public function getSpecifiedTypesForScope(MutatingScope $scope, TypeSpecifierContext $context): SpecifiedTypes
 	{
-		if ($this->specifyTypesCallback === null) {
-			return null;
-		}
-
 		return ($this->specifyTypesCallback)($scope, $context);
 	}
 

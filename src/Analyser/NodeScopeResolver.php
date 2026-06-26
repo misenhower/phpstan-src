@@ -1268,10 +1268,7 @@ class NodeScopeResolver
 			$scope = $result->getScope();
 			// the expression statement was just processed; read its narrowing from
 			// the result instead of re-resolving it via specifyTypesInCondition().
-			$specifiedTypes = $result->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createNull());
-			if ($specifiedTypes !== null) {
-				$scope = $scope->applySpecifiedTypes($specifiedTypes);
-			}
+			$scope = $scope->applySpecifiedTypes($result->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createNull()));
 			$hasYield = $result->hasYield();
 			$throwPoints = $result->getThrowPoints();
 			$impurePoints = $result->getImpurePoints();
@@ -1907,10 +1904,7 @@ class NodeScopeResolver
 			// the loop condition narrows the post-loop scope to its falsey branch;
 			// $finalScope (after the body ran) is a different scope than the condition's
 			// own, so reprocess the condition there rather than re-running its result.
-			$condFalsey = $this->processExprOnDemand($stmt->cond, $finalScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($finalScope, TypeSpecifierContext::createFalsey());
-			if ($condFalsey !== null) {
-				$finalScope = $finalScope->applySpecifiedTypes($condFalsey);
-			}
+			$finalScope = $finalScope->applySpecifiedTypes($this->processExprOnDemand($stmt->cond, $finalScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($finalScope, TypeSpecifierContext::createFalsey()));
 
 			$alwaysIterates = false;
 			$neverIterates = false;

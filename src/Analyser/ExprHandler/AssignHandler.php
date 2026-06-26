@@ -222,7 +222,7 @@ final class AssignHandler implements ExprHandler
 			throwPoints: $result->getThrowPoints(),
 			impurePoints: $result->getImpurePoints(),
 			typeCallback: static fn (MutatingScope $s): Type => $assignedExprResult !== null ? $assignedExprResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $s),
-			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($nodeScopeResolver, $expr, $assignedExprResult) : null,
+			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($nodeScopeResolver, $expr, $assignedExprResult) : fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult) : null,
 		);
 	}
