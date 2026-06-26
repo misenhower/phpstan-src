@@ -93,7 +93,7 @@ final class CoalesceHandler implements ExprHandler
 			isAlwaysTerminating: $condResult->isAlwaysTerminating(),
 			throwPoints: array_merge($condResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($condResult->getImpurePoints(), $rightResult->getImpurePoints()),
-			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $rightScope): Type {
+			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $rightScope, $nodeScopeResolver): Type {
 				$issetLeftExpr = new Expr\Isset_([$expr->left]);
 
 				$result = $condResult->getIssetabilityResolution($s, false)->isSet(static function (Type $type): ?bool {
@@ -106,7 +106,7 @@ final class CoalesceHandler implements ExprHandler
 				});
 
 				if ($result !== null && $result !== false) {
-					return TypeCombinator::removeNull($condResult->getTypeForScope($s->filterByTruthyValue($issetLeftExpr)));
+					return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->filterByTruthyValue($issetLeftExpr), new ExpressionResultStorage())->getType());
 				}
 
 				// the right side was processed on the left-is-null scope - that
@@ -115,7 +115,7 @@ final class CoalesceHandler implements ExprHandler
 
 				if ($result === null) {
 					return TypeCombinator::union(
-						TypeCombinator::removeNull($condResult->getTypeForScope($s->filterByTruthyValue($issetLeftExpr))),
+						TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->filterByTruthyValue($issetLeftExpr), new ExpressionResultStorage())->getType()),
 						$rightType,
 					);
 				}
