@@ -84,7 +84,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 			}
 
 			// the plain property fetch on the null-removed scope is synthetic.
-			$truthyScope = $s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))));
+			$truthyScope = $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new NotIdentical($expr->var, new ConstFetch(new Name('null'))), $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy()));
 
 			return TypeCombinator::union(
 				$nodeScopeResolver->priceSyntheticOnDemand(new PropertyFetch($expr->var, $expr->name), $truthyScope),

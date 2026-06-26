@@ -134,14 +134,15 @@ final class PropertyFetchHandler implements ExprHandler
 				$nameType = $nameResult !== null ? $nameResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $s);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(
-						...array_map(function ($constantString) use ($expr, $s, $nodeScopeResolver): Type {
+						...array_map(static function ($constantString) use ($expr, $s, $nodeScopeResolver): Type {
 							if ($constantString->getValue() === '') {
 								return new ErrorType();
 							}
 
 							// a property fetch with a concrete name on the
 							// name-pinned scope is synthetic.
-							$truthyScope = $s->applySpecifiedTypes($this->defaultNarrowingHelper->specifyTypesForNode($s, new Expr\BinaryOp\Identical($expr->name, new String_($constantString->getValue())), TypeSpecifierContext::createTruthy()));
+							$nameIdentical = new Expr\BinaryOp\Identical($expr->name, new String_($constantString->getValue()));
+							$truthyScope = $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($nameIdentical, $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy()));
 
 							return $nodeScopeResolver->priceSyntheticOnDemand(
 								new PropertyFetch($expr->var, new Identifier($constantString->getValue())),

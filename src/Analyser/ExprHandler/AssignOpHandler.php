@@ -179,9 +179,7 @@ final class AssignOpHandler implements ExprHandler
 			function (MutatingScope $scope) use ($stmt, $expr, $nodeCallback, $context, $storage, $nodeScopeResolver): ExpressionResult {
 				$originalScope = $scope;
 				if ($expr instanceof Expr\AssignOp\Coalesce) {
-					$scope = $scope->filterByFalseyValue(
-						new BinaryOp\NotIdentical($expr->var, new ConstFetch(new Name('null'))),
-					);
+					$scope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new BinaryOp\NotIdentical($expr->var, new ConstFetch(new Name('null'))), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createFalsey()));
 
 					if ($expr->var instanceof Expr\Variable && is_string($expr->var->name)) {
 						$context = $context->enterRightSideAssign(

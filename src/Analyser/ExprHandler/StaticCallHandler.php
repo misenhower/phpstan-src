@@ -465,7 +465,7 @@ final class StaticCallHandler implements ExprHandler
 
 					// a static call with a concrete name on the name-pinned scope
 					// is synthetic.
-					$truthyScope = $scope->filterByTruthyValue(new Identical($expr->name, new String_($constantString->getValue())));
+					$truthyScope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Identical($expr->name, new String_($constantString->getValue())), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()));
 
 					return $nodeScopeResolver->priceSyntheticOnDemand(
 						new StaticCall($expr->class, new Identifier($constantString->getValue()), $expr->args),

@@ -58,9 +58,9 @@ final class VariableHandler implements ExprHandler
 	 *
 	 * @return Closure(MutatingScope): Type
 	 */
-	public static function createTypeCallback(Variable $expr, ?ExpressionResult $nameResult = null): Closure
+	public static function createTypeCallback(Variable $expr, NodeScopeResolver $nodeScopeResolver, ?ExpressionResult $nameResult = null): Closure
 	{
-		return static function (MutatingScope $s) use ($expr, $nameResult): Type {
+		return static function (MutatingScope $s) use ($expr, $nameResult, $nodeScopeResolver): Type {
 			if (is_string($expr->name)) {
 				if ($s->hasVariableType($expr->name)->no()) {
 					return new ErrorType();
@@ -78,10 +78,7 @@ final class VariableHandler implements ExprHandler
 			if (count($nameType->getConstantStrings()) > 0) {
 				$types = [];
 				foreach ($nameType->getConstantStrings() as $constantString) {
-					$variableScope = $s
-						->filterByTruthyValue(
-							new Identical($expr->name, new String_($constantString->getValue())),
-						);
+					$variableScope = $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Identical($expr->name, new String_($constantString->getValue())), $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy()));
 					if ($variableScope->hasVariableType($constantString->getValue())->no()) {
 						$types[] = new ErrorType();
 						continue;
@@ -127,7 +124,7 @@ final class VariableHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			issetabilityDescriptor: is_string($expr->name) ? IssetabilityDescriptor::variable($expr->name) : null,
-			typeCallback: self::createTypeCallback($expr, $nameResult),
+			typeCallback: self::createTypeCallback($expr, $nodeScopeResolver, $nameResult),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

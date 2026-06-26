@@ -144,7 +144,7 @@ final class StaticPropertyFetchHandler implements ExprHandler
 
 							// a static property fetch with a concrete name on the
 							// name-pinned scope is synthetic.
-							$truthyScope = $s->filterByTruthyValue(new Identical($expr->name, new String_($constantString->getValue())));
+							$truthyScope = $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Identical($expr->name, new String_($constantString->getValue())), $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy()));
 
 							return $nodeScopeResolver->priceSyntheticOnDemand(
 								new Expr\StaticPropertyFetch($expr->class, new VarLikeIdentifier($constantString->getValue())),

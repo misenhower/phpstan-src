@@ -78,9 +78,9 @@ final class CoalesceHandler implements ExprHandler
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $rightScope, $storage, $nodeCallback, $context->enterDeep());
 		$rightExprType = $rightResult->getTypeForScope($scope);
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
-			$scope = $scope->filterByTruthyValue(new Expr\Isset_([$expr->left]));
+			$scope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Expr\Isset_([$expr->left]), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()));
 		} else {
-			$scope = $scope->filterByTruthyValue(new Expr\Isset_([$expr->left]))->mergeWith($rightResult->getScope());
+			$scope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Expr\Isset_([$expr->left]), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()))->mergeWith($rightResult->getScope());
 		}
 
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new CoalesceExpressionNode($expr, $condResult, 'on left side of ??'), $beforeScope, $storage, $context);
@@ -106,7 +106,7 @@ final class CoalesceHandler implements ExprHandler
 				});
 
 				if ($result !== null && $result !== false) {
-					return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->filterByTruthyValue($issetLeftExpr), new ExpressionResultStorage())->getType());
+					return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType());
 				}
 
 				// the right side was processed on the left-is-null scope - that
@@ -115,7 +115,7 @@ final class CoalesceHandler implements ExprHandler
 
 				if ($result === null) {
 					return TypeCombinator::union(
-						TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->filterByTruthyValue($issetLeftExpr), new ExpressionResultStorage())->getType()),
+						TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType()),
 						$rightType,
 					);
 				}

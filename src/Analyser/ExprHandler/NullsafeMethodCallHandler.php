@@ -104,7 +104,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			}
 
 			// the plain method call on the null-removed scope is synthetic.
-			$truthyScope = $s->filterByTruthyValue(new NotIdentical($expr->var, new ConstFetch(new Name('null'))));
+			$truthyScope = $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new NotIdentical($expr->var, new ConstFetch(new Name('null'))), $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy()));
 
 			return TypeCombinator::union(
 				$nodeScopeResolver->priceSyntheticOnDemand(new MethodCall($expr->var, $expr->name, $expr->args), $truthyScope),
