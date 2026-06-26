@@ -22,6 +22,7 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Node\NullsafePropertyFetchExpressionNode;
 use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Type\NullType;
 use PHPStan\Type\Type;
@@ -55,6 +56,10 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 		// non-null below: the short-circuit decision needs to know it can be null,
 		// which reading the ensured-non-null result would hide.
 		$receiverType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $scope);
+		$receiverNativeType = $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->var, $scope);
+		// carry the receiver type to NullsafePropertyFetchRule so it reads it from
+		// here instead of asking the scope for the unprocessed receiver.
+		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new NullsafePropertyFetchExpressionNode($expr, $receiverType, $receiverNativeType), $beforeScope, $storage, $context);
 		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($nodeScopeResolver, $scope, $scope, $expr->var);
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafePropertyFetch' => true]);
 		unset($attributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
