@@ -96,14 +96,29 @@ final class StaticPropertyFetchHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			containsNullsafe: $classResult !== null && $classResult->containsNullsafe(),
 			issetabilityDescriptor: IssetabilityDescriptor::property($classResult, fn (MutatingScope $s): ?FoundPropertyReflection => $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s), $expr),
-			typeCallback: function (MutatingScope $s) use ($expr, $classResult, $nameResult, $nodeScopeResolver): Type {
-				$shortCircuit = static fn (Type $type): Type => $classResult !== null && $classResult->containsNullsafe() && TypeCombinator::containsNull($classResult->getTypeForScope($s))
+			typeCallback: function (MutatingScope $s) use ($expr, $classResult, $nameResult, $nodeScopeResolver, $beforeScope): Type {
+				$classType = $classResult !== null
+					? ($s->nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType())
+					: null;
+				$shortCircuit = static fn (Type $type): Type => $classResult !== null && $classResult->containsNullsafe() && $classType !== null && TypeCombinator::containsNull($classType)
 					? TypeCombinator::addNull($type)
 					: $type;
 
-				if ($expr->name instanceof VarLikeIdentifier) {
+				// the property's class/visibility/assign context is lexical, so it
+				// comes from beforeScope; the scope-dependent class-expression type
+				// is read from the operand result above, and the native-vs-phpdoc
+				// distinction comes from that type and the reflection accessor below.
+				$reflectionScope = $beforeScope;
+				if ($expr->class instanceof Name) {
+					$staticPropertyFetchedOnType = $reflectionScope->resolveTypeByName($expr->class);
+				} else {
+					$resolvedClassType = $classType ?? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $beforeScope);
+					$staticPropertyFetchedOnType = TypeCombinator::removeNull($resolvedClassType)->getObjectTypeOrClassStringObjectType();
+				}
+
+				$resolveProperty = function (string $propertyName) use ($s, $reflectionScope, $staticPropertyFetchedOnType, $expr): Type {
 					if ($s->nativeTypesPromoted) {
-						$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s);
+						$propertyReflection = $reflectionScope->getStaticPropertyReflection($staticPropertyFetchedOnType, $propertyName);
 						if ($propertyReflection === null) {
 							return new ErrorType();
 						}
@@ -111,45 +126,30 @@ final class StaticPropertyFetchHandler implements ExprHandler
 							return new MixedType();
 						}
 
-						return $shortCircuit($propertyReflection->getNativeType());
+						return $propertyReflection->getNativeType();
 					}
 
-					if ($expr->class instanceof Name) {
-						$staticPropertyFetchedOnType = $s->resolveTypeByName($expr->class);
-					} else {
-						$classType = $classResult !== null ? $classResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $s);
-						$staticPropertyFetchedOnType = TypeCombinator::removeNull($classType)->getObjectTypeOrClassStringObjectType();
-					}
+					return $this->propertyFetchType($reflectionScope, $staticPropertyFetchedOnType, $propertyName, $expr) ?? new ErrorType();
+				};
 
-					$fetchType = $this->propertyFetchType(
-						$s,
-						$staticPropertyFetchedOnType,
-						$expr->name->toString(),
-						$expr,
-					);
-					if ($fetchType === null) {
-						$fetchType = new ErrorType();
-					}
-
-					return $shortCircuit($fetchType);
+				if ($expr->name instanceof VarLikeIdentifier) {
+					return $shortCircuit($resolveProperty($expr->name->toString()));
 				}
 
-				$nameType = $nameResult !== null ? $nameResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $s);
+				// dynamic static property fetch Foo::${$name}: resolve each possible
+				// name from beforeScope. The asking scope is not narrowed per name,
+				// so such fetches can be less precise.
+				$nameType = $nameResult !== null
+					? ($s->nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
+					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $beforeScope);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(
-						...array_map(static function ($constantString) use ($expr, $s, $nodeScopeResolver): Type {
+						...array_map(static function ($constantString) use ($resolveProperty): Type {
 							if ($constantString->getValue() === '') {
 								return new ErrorType();
 							}
 
-							// a static property fetch with a concrete name on the
-							// name-pinned scope is synthetic.
-							$truthyScope = $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Identical($expr->name, new String_($constantString->getValue())), $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy()));
-
-							return $nodeScopeResolver->priceSyntheticOnDemand(
-								new Expr\StaticPropertyFetch($expr->class, new VarLikeIdentifier($constantString->getValue())),
-								$truthyScope,
-							);
+							return $resolveProperty($constantString->getValue());
 						}, $nameType->getConstantStrings()),
 					);
 				}
