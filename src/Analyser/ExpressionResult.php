@@ -65,10 +65,14 @@ final class ExpressionResult
 		private ?Type $nativeType = null,
 	)
 	{
-		// A precomputed type and a lazy typeCallback are mutually exclusive; phpdoc
-		// and native types are precomputed together or not at all.
+		// A precomputed type and a lazy typeCallback are mutually exclusive, but
+		// exactly one of them must be set - a result with neither cannot answer its
+		// own type. phpdoc and native types are precomputed together or not at all.
 		if ($typeCallback !== null && $type !== null) {
 			throw new ShouldNotHappenException('ExpressionResult cannot have both a typeCallback and a precomputed type.');
+		}
+		if ($typeCallback === null && $type === null) {
+			throw new ShouldNotHappenException('ExpressionResult must have either a precomputed type or a typeCallback.');
 		}
 		if (($type === null) !== ($nativeType === null)) {
 			throw new ShouldNotHappenException('ExpressionResult type and nativeType must both be set or both be null.');
