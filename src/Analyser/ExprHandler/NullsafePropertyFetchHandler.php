@@ -75,19 +75,24 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 		// real type, captured before it was ensured non-null; reading its stored
 		// result here would see the non-null device type and drop the
 		// short-circuit's null.
-		$nullsafeTypeCallback = static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver, $receiverType): Type {
+		$nullsafeTypeCallback = static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver, $receiverType, $beforeScope): Type {
 			if ($receiverType->isNull()->yes()) {
 				return new NullType();
 			}
 			if (!TypeCombinator::containsNull($receiverType)) {
-				return $exprResult->getTypeForScope($s);
+				return $s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
 			}
 
-			// the plain property fetch on the null-removed scope is synthetic.
-			$truthyScope = $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new NotIdentical($expr->var, new ConstFetch(new Name('null'))), $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy()));
+			// the plain property fetch on the null-removed scope is synthetic; the
+			// null-removal narrowing is applied to beforeScope (the evaluation point),
+			// not the asking scope.
+			$truthyScope = $beforeScope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new NotIdentical($expr->var, new ConstFetch(new Name('null'))), $beforeScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($beforeScope, TypeSpecifierContext::createTruthy()));
+			$propertyFetch = new PropertyFetch($expr->var, $expr->name);
 
 			return TypeCombinator::union(
-				$nodeScopeResolver->priceSyntheticOnDemand(new PropertyFetch($expr->var, $expr->name), $truthyScope),
+				$s->nativeTypesPromoted
+					? $nodeScopeResolver->priceSyntheticOnDemandNative($propertyFetch, $truthyScope)
+					: $nodeScopeResolver->priceSyntheticOnDemand($propertyFetch, $truthyScope),
 				new NullType(),
 			);
 		};
