@@ -75,12 +75,12 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 		// real type, captured before it was ensured non-null; reading its stored
 		// result here would see the non-null device type and drop the
 		// short-circuit's null.
-		$nullsafeTypeCallback = static function (MutatingScope $s) use ($expr, $exprResult, $nodeScopeResolver, $receiverType, $beforeScope): Type {
+		$nullsafeTypeCallback = static function (bool $nativeTypesPromoted) use ($expr, $exprResult, $nodeScopeResolver, $receiverType, $beforeScope): Type {
 			if ($receiverType->isNull()->yes()) {
 				return new NullType();
 			}
 			if (!TypeCombinator::containsNull($receiverType)) {
-				return $s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
+				return $nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
 			}
 
 			// the plain property fetch on the null-removed scope is synthetic; the
@@ -90,7 +90,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 			$propertyFetch = new PropertyFetch($expr->var, $expr->name);
 
 			return TypeCombinator::union(
-				$s->nativeTypesPromoted
+				$nativeTypesPromoted
 					? $nodeScopeResolver->priceSyntheticOnDemandNative($propertyFetch, $truthyScope)
 					: $nodeScopeResolver->priceSyntheticOnDemand($propertyFetch, $truthyScope),
 				new NullType(),
@@ -134,7 +134,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 					return (new SpecifiedTypes())->setRootExpr($expr);
 				}
 
-				$nullsafeType = $nullsafeTypeCallback($s);
+				$nullsafeType = $nullsafeTypeCallback($s->nativeTypesPromoted);
 				if ($context->true()) {
 					$containsNull = !$type->isNull()->no() && !$nullsafeType->isNull()->no();
 				} else {

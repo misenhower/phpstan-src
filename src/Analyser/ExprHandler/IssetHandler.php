@@ -139,10 +139,10 @@ final class IssetHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: static function (MutatingScope $s) use ($varResults): Type {
+			typeCallback: static function (bool $nativeTypesPromoted) use ($varResults, $beforeScope): Type {
 				$issetResult = true;
 				foreach ($varResults as $varResult) {
-					$result = $varResult->getIssetabilityResolution($s, false)->isSet(static function (Type $type): ?bool {
+					$result = $varResult->getIssetabilityResolution($nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope, false)->isSet(static function (Type $type): ?bool {
 						$isNull = $type->isNull();
 						if ($isNull->maybe()) {
 							return null;

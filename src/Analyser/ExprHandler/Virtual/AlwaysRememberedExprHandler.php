@@ -60,7 +60,7 @@ final class AlwaysRememberedExprHandler implements ExprHandler
 			isAlwaysTerminating: $innerResult->isAlwaysTerminating(),
 			throwPoints: $innerResult->getThrowPoints(),
 			impurePoints: $innerResult->getImpurePoints(),
-			typeCallback: static fn (MutatingScope $scope): Type => $scope->nativeTypesPromoted ? $expr->getNativeExprType() : $expr->getExprType(),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $expr->getNativeExprType() : $expr->getExprType(),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 			// A type constraint on the remembered wrapper constrains both the wrapper
 			// node (under its __phpstanRemembered(...) key) and the inner expression -

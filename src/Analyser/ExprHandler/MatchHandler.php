@@ -542,11 +542,11 @@ final class MatchHandler implements ExprHandler
 			// is narrowed to that arm's condition - those captured scopes are the
 			// evaluation points, so the result type is just the union of the arm
 			// body types, no re-walk of the arms needed.
-			typeCallback: static function (MutatingScope $s) use ($expr, $armTypeResults): Type {
+			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $armTypeResults): Type {
 				$keepVoid = $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME) === true;
 				$types = [];
 				foreach ($armTypeResults as [$armResult, $bodyScope, $armBody]) {
-					if ($s->nativeTypesPromoted) {
+					if ($nativeTypesPromoted) {
 						$bodyScope = $bodyScope->doNotTreatPhpDocTypesAsCertain();
 					}
 					if ($keepVoid) {
@@ -555,7 +555,7 @@ final class MatchHandler implements ExprHandler
 						// instead of transforming it to null.
 						$types[] = $bodyScope->getKeepVoidType($armBody);
 					} else {
-						$types[] = $armResult->getTypeForScope($bodyScope);
+						$types[] = ($nativeTypesPromoted ? $armResult->getNativeType() : $armResult->getType());
 					}
 				}
 

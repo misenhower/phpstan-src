@@ -66,9 +66,9 @@ final class CastStringHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: fn (MutatingScope $s): Type => $this->initializerExprTypeResolver->getCastType($expr, static function (Expr $e) use ($s, $expr, $exprResult): Type {
+			typeCallback: fn (bool $nativeTypesPromoted): Type => $this->initializerExprTypeResolver->getCastType($expr, static function (Expr $e) use ($nativeTypesPromoted, $expr, $exprResult): Type {
 				if ($e === $expr->expr) {
-					return ($s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
+					return ($nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
 				}
 
 					throw new ShouldNotHappenException();

@@ -112,8 +112,8 @@ final class InstanceofHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $classResult, $isInTrait, $nameClassType): Type {
-				$expressionType = $s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
+			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $exprResult, $classResult, $isInTrait, $nameClassType): Type {
+				$expressionType = $nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
 				if (
 					$isInTrait
 					&& TypeUtils::findThisType($expressionType) !== null
@@ -137,7 +137,7 @@ final class InstanceofHandler implements ExprHandler
 					if ($classResult === null) {
 						throw new ShouldNotHappenException();
 					}
-					$classNameType = $s->nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType();
+					$classNameType = $nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType();
 					$result = $classNameType->toObjectTypeForInstanceofCheck();
 					$classType = $result->type;
 					$uncertainty = $result->uncertainty;

@@ -96,9 +96,9 @@ final class StaticPropertyFetchHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			containsNullsafe: $classResult !== null && $classResult->containsNullsafe(),
 			issetabilityDescriptor: IssetabilityDescriptor::property($classResult, fn (MutatingScope $s): ?FoundPropertyReflection => $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s), $expr),
-			typeCallback: function (MutatingScope $s) use ($expr, $classResult, $nameResult, $nodeScopeResolver, $beforeScope): Type {
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $classResult, $nameResult, $nodeScopeResolver, $beforeScope): Type {
 				$classType = $classResult !== null
-					? ($s->nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType())
+					? ($nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType())
 					: null;
 				$shortCircuit = static fn (Type $type): Type => $classResult !== null && $classResult->containsNullsafe() && $classType !== null && TypeCombinator::containsNull($classType)
 					? TypeCombinator::addNull($type)
@@ -116,8 +116,8 @@ final class StaticPropertyFetchHandler implements ExprHandler
 					$staticPropertyFetchedOnType = TypeCombinator::removeNull($resolvedClassType)->getObjectTypeOrClassStringObjectType();
 				}
 
-				$resolveProperty = function (string $propertyName) use ($s, $reflectionScope, $staticPropertyFetchedOnType, $expr): Type {
-					if ($s->nativeTypesPromoted) {
+				$resolveProperty = function (string $propertyName) use ($nativeTypesPromoted, $reflectionScope, $staticPropertyFetchedOnType, $expr): Type {
+					if ($nativeTypesPromoted) {
 						$propertyReflection = $reflectionScope->getStaticPropertyReflection($staticPropertyFetchedOnType, $propertyName);
 						if ($propertyReflection === null) {
 							return new ErrorType();
@@ -140,7 +140,7 @@ final class StaticPropertyFetchHandler implements ExprHandler
 				// name from beforeScope. The asking scope is not narrowed per name,
 				// so such fetches can be less precise.
 				$nameType = $nameResult !== null
-					? ($s->nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
+					? ($nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
 					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $beforeScope);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(

@@ -86,7 +86,7 @@ final class ClassConstFetchHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (MutatingScope $scope) use ($expr, $classResult, $classReflection): Type {
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $classResult, $classReflection): Type {
 				if (!$expr->name instanceof Identifier) {
 					return new MixedType();
 				}
@@ -97,12 +97,12 @@ final class ClassConstFetchHandler implements ExprHandler
 					$classReflection,
 					// getClassConstFetchTypeByReflection only invokes this for $expr->class
 					// when it is an Expr, which is exactly when $classResult exists
-					static function (Expr $e) use ($classResult, $scope): Type {
+					static function (Expr $e) use ($classResult, $nativeTypesPromoted): Type {
 						if ($classResult === null) {
 							throw new ShouldNotHappenException();
 						}
 
-						return $scope->nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType();
+						return $nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType();
 					},
 				);
 			},

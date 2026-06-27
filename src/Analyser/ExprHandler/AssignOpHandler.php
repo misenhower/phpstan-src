@@ -79,12 +79,12 @@ final class AssignOpHandler implements ExprHandler
 			$nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 		}
 
-		$typeCallback = function (MutatingScope $s) use ($expr, $nodeScopeResolver, $beforeScope): Type {
+		$typeCallback = function (bool $nativeTypesPromoted) use ($expr, $nodeScopeResolver, $beforeScope): Type {
 			// $expr->var and $expr->expr were processed during this handler's
 			// processExpr (the var as the assignment target, the value expr by the
 			// inner closure below), so their ExpressionResults are stored - read
 			// them instead of re-walking via Scope::getType().
-			$getType = static fn (Expr $e): Type => $s->nativeTypesPromoted
+			$getType = static fn (Expr $e): Type => $nativeTypesPromoted
 				? $nodeScopeResolver->readStoredOrPriceOnDemandNative($e, $beforeScope)
 				: $nodeScopeResolver->readStoredOrPriceOnDemand($e, $beforeScope);
 
@@ -101,7 +101,7 @@ final class AssignOpHandler implements ExprHandler
 
 				$coalesceResult = $nodeScopeResolver->processExprOnDemand($coalesce, $beforeScope, $coalesceStorage);
 
-				return $s->nativeTypesPromoted ? $coalesceResult->getNativeType() : $coalesceResult->getType();
+				return $nativeTypesPromoted ? $coalesceResult->getNativeType() : $coalesceResult->getType();
 			}
 
 			if ($expr instanceof Expr\AssignOp\Concat) {

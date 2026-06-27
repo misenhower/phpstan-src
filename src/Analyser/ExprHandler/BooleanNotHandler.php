@@ -53,8 +53,8 @@ final class BooleanNotHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
-			typeCallback: static function (MutatingScope $s) use ($exprResult): Type {
-				$exprBooleanType = ($s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType())->toBoolean();
+			typeCallback: static function (bool $nativeTypesPromoted) use ($exprResult): Type {
+				$exprBooleanType = ($nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType())->toBoolean();
 				if ($exprBooleanType->isTrue()->yes()) {
 					return new ConstantBooleanType(false);
 				}

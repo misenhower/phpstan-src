@@ -243,14 +243,14 @@ final class StaticCallHandler implements ExprHandler
 		// evolving scope (type-driven, generics resolved). When null
 		// (native-types-promoted, or on-demand / synthetic pricing) the acceptor is
 		// re-derived from the already-processed argument results on the asking scope.
-		$typeCallback = fn (MutatingScope $s): Type => $this->resolveReturnType(
+		$typeCallback = fn (bool $nativeTypesPromoted): Type => $this->resolveReturnType(
 			$nodeScopeResolver,
 			$beforeScope,
-			$s->nativeTypesPromoted,
+			$nativeTypesPromoted,
 			$expr,
 			$classResult,
 			$nameResult,
-			$s->nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+			$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
 		);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,

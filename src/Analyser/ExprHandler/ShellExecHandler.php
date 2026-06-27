@@ -79,7 +79,7 @@ final class ShellExecHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: static fn (MutatingScope $scope): Type => TypeCombinator::union(new StringType(), new ConstantBooleanType(false), new NullType()),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => TypeCombinator::union(new StringType(), new ConstantBooleanType(false), new NullType()),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

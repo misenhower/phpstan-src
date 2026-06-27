@@ -51,7 +51,7 @@ final class UnsetOffsetExprHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $s): Type => $varResult->getTypeForScope($s)->unsetOffset($dimResult->getTypeForScope($s)),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType())->unsetOffset(($nativeTypesPromoted ? $dimResult->getNativeType() : $dimResult->getType())),
 			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);
 	}

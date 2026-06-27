@@ -55,7 +55,7 @@ final class ConstFetchHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: function (MutatingScope $scope) use ($expr): Type {
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $scope): Type {
 				$constName = (string) $expr->name;
 				$loweredConstName = strtolower($constName);
 				if ($loweredConstName === 'true') {

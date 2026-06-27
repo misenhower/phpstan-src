@@ -97,8 +97,8 @@ final class BooleanAndHandler implements ExprHandler
 			impurePoints: array_merge($leftResult->getImpurePoints(), $rightResult->getImpurePoints()),
 			truthyScopeCallback: static fn (): MutatingScope => $rightResult->getScope()->filterByTruthyValue($expr->right),
 			falseyScopeCallback: static fn (): MutatingScope => $leftMergedWithRightScope->filterByFalseyValue($expr),
-			typeCallback: static function (MutatingScope $s) use ($leftResult, $rightResult, $leftTruthyScope): Type {
-				$leftBooleanType = ($s->nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType())->toBoolean();
+			typeCallback: static function (bool $nativeTypesPromoted) use ($leftResult, $rightResult): Type {
+				$leftBooleanType = ($nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType())->toBoolean();
 				if ($leftBooleanType->isFalse()->yes()) {
 					return new ConstantBooleanType(false);
 				}
@@ -107,7 +107,7 @@ final class BooleanAndHandler implements ExprHandler
 				// the left's side effects (assignments, by-ref writes) - that
 				// captured scope is the evaluation point, no re-walk and no
 				// depth cap needed
-				$rightBooleanType = $rightResult->getTypeForScope($s->nativeTypesPromoted ? $leftTruthyScope->doNotTreatPhpDocTypesAsCertain() : $leftTruthyScope)->toBoolean();
+				$rightBooleanType = ($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType())->toBoolean();
 				if ($rightBooleanType->isFalse()->yes()) {
 					return new ConstantBooleanType(false);
 				}

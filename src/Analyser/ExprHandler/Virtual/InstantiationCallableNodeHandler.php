@@ -63,7 +63,7 @@ final class InstantiationCallableNodeHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: fn (MutatingScope $scope): Type => $this->initializerExprTypeResolver->getFirstClassCallableType($expr->getOriginalNode(), InitializerExprContext::fromScope($scope), $scope->nativeTypesPromoted),
+			typeCallback: fn (bool $nativeTypesPromoted): Type => $this->initializerExprTypeResolver->getFirstClassCallableType($expr->getOriginalNode(), InitializerExprContext::fromScope($beforeScope), $nativeTypesPromoted),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

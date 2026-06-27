@@ -66,7 +66,7 @@ final class ExitHandler implements ExprHandler
 			isAlwaysTerminating: true,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: static fn (MutatingScope $scope): Type => new NonAcceptingNeverType(),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => new NonAcceptingNeverType(),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

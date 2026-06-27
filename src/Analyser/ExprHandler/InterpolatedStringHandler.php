@@ -79,14 +79,14 @@ final class InterpolatedStringHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (MutatingScope $scope) use ($expr, $partResults): Type {
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $partResults): Type {
 				$resultType = null;
 				foreach ($expr->parts as $part) {
 					if ($part instanceof InterpolatedStringPart) {
 						$partType = new ConstantStringType($part->value);
 					} else {
 						$partResult = $partResults[spl_object_id($part)];
-						$partType = ($scope->nativeTypesPromoted ? $partResult->getNativeType() : $partResult->getType())->toString();
+						$partType = ($nativeTypesPromoted ? $partResult->getNativeType() : $partResult->getType())->toString();
 					}
 					if ($resultType === null) {
 						$resultType = $partType;

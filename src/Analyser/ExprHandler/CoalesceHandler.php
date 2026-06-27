@@ -93,7 +93,7 @@ final class CoalesceHandler implements ExprHandler
 			isAlwaysTerminating: $condResult->isAlwaysTerminating(),
 			throwPoints: array_merge($condResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($condResult->getImpurePoints(), $rightResult->getImpurePoints()),
-			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $nodeScopeResolver, $beforeScope): Type {
+			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $condResult, $rightResult, $nodeScopeResolver, $beforeScope): Type {
 				$issetLeftExpr = new Expr\Isset_([$expr->left]);
 
 				// the isset resolution and the left-is-set narrowing run on
@@ -113,7 +113,7 @@ final class CoalesceHandler implements ExprHandler
 
 				// the right side was processed on the left-is-null scope, so its own
 				// result is the evaluation point.
-				$rightType = $s->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
+				$rightType = $nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 
 				if ($result === null) {
 					return TypeCombinator::union(

@@ -89,7 +89,7 @@ final class PipeHandler implements ExprHandler
 				isAlwaysTerminating: false,
 				throwPoints: [],
 				impurePoints: [],
-				typeCallback: static fn (MutatingScope $s): Type => ($s->nativeTypesPromoted ? $callableNodeResult->getNativeType() : $callableNodeResult->getType()),
+				typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $callableNodeResult->getNativeType() : $callableNodeResult->getType()),
 				specifyTypesCallback: static fn () => new SpecifiedTypes(),
 			));
 		}
@@ -105,7 +105,7 @@ final class PipeHandler implements ExprHandler
 			throwPoints: $callResult->getThrowPoints(),
 			impurePoints: $callResult->getImpurePoints(),
 			// the pipe evaluates to its rewritten call - read that child's result
-			typeCallback: static fn (MutatingScope $s): Type => ($s->nativeTypesPromoted ? $callResult->getNativeType() : $callResult->getType()),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $callResult->getNativeType() : $callResult->getType()),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

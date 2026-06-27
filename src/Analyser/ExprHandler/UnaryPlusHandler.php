@@ -51,9 +51,9 @@ final class UnaryPlusHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
-			typeCallback: fn (MutatingScope $scope) => $this->initializerExprTypeResolver->getUnaryPlusType($expr->expr, static function (Expr $e) use ($scope, $expr, $exprResult): Type {
+			typeCallback: fn (bool $nativeTypesPromoted) => $this->initializerExprTypeResolver->getUnaryPlusType($expr->expr, static function (Expr $e) use ($nativeTypesPromoted, $expr, $exprResult): Type {
 				if ($e === $expr->expr) {
-					return ($scope->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
+					return ($nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
 				}
 
 				throw new ShouldNotHappenException();

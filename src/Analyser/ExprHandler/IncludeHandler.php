@@ -56,7 +56,7 @@ final class IncludeHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: array_merge($exprResult->getThrowPoints(), [InternalThrowPoint::createImplicit($scope, $expr)]),
 			impurePoints: array_merge($exprResult->getImpurePoints(), [new ImpurePoint($scope, $expr, $identifier, $identifier, true)]),
-			typeCallback: static fn (MutatingScope $scope): Type => new MixedType(),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => new MixedType(),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

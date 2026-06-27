@@ -3106,7 +3106,7 @@ class NodeScopeResolver
 				impurePoints: $newExprResult->getImpurePoints(),
 				// the first-class callable closure type lives on the *CallableNode
 				// result; delegate so getType() of the original CallLike answers from it
-				typeCallback: static fn (MutatingScope $s): Type => $newExprResult->getTypeForScope($s),
+				typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $newExprResult->getNativeType() : $newExprResult->getType()),
 				specifyTypesCallback: static fn () => new SpecifiedTypes(),
 			);
 			$this->storeExpressionResult($storage, $expr, $expressionResult);

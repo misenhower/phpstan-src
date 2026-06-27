@@ -49,7 +49,7 @@ final class NativeTypeExprHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $scope): Type => $scope->nativeTypesPromoted ? $expr->getNativeType() : $expr->getPhpDocType(),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $expr->getNativeType() : $expr->getPhpDocType(),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

@@ -1326,10 +1326,10 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				) || $node->isFirstClassCallable()
 			)
 		) {
-			return $this->getType($node);
+			return $this->getScopeStateType($node);
 		}
 
-		$originalType = $this->getType($node);
+		$originalType = $this->getScopeStateType($node);
 		if (!TypeCombinator::containsNull($originalType)) {
 			return $originalType;
 		}
@@ -1809,7 +1809,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			if (!$parameter->var instanceof Variable || !is_string($parameter->var->name)) {
 				throw new ShouldNotHappenException();
 			}
-			$realParameterDefaultValues[$parameter->var->name] = $this->getType($parameter->default);
+			$realParameterDefaultValues[$parameter->var->name] = $this->initializerExprTypeResolver->getType($parameter->default, InitializerExprContext::fromScope($this));
 		}
 
 		return $realParameterDefaultValues;
@@ -2322,7 +2322,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				true,
 			)
 			&& isset($expr->getArgs()[0])
-			&& count($this->getType($expr->getArgs()[0]->value)->getConstantStrings()) === 1
+			&& count($this->getScopeStateType($expr->getArgs()[0]->value)->getConstantStrings()) === 1
 			&& $type->isTrue()->yes();
 	}
 
@@ -2963,10 +2963,10 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	{
 		$scope = $this;
 		if ($expr instanceof Expr\ArrayDimFetch && $expr->dim !== null) {
-			$exprVarType = $scope->getType($expr->var);
+			$exprVarType = $scope->getScopeStateType($expr->var);
 			$dimType = $scope->getType($expr->dim);
 			$unsetType = $exprVarType->unsetOffset($dimType);
-			$exprVarNativeType = $scope->getNativeType($expr->var);
+			$exprVarNativeType = $scope->getScopeStateNativeType($expr->var);
 			$dimNativeType = $scope->getNativeType($expr->dim);
 			$unsetNativeType = $exprVarNativeType->unsetOffset($dimNativeType);
 			$scope = $scope->assignExpression($expr->var, $unsetType, $unsetNativeType)->invalidateExpression(
@@ -2984,17 +2984,88 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 					$expr->var->var,
 					$this->getType($expr->var->var)->setOffsetValueType(
 						$scope->getType($expr->var->dim),
-						$scope->getType($expr->var),
+						$scope->getScopeStateType($expr->var),
 					),
 					$this->getNativeType($expr->var->var)->setOffsetValueType(
 						$scope->getNativeType($expr->var->dim),
-						$scope->getNativeType($expr->var),
+						$scope->getScopeStateNativeType($expr->var),
 					),
 				);
 			}
 		}
 
 		return $scope->invalidateExpression($expr);
+	}
+
+	private function getScopeStateType(Expr $expr): Type
+	{
+		return $this->resolveScopeStateType($expr, false);
+	}
+
+	private function getScopeStateNativeType(Expr $expr): Type
+	{
+		return $this->resolveScopeStateType($expr, true);
+	}
+
+	/**
+	 * Reads a narrowable expression's current type from the scope's tracked
+	 * state (recursing into its operands), instead of routing through the stored
+	 * ExpressionResult callbacks - so it reflects narrowings and assignments
+	 * applied to this scope rather than the expression's original evaluation
+	 * point (where Variable callbacks would read their captured beforeScope).
+	 */
+	private function resolveScopeStateType(Expr $expr, bool $native): Type
+	{
+		if (!$expr instanceof Variable && $this->hasExpressionType($expr)->yes()) {
+			return $native ? $this->getNativeType($expr) : $this->getType($expr);
+		}
+
+		if ($expr instanceof Variable && is_string($expr->name)) {
+			$scope = $native ? $this->doNotTreatPhpDocTypesAsCertain() : $this;
+
+			return $scope->hasVariableType($expr->name)->no() ? new ErrorType() : $scope->getVariableType($expr->name);
+		}
+
+		if ($expr instanceof Expr\ArrayDimFetch && $expr->dim !== null) {
+			return $this->resolveScopeStateType($expr->var, $native)
+				->getOffsetValueType($this->resolveScopeStateType($expr->dim, $native));
+		}
+
+		if ($expr instanceof PropertyFetch && $expr->name instanceof Identifier) {
+			$propertyReflection = $this->getInstancePropertyReflection(
+				$this->resolveScopeStateType($expr->var, $native),
+				$expr->name->toString(),
+			);
+			if ($propertyReflection === null) {
+				return new ErrorType();
+			}
+
+			if ($native) {
+				return $propertyReflection->hasNativeType() ? $propertyReflection->getNativeType() : new MixedType();
+			}
+
+			return $propertyReflection->getReadableType();
+		}
+
+		if ($expr instanceof Expr\StaticPropertyFetch && $expr->name instanceof Node\VarLikeIdentifier) {
+			$fetchedOnType = $expr->class instanceof Name
+				? $this->resolveTypeByName($expr->class)
+				: TypeCombinator::removeNull($this->resolveScopeStateType($expr->class, $native))->getObjectTypeOrClassStringObjectType();
+			$propertyReflection = $this->getStaticPropertyReflection($fetchedOnType, $expr->name->toString());
+			if ($propertyReflection === null) {
+				return new ErrorType();
+			}
+
+			if ($native) {
+				return $propertyReflection->hasNativeType() ? $propertyReflection->getNativeType() : new MixedType();
+			}
+
+			return $propertyReflection->getReadableType();
+		}
+
+		// genuinely non-narrowed expressions (constants, calls, ...) have no
+		// variable-callback hazard, so read them normally.
+		return $native ? $this->getNativeType($expr) : $this->getType($expr);
 	}
 
 	public function specifyExpressionType(Expr $expr, Type $type, Type $nativeType, TrinaryLogic $certainty): self
@@ -3030,9 +3101,9 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			&& !$expr->dim instanceof Expr\PostDec
 			&& !$expr->dim instanceof Expr\PostInc
 		) {
-			$dimType = $scope->getType($expr->dim)->toArrayKey();
+			$dimType = $scope->getScopeStateType($expr->dim)->toArrayKey();
 			if ($dimType->isInteger()->yes() || $dimType->isString()->yes()) {
-				$exprVarType = $scope->getType($expr->var);
+				$exprVarType = $scope->getScopeStateType($expr->var);
 				$isArray = $exprVarType->isArray();
 				if (!$exprVarType instanceof MixedType && !$isArray->no()) {
 					$varType = $exprVarType;
@@ -3056,7 +3127,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 					$scope = $scope->specifyExpressionType(
 						$expr->var,
 						$varType,
-						$scope->getNativeType($expr->var),
+						$scope->getScopeStateNativeType($expr->var),
 						$certainty,
 					);
 				}
@@ -3294,12 +3365,12 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 	public function addTypeToExpression(Expr $expr, Type $type): self
 	{
-		$originalExprType = $this->getType($expr);
+		$originalExprType = $this->getScopeStateType($expr);
 		if ($this->isComplexUnionType($originalExprType)) {
 			return $this;
 		}
 
-		$nativeType = $this->getNativeType($expr);
+		$nativeType = $this->getScopeStateNativeType($expr);
 
 		if ($originalExprType->equals($nativeType)) {
 			$newType = TypeCombinator::intersect($type, $originalExprType);
@@ -3320,7 +3391,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			return $this;
 		}
 
-		$exprType = $this->getType($expr);
+		$exprType = $this->getScopeStateType($expr);
 		if ($exprType instanceof NeverType) {
 			return $this;
 		}
@@ -3332,7 +3403,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		return $this->specifyExpressionType(
 			$expr,
 			TypeCombinator::remove($exprType, $typeToRemove),
-			TypeCombinator::remove($this->getNativeType($expr), $typeToRemove),
+			TypeCombinator::remove($this->getScopeStateNativeType($expr), $typeToRemove),
 			TrinaryLogic::createYes(),
 		);
 	}

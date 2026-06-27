@@ -56,7 +56,7 @@ final class IssetExprHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $s): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($expr->getExpr(), $s),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->getExpr(), $scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->getExpr(), $scope),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

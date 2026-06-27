@@ -50,7 +50,7 @@ final class PossiblyImpureCallExprHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $s): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($expr->callExpr, $s),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->callExpr, $scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->callExpr, $scope),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

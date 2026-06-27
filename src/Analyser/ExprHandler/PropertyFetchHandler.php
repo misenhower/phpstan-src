@@ -95,11 +95,11 @@ final class PropertyFetchHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			containsNullsafe: $varResult->containsNullsafe(),
 			issetabilityDescriptor: IssetabilityDescriptor::property($varResult, fn (MutatingScope $s): ?FoundPropertyReflection => $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $s), $expr),
-			typeCallback: function (MutatingScope $s) use ($expr, $varResult, $nameResult, $nodeScopeResolver, $beforeScope): Type {
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $varResult, $nameResult, $nodeScopeResolver, $beforeScope): Type {
 				// a fetch on a nullsafe chain whose receiver is currently nullable
 				// short-circuits to null - the receiver result carries whether the
 				// chain contains a ?-> (a plain nullable receiver does not propagate)
-				$receiverType = $s->nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType();
+				$receiverType = $nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType();
 				$shortCircuit = static fn (Type $type): Type => $varResult->containsNullsafe() && TypeCombinator::containsNull($receiverType)
 					? TypeCombinator::addNull($type)
 					: $type;
@@ -107,9 +107,9 @@ final class PropertyFetchHandler implements ExprHandler
 				// the property's class/visibility/assign context is lexical, so it
 				// comes from beforeScope; the scope-dependent receiver type is read
 				// from the operand result above.
-				$reflectionScope = $s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
-				$resolveProperty = function (string $propertyName) use ($s, $reflectionScope, $receiverType, $expr): Type {
-					if ($s->nativeTypesPromoted) {
+				$reflectionScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+				$resolveProperty = function (string $propertyName) use ($nativeTypesPromoted, $reflectionScope, $receiverType, $expr): Type {
+					if ($nativeTypesPromoted) {
 						$propertyReflection = $reflectionScope->getInstancePropertyReflection($receiverType, $propertyName);
 						if ($propertyReflection === null) {
 							return new ErrorType();
@@ -133,7 +133,7 @@ final class PropertyFetchHandler implements ExprHandler
 				// from beforeScope. The asking scope is not narrowed per name, so
 				// $obj->{'foo'}-style fetches can be less precise.
 				$nameType = $nameResult !== null
-					? ($s->nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
+					? ($nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
 					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $beforeScope);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(

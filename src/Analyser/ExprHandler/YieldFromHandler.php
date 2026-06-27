@@ -56,8 +56,8 @@ final class YieldFromHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: array_merge($exprResult->getThrowPoints(), [InternalThrowPoint::createImplicit($scope, $expr)]),
 			impurePoints: array_merge($exprResult->getImpurePoints(), [new ImpurePoint($scope, $expr, 'yieldFrom', 'yield from', true)]),
-			typeCallback: static function (MutatingScope $scope) use ($exprResult): Type {
-				$yieldFromType = ($scope->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
+			typeCallback: static function (bool $nativeTypesPromoted) use ($exprResult): Type {
+				$yieldFromType = ($nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
 				$generatorReturnType = $yieldFromType->getTemplateType(Generator::class, 'TReturn');
 				if ($generatorReturnType instanceof ErrorType) {
 					return new MixedType();

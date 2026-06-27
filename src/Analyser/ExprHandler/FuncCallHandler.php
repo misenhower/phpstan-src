@@ -322,13 +322,13 @@ final class FuncCallHandler implements ExprHandler
 		// (native-types-promoted, on-demand / synthetic pricing, or special cases
 		// inside resolveReturnType), the acceptor is re-derived from the
 		// already-processed argument results on the asking scope.
-		$typeCallback = fn (MutatingScope $s): Type => $this->resolveReturnType(
+		$typeCallback = fn (bool $nativeTypesPromoted): Type => $this->resolveReturnType(
 			$nodeScopeResolver,
 			$beforeScope,
-			$s->nativeTypesPromoted,
+			$nativeTypesPromoted,
 			$expr,
 			$nameResult,
-			$s->nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+			$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
 			$argsResult,
 		);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(

@@ -117,20 +117,24 @@ final class BinaryOpHandler implements ExprHandler
 			isAlwaysTerminating: $leftResult->isAlwaysTerminating() || $rightResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (MutatingScope $scope) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): Type {
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope): Type {
+				// the comparison helpers (resolveEqualType / RicherScopeGetTypeHelper)
+				// read the operand types off the evaluation scope - native-promote it
+				// here so the native flavour is honoured.
+				$scope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 				// the operands were processed during processExpr; read their already
 				// computed results instead of re-walking via Scope::getType().
 				// Synthetic nodes the resolver builds (e.g. getDivType's Mod) are
 				// priced on demand by the same helper.
-				$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $scope, $nodeScopeResolver): Type {
+				$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $nativeTypesPromoted, $beforeScope, $nodeScopeResolver): Type {
 					if ($e === $expr->left) {
-						return $leftResult->getTypeForScope($scope);
+						return ($nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType());
 					}
 					if ($e === $expr->right) {
-						return $rightResult->getTypeForScope($scope);
+						return ($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType());
 					}
 
-					return $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+					return $nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($e, $beforeScope) : $nodeScopeResolver->readStoredOrPriceOnDemand($e, $beforeScope);
 				};
 
 				if ($expr instanceof BinaryOp\Smaller) {

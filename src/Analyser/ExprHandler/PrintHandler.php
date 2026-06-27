@@ -62,7 +62,7 @@ final class PrintHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: array_merge($impurePoints, [new ImpurePoint($scope, $expr, 'print', 'print', true)]),
-			typeCallback: static fn (MutatingScope $scope): Type => new ConstantIntegerType(1),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => new ConstantIntegerType(1),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

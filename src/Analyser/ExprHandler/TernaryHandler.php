@@ -106,13 +106,12 @@ final class TernaryHandler implements ExprHandler
 			// the branches were processed on the cond-truthy/cond-falsey scopes
 			// including the condition's side effects - those captured scopes
 			// are the evaluation points, no re-walk needed
-			typeCallback: static function (MutatingScope $s) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $ifProcessingScope, $elseProcessingScope, $nodeScopeResolver): Type {
-				if ($s->nativeTypesPromoted) {
+			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $ifProcessingScope, $nodeScopeResolver): Type {
+				if ($nativeTypesPromoted) {
 					$ifProcessingScope = $ifProcessingScope->doNotTreatPhpDocTypesAsCertain();
-					$elseProcessingScope = $elseProcessingScope->doNotTreatPhpDocTypesAsCertain();
 				}
-				$booleanConditionType = ($s->nativeTypesPromoted ? $ternaryCondResult->getNativeType() : $ternaryCondResult->getType())->toBoolean();
-				$elseType = $elseResult->getTypeForScope($elseProcessingScope);
+				$booleanConditionType = ($nativeTypesPromoted ? $ternaryCondResult->getNativeType() : $ternaryCondResult->getType())->toBoolean();
+				$elseType = ($nativeTypesPromoted ? $elseResult->getNativeType() : $elseResult->getType());
 				if ($expr->if === null || $ifResult === null) {
 					// short-ternary truthy value: the condition read on its own truthy scope
 					// is a different scope than its own, so reprocess it there.
@@ -131,7 +130,7 @@ final class TernaryHandler implements ExprHandler
 					);
 				}
 
-				$ifType = $ifResult->getTypeForScope($ifProcessingScope);
+				$ifType = ($nativeTypesPromoted ? $ifResult->getNativeType() : $ifResult->getType());
 				if ($booleanConditionType->isTrue()->yes()) {
 					return $ifType;
 				}

@@ -50,14 +50,14 @@ final class UnaryMinusHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
-			typeCallback: fn (MutatingScope $scope) => $this->initializerExprTypeResolver->getUnaryMinusType($expr->expr, static function (Expr $e) use ($scope, $expr, $exprResult, $nodeScopeResolver): Type {
+			typeCallback: fn (bool $nativeTypesPromoted) => $this->initializerExprTypeResolver->getUnaryMinusType($expr->expr, static function (Expr $e) use ($nativeTypesPromoted, $expr, $exprResult, $nodeScopeResolver, $scope): Type {
 				if ($e === $expr->expr) {
-					return ($scope->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
+					return ($nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
 				}
 
 				// a synthetic node ($expr->expr * -1, derived for an IntegerRangeType
 				// operand) created inside getUnaryMinusType - priced on demand
-				return $nodeScopeResolver->priceSyntheticOnDemand($e, $scope);
+				return $nativeTypesPromoted ? $nodeScopeResolver->priceSyntheticOnDemandNative($e, $scope) : $nodeScopeResolver->priceSyntheticOnDemand($e, $scope);
 			}),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);

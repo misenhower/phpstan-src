@@ -88,14 +88,14 @@ final class ArrayHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (MutatingScope $s) use ($expr, $itemResults): Type {
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $itemResults, $beforeScope): Type {
 				// each item type was captured at its own evaluation point in the
 				// sequence - resolving all items on any single scope (the old world)
 				// cannot handle items with side effects like [$b = 1, $b + 1, $b++]
-				$type = $this->initializerExprTypeResolver->getArrayType($expr, static function (Expr $inner) use ($itemResults, $s): Type {
+				$type = $this->initializerExprTypeResolver->getArrayType($expr, static function (Expr $inner) use ($itemResults, $nativeTypesPromoted): Type {
 					$id = spl_object_id($inner);
 					if (array_key_exists($id, $itemResults)) {
-						return $s->nativeTypesPromoted
+						return $nativeTypesPromoted
 							? $itemResults[$id]->getNativeType()
 							: $itemResults[$id]->getType();
 					}
@@ -113,11 +113,11 @@ final class ArrayHandler implements ExprHandler
 						[new Arg($expr)],
 					);
 					if (
-						$s->hasExpressionType($isCallableCall)->yes()
+						$beforeScope->hasExpressionType($isCallableCall)->yes()
 						// read the narrowed type from expressionTypes directly (the
 						// synthetic is_callable() call was never processed as a child),
 						// mirroring ConstFetchHandler's narrowed-constant lookup
-						&& $s->expressionTypes[$s->getNodeKey($isCallableCall)]->getType()->isTrue()->yes()
+						&& $beforeScope->expressionTypes[$beforeScope->getNodeKey($isCallableCall)]->getType()->isTrue()->yes()
 					) {
 						$type = TypeCombinator::intersect($type, new CallableType());
 					}

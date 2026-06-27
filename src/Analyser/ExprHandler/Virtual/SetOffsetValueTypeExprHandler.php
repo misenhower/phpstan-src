@@ -53,9 +53,9 @@ final class SetOffsetValueTypeExprHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $s): Type => $varResult->getTypeForScope($s)->setOffsetValueType(
-				$dimResult !== null ? $dimResult->getTypeForScope($s) : null,
-				$valueResult->getTypeForScope($s),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType())->setOffsetValueType(
+				$dimResult !== null ? ($nativeTypesPromoted ? $dimResult->getNativeType() : $dimResult->getType()) : null,
+				($nativeTypesPromoted ? $valueResult->getNativeType() : $valueResult->getType()),
 			),
 			specifyTypesCallback: static fn () => new SpecifiedTypes(),
 		);

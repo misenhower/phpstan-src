@@ -51,7 +51,7 @@ final class ThrowHandler implements ExprHandler
 			isAlwaysTerminating: true,
 			throwPoints: array_merge($exprResult->getThrowPoints(), [InternalThrowPoint::createExplicit($scope, $exprResult->getTypeForScope($scope), $expr, false)]),
 			impurePoints: $exprResult->getImpurePoints(),
-			typeCallback: static fn (MutatingScope $scope): Type => new NonAcceptingNeverType(),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => new NonAcceptingNeverType(),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

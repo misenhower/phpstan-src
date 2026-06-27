@@ -63,8 +63,8 @@ final class EmptyHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
-			typeCallback: static function (MutatingScope $s) use ($exprResult): Type {
-				$result = $exprResult->getIssetabilityResolution($s, false)->notEmpty();
+			typeCallback: static function (bool $nativeTypesPromoted) use ($exprResult, $beforeScope): Type {
+				$result = $exprResult->getIssetabilityResolution($nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope, false)->notEmpty();
 				if ($result === null) {
 					return new BooleanType();
 				}

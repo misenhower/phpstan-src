@@ -49,7 +49,7 @@ final class TypeExprHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			typeCallback: static fn (MutatingScope $scope): Type => $expr->getExprType(),
+			typeCallback: static fn (bool $nativeTypesPromoted): Type => $expr->getExprType(),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}

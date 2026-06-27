@@ -83,7 +83,7 @@ final class IssetabilityDescriptor
 
 			$hasVariable = $scope->hasVariableType($variableName);
 			$valueType = $hasVariable->yes()
-				? ($useNativeTypes ? $scope->getNativeType($expr) : $scope->getType($expr))
+				? ($useNativeTypes ? $scope->doNotTreatPhpDocTypesAsCertain()->getVariableType($variableName) : $scope->getVariableType($variableName))
 				: new NeverType();
 
 			return new IssetabilityResolution(IssetabilityLinkInfo::variable($variableName, $hasVariable, $valueType), null);

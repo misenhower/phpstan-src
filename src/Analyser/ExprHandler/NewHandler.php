@@ -231,11 +231,11 @@ final class NewHandler implements ExprHandler
 		// parameters from constructor args). When null (native-types-promoted, or
 		// on-demand / synthetic pricing), resolveReturnType() re-selects a structural
 		// acceptor from the args on the asking scope.
-		$typeCallback = fn (MutatingScope $s): Type => $this->resolveReturnType(
+		$typeCallback = fn (bool $nativeTypesPromoted): Type => $this->resolveReturnType(
 			$nodeScopeResolver,
-			$s,
+			$nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
 			$expr,
-			$s->nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+			$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
 		);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$s,

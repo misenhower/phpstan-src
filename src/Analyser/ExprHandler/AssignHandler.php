@@ -169,7 +169,7 @@ final class AssignHandler implements ExprHandler
 					isAlwaysTerminating: $isAlwaysTerminating,
 					throwPoints: $throwPoints,
 					impurePoints: $impurePoints,
-					typeCallback: static fn (MutatingScope $s): Type => $s->nativeTypesPromoted ? $result->getNativeType() : $result->getType(),
+					typeCallback: static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $result->getNativeType() : $result->getType(),
 					specifyTypesCallback: static fn () => new SpecifiedTypes(),
 				);
 			},
@@ -221,12 +221,12 @@ final class AssignHandler implements ExprHandler
 			isAlwaysTerminating: $result->isAlwaysTerminating(),
 			throwPoints: $result->getThrowPoints(),
 			impurePoints: $result->getImpurePoints(),
-			typeCallback: static function (MutatingScope $s) use ($assignedExprResult, $nodeScopeResolver, $expr, $beforeScope): Type {
+			typeCallback: static function (bool $nativeTypesPromoted) use ($assignedExprResult, $nodeScopeResolver, $expr, $beforeScope): Type {
 				if ($assignedExprResult !== null) {
-					return $s->nativeTypesPromoted ? $assignedExprResult->getNativeType() : $assignedExprResult->getType();
+					return $nativeTypesPromoted ? $assignedExprResult->getNativeType() : $assignedExprResult->getType();
 				}
 
-				return $s->nativeTypesPromoted
+				return $nativeTypesPromoted
 					? $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->expr, $beforeScope)
 					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $beforeScope);
 			},
@@ -669,7 +669,7 @@ final class AssignHandler implements ExprHandler
 						isAlwaysTerminating: false,
 						throwPoints: [],
 						impurePoints: [],
-						typeCallback: static fn (MutatingScope $s): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch->var, $s)->getOffsetValueType($nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $s)),
+						typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($dimFetch->var, $scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch->var, $scope))->getOffsetValueType($nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($dimExpr, $scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $scope)),
 						specifyTypesCallback: static fn () => new SpecifiedTypes(),
 					));
 					$scope = $result->getScope();
