@@ -245,7 +245,8 @@ final class StaticCallHandler implements ExprHandler
 		// re-derived from the already-processed argument results on the asking scope.
 		$typeCallback = fn (MutatingScope $s): Type => $this->resolveReturnType(
 			$nodeScopeResolver,
-			$s,
+			$beforeScope,
+			$s->nativeTypesPromoted,
 			$expr,
 			$classResult,
 			$nameResult,
@@ -296,7 +297,7 @@ final class StaticCallHandler implements ExprHandler
 			// readStoredOrPriceOnDemand, never re-running processArgs) - asking
 			// Scope::getType() for the StaticCall here would re-enter this handler on
 			// demand, as its final result is not stored yet.
-			$staticCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, $expr, $classResult, $nameResult, $resolvedParametersAcceptor);
+			$staticCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $classResult, $nameResult, $resolvedParametersAcceptor);
 			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context, $staticCallReturnType);
 			if ($methodThrowPoint !== null) {
 				$throwPoints[] = $methodThrowPoint;
@@ -398,78 +399,76 @@ final class StaticCallHandler implements ExprHandler
 	 *
 	 * @param StaticCall $expr
 	 */
-	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr, ?ExpressionResult $classResult, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor): Type
+	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $reflectionScope, bool $nativeTypesPromoted, StaticCall $expr, ?ExpressionResult $classResult, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor): Type
 	{
+		$classType = $classResult !== null
+			? ($nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType())
+			: null;
 		// a call on a nullsafe chain whose class-receiver is currently nullable
 		// short-circuits to null - the class result carries whether the chain
 		// contains a ?-> (a plain nullable receiver does not propagate).
 		$shortCircuit = static fn (Type $type): Type => $expr->class instanceof Expr
 			&& $classResult !== null
 			&& $classResult->containsNullsafe()
-			&& TypeCombinator::containsNull($classResult->getTypeForScope($scope))
+			&& $classType !== null
+			&& TypeCombinator::containsNull($classType)
 			? TypeCombinator::addNull($type)
 			: $type;
 
-		if ($expr->name instanceof Identifier) {
-			if ($scope->nativeTypesPromoted) {
+		// the method reflection and dynamic-return-type extensions run on the
+		// reflection scope (the lexical context / beforeScope); the class-
+		// expression type is read from the operand result above.
+		$resolveStaticMethod = function (string $methodName, StaticCall $staticCall) use ($reflectionScope, $nativeTypesPromoted, $classType, $nodeScopeResolver, $expr, $preResolvedAcceptor): Type {
+			if ($nativeTypesPromoted) {
 				if ($expr->class instanceof Name) {
-					$staticMethodCalledOnType = $scope->resolveTypeByName($expr->class);
+					$staticMethodCalledOnType = $reflectionScope->resolveTypeByName($expr->class);
 				} else {
-					$staticMethodCalledOnType = $classResult !== null
-						? $classResult->getNativeTypeForScope($scope)
-						: $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->class, $scope);
+					$staticMethodCalledOnType = $classType ?? $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->class, $reflectionScope);
 				}
-				$methodReflection = $scope->getMethodReflection(
-					$staticMethodCalledOnType,
-					$expr->name->name,
-				);
+				$methodReflection = $reflectionScope->getMethodReflection($staticMethodCalledOnType, $methodName);
 				if ($methodReflection === null) {
-					$callType = new ErrorType();
-				} else {
-					$callType = ParametersAcceptorSelector::combineAcceptors($methodReflection->getVariants())->getNativeReturnType();
+					return new ErrorType();
 				}
 
-				return $shortCircuit($callType);
+				return ParametersAcceptorSelector::combineAcceptors($methodReflection->getVariants())->getNativeReturnType();
 			}
 
 			if ($expr->class instanceof Name) {
-				$staticMethodCalledOnType = $scope->resolveTypeByName($expr->class);
+				$staticMethodCalledOnType = $reflectionScope->resolveTypeByName($expr->class);
 			} else {
-				$classType = $classResult !== null
-					? $classResult->getTypeForScope($scope)
-					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $scope);
-				$staticMethodCalledOnType = TypeCombinator::removeNull($classType)->getObjectTypeOrClassStringObjectType();
+				$resolvedClassType = $classType ?? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $reflectionScope);
+				$staticMethodCalledOnType = TypeCombinator::removeNull($resolvedClassType)->getObjectTypeOrClassStringObjectType();
 			}
 
-			$callType = $this->methodCallReturnTypeHelper->methodCallReturnType(
-				$scope,
+			return $this->methodCallReturnTypeHelper->methodCallReturnType(
+				$reflectionScope,
 				$staticMethodCalledOnType,
-				$expr->name->toString(),
-				$expr,
+				$methodName,
+				$staticCall,
 				$preResolvedAcceptor,
-			);
-			if ($callType === null) {
-				$callType = new ErrorType();
-			}
+			) ?? new ErrorType();
+		};
 
-			return $shortCircuit($callType);
+		if ($expr->name instanceof Identifier) {
+			return $shortCircuit($resolveStaticMethod($expr->name->toString(), $expr));
 		}
 
-		$nameType = $nameResult !== null ? $nameResult->getTypeForScope($scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $scope);
+		// dynamic static call Foo::{$name}(): resolve each possible name on the
+		// reflection scope. The asking scope is not narrowed per name, so such
+		// calls can be less precise.
+		$nameType = $nameResult !== null
+			? ($nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
+			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $reflectionScope);
 		if (count($nameType->getConstantStrings()) > 0) {
 			return TypeCombinator::union(
-				...array_map(static function ($constantString) use ($expr, $scope, $nodeScopeResolver): Type {
+				...array_map(static function ($constantString) use ($expr, $resolveStaticMethod): Type {
 					if ($constantString->getValue() === '') {
 						return new ErrorType();
 					}
 
-					// a static call with a concrete name on the name-pinned scope
-					// is synthetic.
-					$truthyScope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Identical($expr->name, new String_($constantString->getValue())), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()));
-
-					return $nodeScopeResolver->priceSyntheticOnDemand(
+					return $resolveStaticMethod(
+						$constantString->getValue(),
 						new StaticCall($expr->class, new Identifier($constantString->getValue()), $expr->args),
-						$truthyScope,
 					);
 				}, $nameType->getConstantStrings()),
 			);
