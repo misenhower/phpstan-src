@@ -1448,6 +1448,19 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	}
 
 	/**
+	 * Reads the type tracked for an expression straight from its holder, skipping
+	 * the extension/dispatch/cache machinery that getType() runs. Only valid when
+	 * hasExpressionType($node) is yes - mirrors resolveType()'s tracked-holder
+	 * early return and is what ExpressionResult uses on its tracked-holder path.
+	 *
+	 * @internal
+	 */
+	public function getTrackedExpressionType(Expr $node): Type
+	{
+		return $this->expressionTypes[$this->getNodeKey($node)]->getType();
+	}
+
+	/**
 	 * @param MethodReflection|FunctionReflection|null $reflection
 	 */
 	public function pushInFunctionCall($reflection, ?ParameterReflection $parameter, bool $rememberTypes): self
