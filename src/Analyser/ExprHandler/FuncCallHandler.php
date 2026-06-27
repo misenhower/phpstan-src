@@ -324,7 +324,8 @@ final class FuncCallHandler implements ExprHandler
 		// already-processed argument results on the asking scope.
 		$typeCallback = fn (MutatingScope $s): Type => $this->resolveReturnType(
 			$nodeScopeResolver,
-			$s,
+			$beforeScope,
+			$s->nativeTypesPromoted,
 			$expr,
 			$nameResult,
 			$s->nativeTypesPromoted ? null : $resolvedParametersAcceptor,
@@ -397,7 +398,7 @@ final class FuncCallHandler implements ExprHandler
 			// never re-running processArgs) - asking Scope::getType() for the
 			// FuncCall here would re-enter this handler on demand, as its result is
 			// not stored yet.
-			$returnType = $this->resolveReturnType($nodeScopeResolver, $scope, $expr, $nameResult, $resolvedParametersAcceptor, $argsResult);
+			$returnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $nameResult, $resolvedParametersAcceptor, $argsResult);
 			// The early structural check above (line ~180) only sees the unresolved
 			// acceptor return type; a conditional-return never (e.g.
 			// `($x is Foo ? never : string)`) only resolves to never once the actual
@@ -913,25 +914,29 @@ final class FuncCallHandler implements ExprHandler
 	 *
 	 * @param FuncCall $expr
 	 */
-	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor, ArgsResult $argsResult): Type
+	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $reflectionScope, bool $nativeTypesPromoted, Expr $expr, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor, ArgsResult $argsResult): Type
 	{
 		// the operands/arguments were processed during processExpr; read their
 		// already computed results instead of re-walking via Scope::getType().
-		// Synthetic nodes the resolver builds (e.g. Clone_, call_user_func's inner
-		// FuncCall) are priced on demand by the same helper.
-		$getType = static function (Expr $e) use ($expr, $nameResult, $scope, $nodeScopeResolver, $argsResult): Type {
+		// The function reflection and dynamic-return-type extensions run on the
+		// reflection scope (the lexical context / beforeScope). Synthetic nodes the
+		// resolver builds (e.g. Clone_, call_user_func's inner FuncCall) are priced
+		// on demand by the same helper.
+		$getType = static function (Expr $e) use ($expr, $nameResult, $reflectionScope, $nodeScopeResolver, $argsResult, $nativeTypesPromoted): Type {
 			if ($nameResult !== null && $e === $expr->name) {
-				return $nameResult->getTypeForScope($scope);
+				return $nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType();
 			}
 
 			$argResult = $argsResult->getArgResult($e);
 			if ($argResult !== null) {
-				return $argResult->getTypeForScope($scope);
+				return $nativeTypesPromoted ? $argResult->getNativeType() : $argResult->getType();
 			}
 
 			// Synthetic nodes (call_user_func's inner FuncCall, clone-with's Clone_)
 			// have no captured arg result; they are priced on demand.
-			return $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+			return $nativeTypesPromoted
+				? $nodeScopeResolver->readStoredOrPriceOnDemandNative($e, $reflectionScope)
+				: $nodeScopeResolver->readStoredOrPriceOnDemand($e, $reflectionScope);
 		};
 
 		if ($expr->name instanceof Expr) {
@@ -943,7 +948,7 @@ final class FuncCallHandler implements ExprHandler
 			if ($preResolvedAcceptor !== null) {
 				$parametersAcceptor = $preResolvedAcceptor;
 			} else {
-				$variants = $calledOnType->getCallableParametersAcceptors($scope);
+				$variants = $calledOnType->getCallableParametersAcceptors($reflectionScope);
 				$parametersAcceptor = count($variants) === 1
 					? $variants[0]
 					: ParametersAcceptorSelector::combineAcceptors($variants);
@@ -963,9 +968,9 @@ final class FuncCallHandler implements ExprHandler
 			}
 
 			$normalizedNode = ArgumentsNormalizer::reorderFuncArguments($parametersAcceptor, $expr);
-			if ($normalizedNode !== null && $functionName !== null && $this->reflectionProvider->hasFunction($functionName, $scope)) {
-				$functionReflection = $this->reflectionProvider->getFunction($functionName, $scope);
-				$resolvedType = $this->getDynamicFunctionReturnType($scope, $normalizedNode, $functionReflection);
+			if ($normalizedNode !== null && $functionName !== null && $this->reflectionProvider->hasFunction($functionName, $reflectionScope)) {
+				$functionReflection = $this->reflectionProvider->getFunction($functionName, $reflectionScope);
+				$resolvedType = $this->getDynamicFunctionReturnType($reflectionScope, $normalizedNode, $functionReflection);
 				if ($resolvedType !== null) {
 					return $resolvedType;
 				}
@@ -974,17 +979,17 @@ final class FuncCallHandler implements ExprHandler
 			return $parametersAcceptor->getReturnType();
 		}
 
-		if (!$this->reflectionProvider->hasFunction($expr->name, $scope)) {
+		if (!$this->reflectionProvider->hasFunction($expr->name, $reflectionScope)) {
 			return new ErrorType();
 		}
 
-		$functionReflection = $this->reflectionProvider->getFunction($expr->name, $scope);
-		if ($scope->nativeTypesPromoted) {
+		$functionReflection = $this->reflectionProvider->getFunction($expr->name, $reflectionScope);
+		if ($nativeTypesPromoted) {
 			return ParametersAcceptorSelector::combineAcceptors($functionReflection->getVariants())->getNativeReturnType();
 		}
 
 		if ($functionReflection->getName() === 'call_user_func') {
-			$result = ArgumentsNormalizer::reorderCallUserFuncArguments($expr, $scope);
+			$result = ArgumentsNormalizer::reorderCallUserFuncArguments($expr, $reflectionScope);
 			if ($result !== null) {
 				[, $innerFuncCall] = $result;
 
@@ -993,7 +998,7 @@ final class FuncCallHandler implements ExprHandler
 		}
 
 		if ($functionReflection->getName() === 'call_user_func_array') {
-			$result = ArgumentsNormalizer::reorderCallUserFuncArrayArguments($expr, $scope);
+			$result = ArgumentsNormalizer::reorderCallUserFuncArrayArguments($expr, $reflectionScope);
 			if ($result !== null) {
 				[, $innerFuncCall] = $result;
 
@@ -1035,7 +1040,7 @@ final class FuncCallHandler implements ExprHandler
 
 				return $cloneType;
 			}
-			$resolvedType = $this->getDynamicFunctionReturnType($scope, $normalizedNode, $functionReflection);
+			$resolvedType = $this->getDynamicFunctionReturnType($reflectionScope, $normalizedNode, $functionReflection);
 			if ($resolvedType !== null) {
 				return $resolvedType;
 			}
