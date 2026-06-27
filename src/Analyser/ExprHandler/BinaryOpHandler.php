@@ -325,10 +325,10 @@ final class BinaryOpHandler implements ExprHandler
 					// were also processed and are read from the stored result.
 					$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $scope, $nodeScopeResolver): Type {
 						if ($e === $expr->left) {
-							return $leftResult->getTypeForScope($scope);
+							return $scope->nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType();
 						}
 						if ($e === $expr->right) {
-							return $rightResult->getTypeForScope($scope);
+							return $scope->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 						}
 
 						return $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
