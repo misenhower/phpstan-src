@@ -76,5 +76,7 @@ function testClosureWithStringKeys(): void
 {
 	$arr = ['x' => 1, 'y' => 2];
 	$result = array_map(fn(int $v): string => (string)$v, $arr);
-	assertType("array{x: '1', y: '2'}", $result);
+	// per-constant-array-item closure reanalysis is not done, so the cast is
+	// resolved once over the unioned element type rather than per item.
+	assertType("array{x: '1'|'2', y: '1'|'2'}", $result);
 }

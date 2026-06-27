@@ -50,7 +50,7 @@ final class ErrorSuppressHandler implements ExprHandler
 			isAlwaysTerminating: $exprResult->isAlwaysTerminating(),
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
-			typeCallback: static fn (MutatingScope $s): Type => $exprResult->getTypeForScope($s),
+			typeCallback: static fn (MutatingScope $s): Type => ($s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType()),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->expr, $exprResult, $context)->setRootExpr($expr),
 		);
 	}

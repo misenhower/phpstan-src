@@ -68,7 +68,7 @@ final class CastStringHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			typeCallback: fn (MutatingScope $s): Type => $this->initializerExprTypeResolver->getCastType($expr, static function (Expr $e) use ($s, $expr, $exprResult): Type {
 				if ($e === $expr->expr) {
-					return $exprResult->getTypeForScope($s);
+					return ($s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
 				}
 
 					throw new ShouldNotHappenException();

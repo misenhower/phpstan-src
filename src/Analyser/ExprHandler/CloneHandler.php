@@ -53,7 +53,7 @@ final class CloneHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			typeCallback: static function (MutatingScope $scope) use ($exprResult): Type {
-				$cloneType = TypeCombinator::intersect($exprResult->getTypeForScope($scope), new ObjectWithoutClassType());
+				$cloneType = TypeCombinator::intersect(($scope->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType()), new ObjectWithoutClassType());
 				return TypeTraverser::map($cloneType, new CloneTypeTraverser());
 			},
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),

@@ -53,7 +53,7 @@ final class UnaryPlusHandler implements ExprHandler
 			impurePoints: $exprResult->getImpurePoints(),
 			typeCallback: fn (MutatingScope $scope) => $this->initializerExprTypeResolver->getUnaryPlusType($expr->expr, static function (Expr $e) use ($scope, $expr, $exprResult): Type {
 				if ($e === $expr->expr) {
-					return $exprResult->getTypeForScope($scope);
+					return ($scope->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType());
 				}
 
 				throw new ShouldNotHappenException();
