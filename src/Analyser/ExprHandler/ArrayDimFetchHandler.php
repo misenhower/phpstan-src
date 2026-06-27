@@ -109,7 +109,7 @@ final class ArrayDimFetchHandler implements ExprHandler
 			containsNullsafe: $varResult->containsNullsafe(),
 			issetabilityDescriptor: IssetabilityDescriptor::offset($varResult, $dimResult),
 			typeCallback: static function (MutatingScope $s) use ($varResult, $dimResult, $offsetGetResult): Type {
-				$offsetAccessibleType = $varResult->getTypeForScope($s);
+				$offsetAccessibleType = ($s->nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType());
 				$shortCircuit = static fn (Type $type): Type => $varResult->containsNullsafe() && TypeCombinator::containsNull($offsetAccessibleType)
 					? TypeCombinator::addNull($type)
 					: $type;
@@ -119,10 +119,10 @@ final class ArrayDimFetchHandler implements ExprHandler
 					&& !$offsetAccessibleType->isArray()->yes()
 					&& (new ObjectType(ArrayAccess::class))->isSuperTypeOf($offsetAccessibleType)->yes()
 				) {
-					return $shortCircuit($offsetGetResult->getTypeForScope($s));
+					return $shortCircuit(($s->nativeTypesPromoted ? $offsetGetResult->getNativeType() : $offsetGetResult->getType()));
 				}
 
-				return $shortCircuit($offsetAccessibleType->getOffsetValueType($dimResult->getTypeForScope($s)));
+				return $shortCircuit($offsetAccessibleType->getOffsetValueType(($s->nativeTypesPromoted ? $dimResult->getNativeType() : $dimResult->getType())));
 			},
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
