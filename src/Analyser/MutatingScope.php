@@ -2553,10 +2553,8 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		return $this->assignExpression($condExpr, $type, $nativeType);
 	}
 
-	public function enterForeach(self $originalScope, Expr $iteratee, string $valueName, ?string $keyName, bool $valueByRef): self
+	public function enterForeach(self $originalScope, Expr $iteratee, Type $iterateeType, Type $nativeIterateeType, string $valueName, ?string $keyName, bool $valueByRef): self
 	{
-		$iterateeType = $originalScope->getType($iteratee);
-		$nativeIterateeType = $originalScope->getNativeType($iteratee);
 		$valueType = $originalScope->getIterableValueType($iterateeType);
 		$nativeValueType = $originalScope->getIterableValueType($nativeIterateeType);
 		$scope = $this->assignVariable(

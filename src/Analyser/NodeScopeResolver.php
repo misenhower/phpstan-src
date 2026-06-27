@@ -5204,6 +5204,8 @@ class NodeScopeResolver
 			$scope = $scope->enterForeach(
 				$originalScope,
 				$stmt->expr,
+				$iterateeType,
+				$nativeIterateeType,
 				$stmt->valueVar->name,
 				$keyVarName,
 				$stmt->byRef,
