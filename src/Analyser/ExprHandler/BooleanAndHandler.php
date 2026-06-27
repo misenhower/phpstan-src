@@ -95,6 +95,12 @@ final class BooleanAndHandler implements ExprHandler
 			isAlwaysTerminating: $leftResult->isAlwaysTerminating(),
 			throwPoints: array_merge($leftResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($leftResult->getImpurePoints(), $rightResult->getImpurePoints()),
+			// && is truthy only when the right side was evaluated (on the left-truthy
+			// scope) and is itself truthy - that is exactly the right operand's truthy
+			// scope: it carries the left narrowing and the right's by-ref/side-effect
+			// definitions, and does not re-apply the left narrowing over a variable the
+			// right operand reassigned (bug-9400).
+			truthyScopeOverride: $rightResult->getTruthyScope(),
 			typeCallback: static function (bool $nativeTypesPromoted) use ($leftResult, $rightResult): Type {
 				$leftBooleanType = ($nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType())->toBoolean();
 				if ($leftBooleanType->isFalse()->yes()) {

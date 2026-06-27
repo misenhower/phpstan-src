@@ -50,6 +50,8 @@ final class ExpressionResult
 		callable $specifyTypesCallback,
 		private bool $containsNullsafe = false,
 		private ?IssetabilityDescriptor $issetabilityDescriptor = null,
+		private ?MutatingScope $truthyScopeOverride = null,
+		private ?MutatingScope $falseyScopeOverride = null,
 		?callable $createTypesCallback = null,
 		private ?Type $type = null,
 		private ?Type $nativeType = null,
@@ -141,6 +143,16 @@ final class ExpressionResult
 			return $this->truthyScope;
 		}
 
+		// && is truthy only when the right operand was evaluated (on the left-truthy
+		// scope) and is itself truthy - that is exactly $rightResult->getTruthyScope(),
+		// which the handler passes as $truthyScopeOverride. It already carries the left
+		// operand's narrowing and the right operand's by-ref/side-effect definitions,
+		// and crucially does NOT re-apply the left narrowing on top of a scope where the
+		// right operand reassigned the narrowed variable (see bug-9400).
+		if ($this->truthyScopeOverride !== null) {
+			return $this->truthyScope = $this->truthyScopeOverride;
+		}
+
 		return $this->truthyScope = $this->scope->applySpecifiedTypes(
 			($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createTruthy()),
 		);
@@ -150,6 +162,12 @@ final class ExpressionResult
 	{
 		if ($this->falseyScope !== null) {
 			return $this->falseyScope;
+		}
+
+		// || is falsey only when the right operand was evaluated (on the left-falsey
+		// scope) and is itself falsey - that is exactly $rightResult->getFalseyScope().
+		if ($this->falseyScopeOverride !== null) {
+			return $this->falseyScope = $this->falseyScopeOverride;
 		}
 
 		return $this->falseyScope = $this->scope->applySpecifiedTypes(

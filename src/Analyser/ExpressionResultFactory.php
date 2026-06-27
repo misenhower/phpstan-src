@@ -27,6 +27,8 @@ interface ExpressionResultFactory
 		callable $specifyTypesCallback,
 		bool $containsNullsafe = false,
 		?IssetabilityDescriptor $issetabilityDescriptor = null,
+		?MutatingScope $truthyScopeOverride = null,
+		?MutatingScope $falseyScopeOverride = null,
 		?callable $createTypesCallback = null,
 		?Type $type = null,
 		?Type $nativeType = null,
