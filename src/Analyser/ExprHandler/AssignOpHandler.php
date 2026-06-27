@@ -84,7 +84,9 @@ final class AssignOpHandler implements ExprHandler
 			// processExpr (the var as the assignment target, the value expr by the
 			// inner closure below), so their ExpressionResults are stored - read
 			// them instead of re-walking via Scope::getType().
-			$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $s);
+			$getType = static fn (Expr $e): Type => $s->nativeTypesPromoted
+				? $nodeScopeResolver->readStoredOrPriceOnDemandNative($e, $beforeScope)
+				: $nodeScopeResolver->readStoredOrPriceOnDemand($e, $beforeScope);
 
 			if ($expr instanceof Expr\AssignOp\Coalesce) {
 				// The coalesce is synthetic; price it on demand. The ??= left is stored
@@ -94,10 +96,12 @@ final class AssignOpHandler implements ExprHandler
 				// branch, losing the optional offset natively (bug-13623).
 				$coalesce = new BinaryOp\Coalesce($expr->var, $expr->expr, $expr->getAttributes());
 				$varReadResult = $nodeScopeResolver->processExprOnDemand($expr->var, $beforeScope, new ExpressionResultStorage());
-				$coalesceStorage = ($s->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage())->duplicate();
+				$coalesceStorage = ($beforeScope->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage())->duplicate();
 				$nodeScopeResolver->storeExpressionResult($coalesceStorage, $expr->var, $varReadResult);
 
-				return $nodeScopeResolver->processExprOnDemand($coalesce, $s, $coalesceStorage)->getTypeForScope($s);
+				$coalesceResult = $nodeScopeResolver->processExprOnDemand($coalesce, $beforeScope, $coalesceStorage);
+
+				return $s->nativeTypesPromoted ? $coalesceResult->getNativeType() : $coalesceResult->getType();
 			}
 
 			if ($expr instanceof Expr\AssignOp\Concat) {
