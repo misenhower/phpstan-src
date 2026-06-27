@@ -85,7 +85,8 @@ final class InterpolatedStringHandler implements ExprHandler
 					if ($part instanceof InterpolatedStringPart) {
 						$partType = new ConstantStringType($part->value);
 					} else {
-						$partType = $partResults[spl_object_id($part)]->getTypeForScope($scope)->toString();
+						$partResult = $partResults[spl_object_id($part)];
+						$partType = ($scope->nativeTypesPromoted ? $partResult->getNativeType() : $partResult->getType())->toString();
 					}
 					if ($resultType === null) {
 						$resultType = $partType;

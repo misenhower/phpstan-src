@@ -62,7 +62,7 @@ final class PreIncHandler implements ExprHandler
 		$varResult = $nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, $nodeCallback, $context->enterDeep());
 
 		$typeCallback = function (MutatingScope $s) use ($expr, $varResult): Type {
-			$varType = $varResult->getTypeForScope($s);
+			$varType = ($s->nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType());
 			$varScalars = $varType->getConstantScalarValues();
 
 			if (count($varScalars) > 0) {
@@ -109,7 +109,7 @@ final class PreIncHandler implements ExprHandler
 			$one = new Int_(1);
 			return $this->initializerExprTypeResolver->getPlusType($expr->var, $one, static function (Expr $e) use ($s, $expr, $varResult, $one): Type {
 				if ($e === $expr->var) {
-					return $varResult->getTypeForScope($s);
+					return ($s->nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType());
 				}
 				if ($e === $one) {
 					return new ConstantIntegerType(1);

@@ -58,7 +58,7 @@ final class PostDecHandler implements ExprHandler
 			throwPoints: $varResult->getThrowPoints(),
 			impurePoints: $varResult->getImpurePoints(),
 			// post-decrement evaluates to the variable's pre-mutation value
-			typeCallback: static fn (MutatingScope $s): Type => $varResult->getTypeForScope($s),
+			typeCallback: static fn (MutatingScope $s): Type => ($s->nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType()),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
