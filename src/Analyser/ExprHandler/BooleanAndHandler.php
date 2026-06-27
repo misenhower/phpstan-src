@@ -95,8 +95,6 @@ final class BooleanAndHandler implements ExprHandler
 			isAlwaysTerminating: $leftResult->isAlwaysTerminating(),
 			throwPoints: array_merge($leftResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($leftResult->getImpurePoints(), $rightResult->getImpurePoints()),
-			truthyScopeCallback: static fn (): MutatingScope => $rightResult->getScope()->filterByTruthyValue($expr->right),
-			falseyScopeCallback: static fn (): MutatingScope => $leftMergedWithRightScope->filterByFalseyValue($expr),
 			typeCallback: static function (bool $nativeTypesPromoted) use ($leftResult, $rightResult): Type {
 				$leftBooleanType = ($nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType())->toBoolean();
 				if ($leftBooleanType->isFalse()->yes()) {
@@ -123,7 +121,7 @@ final class BooleanAndHandler implements ExprHandler
 			},
 			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): SpecifiedTypes {
 				$leftTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->left, $leftResult, $context)->setRootExpr($expr);
-				$rightScope = $s->filterByTruthyValue($expr->left);
+				$rightScope = $leftResult->getTruthyScope();
 				$rightTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($rightScope, $expr->right, $rightResult, $context)->setRootExpr($expr);
 				if ($context->true()) {
 					$types = $leftTypes->unionWith($rightTypes);
@@ -131,7 +129,7 @@ final class BooleanAndHandler implements ExprHandler
 					$leftNormalized = $leftTypes->normalize($s, $nodeScopeResolver);
 					$rightNormalized = $rightTypes->normalize($rightScope, $nodeScopeResolver);
 					$types = $leftNormalized->intersectWith($rightNormalized);
-					$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $rightScope, $leftNormalized, $rightNormalized, $expr->left, $expr->right, false, $types);
+					$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftNormalized, $rightNormalized, $leftResult->getFalseyScope(), $rightResult->getFalseyScope(), $types);
 				}
 				if ($context->false()) {
 					// Consequent (holder) narrowings projected by each holder: these must be

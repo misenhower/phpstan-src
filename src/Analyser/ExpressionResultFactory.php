@@ -11,8 +11,6 @@ interface ExpressionResultFactory
 	/**
 	 * @param InternalThrowPoint[] $throwPoints
 	 * @param ImpurePoint[] $impurePoints
-	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
-	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
 	 * @param (callable(bool): Type)|null $typeCallback
 	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
@@ -29,8 +27,6 @@ interface ExpressionResultFactory
 		callable $specifyTypesCallback,
 		bool $containsNullsafe = false,
 		?IssetabilityDescriptor $issetabilityDescriptor = null,
-		?callable $truthyScopeCallback = null,
-		?callable $falseyScopeCallback = null,
 		?callable $createTypesCallback = null,
 		?Type $type = null,
 		?Type $nativeType = null,

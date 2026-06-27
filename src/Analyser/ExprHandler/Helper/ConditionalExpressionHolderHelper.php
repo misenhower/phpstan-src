@@ -38,12 +38,10 @@ final class ConditionalExpressionHolderHelper
 	public function augmentDisjunctionTypes(
 		NodeScopeResolver $nodeScopeResolver,
 		MutatingScope $scope,
-		MutatingScope $rightScope,
 		SpecifiedTypes $leftNormalized,
 		SpecifiedTypes $rightNormalized,
-		Expr $leftExpr,
-		Expr $rightExpr,
-		bool $truthy,
+		MutatingScope $leftFilteredScope,
+		MutatingScope $rightFilteredScope,
 		SpecifiedTypes $types,
 	): SpecifiedTypes
 	{
@@ -70,14 +68,6 @@ final class ConditionalExpressionHolderHelper
 
 		if ($viableCandidates === []) {
 			return $types;
-		}
-
-		if ($truthy) {
-			$leftFilteredScope = $scope->filterByTruthyValue($leftExpr);
-			$rightFilteredScope = $rightScope->filterByTruthyValue($rightExpr);
-		} else {
-			$leftFilteredScope = $scope->filterByFalseyValue($leftExpr);
-			$rightFilteredScope = $rightScope->filterByFalseyValue($rightExpr);
 		}
 
 		foreach ($viableCandidates as $targetExpr) {

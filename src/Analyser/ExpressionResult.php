@@ -22,13 +22,7 @@ final class ExpressionResult
 	/** @var (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null */
 	private $createTypesCallback;
 
-	/** @var (callable(): MutatingScope)|null */
-	private $truthyScopeCallback;
-
 	private ?MutatingScope $truthyScope = null;
-
-	/** @var (callable(): MutatingScope)|null */
-	private $falseyScopeCallback;
 
 	private ?MutatingScope $falseyScope = null;
 
@@ -42,8 +36,6 @@ final class ExpressionResult
 	 * @param (callable(bool): Type)|null $typeCallback
 	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
-	 * @param (callable(): MutatingScope)|null $truthyScopeCallback
-	 * @param (callable(): MutatingScope)|null $falseyScopeCallback
 	 */
 	public function __construct(
 		private ExpressionTypeResolverExtensionRegistryProvider $expressionTypeResolverExtensionRegistryProvider,
@@ -58,8 +50,6 @@ final class ExpressionResult
 		callable $specifyTypesCallback,
 		private bool $containsNullsafe = false,
 		private ?IssetabilityDescriptor $issetabilityDescriptor = null,
-		?callable $truthyScopeCallback = null,
-		?callable $falseyScopeCallback = null,
 		?callable $createTypesCallback = null,
 		private ?Type $type = null,
 		private ?Type $nativeType = null,
@@ -78,8 +68,6 @@ final class ExpressionResult
 			throw new ShouldNotHappenException('ExpressionResult type and nativeType must both be set or both be null.');
 		}
 
-		$this->truthyScopeCallback = $truthyScopeCallback;
-		$this->falseyScopeCallback = $falseyScopeCallback;
 		$this->typeCallback = $typeCallback;
 		$this->specifyTypesCallback = $specifyTypesCallback;
 		$this->createTypesCallback = $createTypesCallback;
@@ -153,14 +141,9 @@ final class ExpressionResult
 			return $this->truthyScope;
 		}
 
-		if ($this->truthyScopeCallback === null) {
-			return $this->truthyScope = $this->scope->applySpecifiedTypes(
-				($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createTruthy()),
-			);
-		}
-
-		$callback = $this->truthyScopeCallback;
-		return $this->truthyScope = $callback();
+		return $this->truthyScope = $this->scope->applySpecifiedTypes(
+			($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createTruthy()),
+		);
 	}
 
 	public function getFalseyScope(): MutatingScope
@@ -169,14 +152,9 @@ final class ExpressionResult
 			return $this->falseyScope;
 		}
 
-		if ($this->falseyScopeCallback === null) {
-			return $this->falseyScope = $this->scope->applySpecifiedTypes(
-				($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createFalsey()),
-			);
-		}
-
-		$callback = $this->falseyScopeCallback;
-		return $this->falseyScope = $callback();
+		return $this->falseyScope = $this->scope->applySpecifiedTypes(
+			($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createFalsey()),
+		);
 	}
 
 	public function isAlwaysTerminating(): bool
