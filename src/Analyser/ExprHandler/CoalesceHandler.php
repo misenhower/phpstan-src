@@ -93,10 +93,12 @@ final class CoalesceHandler implements ExprHandler
 			isAlwaysTerminating: $condResult->isAlwaysTerminating(),
 			throwPoints: array_merge($condResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($condResult->getImpurePoints(), $rightResult->getImpurePoints()),
-			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $rightScope, $nodeScopeResolver): Type {
+			typeCallback: static function (MutatingScope $s) use ($expr, $condResult, $rightResult, $nodeScopeResolver, $beforeScope): Type {
 				$issetLeftExpr = new Expr\Isset_([$expr->left]);
 
-				$result = $condResult->getIssetabilityResolution($s, false)->isSet(static function (Type $type): ?bool {
+				// the isset resolution and the left-is-set narrowing run on
+				// beforeScope (the evaluation point), not the asking scope.
+				$result = $condResult->getIssetabilityResolution($beforeScope, false)->isSet(static function (Type $type): ?bool {
 					$isNull = $type->isNull();
 					if ($isNull->maybe()) {
 						return null;
@@ -106,16 +108,16 @@ final class CoalesceHandler implements ExprHandler
 				});
 
 				if ($result !== null && $result !== false) {
-					return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType());
+					return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $beforeScope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $beforeScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($beforeScope, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType());
 				}
 
-				// the right side was processed on the left-is-null scope - that
-				// captured scope is the evaluation point
-				$rightType = $rightResult->getTypeForScope($s->nativeTypesPromoted ? $rightScope->doNotTreatPhpDocTypesAsCertain() : $rightScope);
+				// the right side was processed on the left-is-null scope, so its own
+				// result is the evaluation point.
+				$rightType = $s->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 
 				if ($result === null) {
 					return TypeCombinator::union(
-						TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $s->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $s, new ExpressionResultStorage())->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType()),
+						TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $beforeScope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $beforeScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($beforeScope, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType()),
 						$rightType,
 					);
 				}

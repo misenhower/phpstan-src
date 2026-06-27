@@ -113,7 +113,7 @@ final class InstanceofHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			typeCallback: static function (MutatingScope $s) use ($expr, $exprResult, $classResult, $isInTrait, $nameClassType): Type {
-				$expressionType = $exprResult->getTypeForScope($s);
+				$expressionType = $s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
 				if (
 					$isInTrait
 					&& TypeUtils::findThisType($expressionType) !== null
@@ -137,7 +137,7 @@ final class InstanceofHandler implements ExprHandler
 					if ($classResult === null) {
 						throw new ShouldNotHappenException();
 					}
-					$classNameType = $classResult->getTypeForScope($s);
+					$classNameType = $s->nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType();
 					$result = $classNameType->toObjectTypeForInstanceofCheck();
 					$classType = $result->type;
 					$uncertainty = $result->uncertainty;
