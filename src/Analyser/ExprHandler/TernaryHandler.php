@@ -111,7 +111,7 @@ final class TernaryHandler implements ExprHandler
 					$ifProcessingScope = $ifProcessingScope->doNotTreatPhpDocTypesAsCertain();
 					$elseProcessingScope = $elseProcessingScope->doNotTreatPhpDocTypesAsCertain();
 				}
-				$booleanConditionType = $ternaryCondResult->getTypeForScope($s)->toBoolean();
+				$booleanConditionType = ($s->nativeTypesPromoted ? $ternaryCondResult->getNativeType() : $ternaryCondResult->getType())->toBoolean();
 				$elseType = $elseResult->getTypeForScope($elseProcessingScope);
 				if ($expr->if === null || $ifResult === null) {
 					// short-ternary truthy value: the condition read on its own truthy scope
