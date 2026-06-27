@@ -169,7 +169,7 @@ final class AssignHandler implements ExprHandler
 					isAlwaysTerminating: $isAlwaysTerminating,
 					throwPoints: $throwPoints,
 					impurePoints: $impurePoints,
-					typeCallback: static fn ($scope) => $result->getTypeForScope($scope),
+					typeCallback: static fn (MutatingScope $s): Type => $s->nativeTypesPromoted ? $result->getNativeType() : $result->getType(),
 					specifyTypesCallback: static fn () => new SpecifiedTypes(),
 				);
 			},
@@ -221,7 +221,15 @@ final class AssignHandler implements ExprHandler
 			isAlwaysTerminating: $result->isAlwaysTerminating(),
 			throwPoints: $result->getThrowPoints(),
 			impurePoints: $result->getImpurePoints(),
-			typeCallback: static fn (MutatingScope $s): Type => $assignedExprResult !== null ? $assignedExprResult->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $s),
+			typeCallback: static function (MutatingScope $s) use ($assignedExprResult, $nodeScopeResolver, $expr, $beforeScope): Type {
+				if ($assignedExprResult !== null) {
+					return $s->nativeTypesPromoted ? $assignedExprResult->getNativeType() : $assignedExprResult->getType();
+				}
+
+				return $s->nativeTypesPromoted
+					? $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->expr, $beforeScope)
+					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $beforeScope);
+			},
 			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($nodeScopeResolver, $expr, $assignedExprResult) : fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult) : null,
 		);

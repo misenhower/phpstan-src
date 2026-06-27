@@ -102,7 +102,7 @@ final class ClassConstFetchHandler implements ExprHandler
 							throw new ShouldNotHappenException();
 						}
 
-						return $classResult->getTypeForScope($scope);
+						return $scope->nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType();
 					},
 				);
 			},
