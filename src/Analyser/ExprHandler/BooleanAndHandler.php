@@ -98,7 +98,7 @@ final class BooleanAndHandler implements ExprHandler
 			truthyScopeCallback: static fn (): MutatingScope => $rightResult->getScope()->filterByTruthyValue($expr->right),
 			falseyScopeCallback: static fn (): MutatingScope => $leftMergedWithRightScope->filterByFalseyValue($expr),
 			typeCallback: static function (MutatingScope $s) use ($leftResult, $rightResult, $leftTruthyScope): Type {
-				$leftBooleanType = $leftResult->getTypeForScope($s)->toBoolean();
+				$leftBooleanType = ($s->nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType())->toBoolean();
 				if ($leftBooleanType->isFalse()->yes()) {
 					return new ConstantBooleanType(false);
 				}

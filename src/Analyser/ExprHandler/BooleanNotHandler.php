@@ -54,7 +54,7 @@ final class BooleanNotHandler implements ExprHandler
 			throwPoints: $exprResult->getThrowPoints(),
 			impurePoints: $exprResult->getImpurePoints(),
 			typeCallback: static function (MutatingScope $s) use ($exprResult): Type {
-				$exprBooleanType = $exprResult->getTypeForScope($s)->toBoolean();
+				$exprBooleanType = ($s->nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType())->toBoolean();
 				if ($exprBooleanType->isTrue()->yes()) {
 					return new ConstantBooleanType(false);
 				}
