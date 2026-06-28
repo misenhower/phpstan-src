@@ -15,6 +15,7 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\EarlyTerminatingCallHelper;
 use PHPStan\Analyser\ExprHandler\Helper\MethodCallReturnTypeHelper;
 use PHPStan\Analyser\ExprHandler\Helper\MethodThrowPointHelper;
 use PHPStan\Analyser\ImpurePoint;
@@ -65,6 +66,7 @@ final class MethodCallHandler implements ExprHandler
 		private ExpressionResultFactory $expressionResultFactory,
 		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private EarlyTerminatingCallHelper $earlyTerminatingHelper,
 	)
 	{
 	}
@@ -112,6 +114,12 @@ final class MethodCallHandler implements ExprHandler
 		// the var was processed above as the receiver; read its already-computed
 		// result instead of re-walking via Scope::getType().
 		$calledOnType = $varResult->getTypeForScope($scope);
+		// A call configured as early-terminating never returns: give it an explicit
+		// never so the statement's exit point follows from the result type, instead of
+		// NodeScopeResolver re-deriving it via Scope::getType().
+		$isEarlyTerminating = $expr->name instanceof Identifier
+			&& $this->earlyTerminatingHelper->isEarlyTerminatingMethodCall($expr->name->name, $calledOnType);
+		$isAlwaysTerminating = $isAlwaysTerminating || $isEarlyTerminating;
 		if ($expr->name instanceof Identifier) {
 			$methodName = $expr->name->name;
 			$methodReflection = $scope->getMethodReflection($calledOnType, $methodName);
@@ -172,15 +180,17 @@ final class MethodCallHandler implements ExprHandler
 		// evolving scope (type-driven, generics resolved). When null
 		// (native-types-promoted, or on-demand / synthetic pricing) the acceptor is
 		// re-derived from the already-processed argument results on the asking scope.
-		$typeCallback = fn (bool $nativeTypesPromoted): Type => $this->resolveReturnType(
-			$nodeScopeResolver,
-			$beforeScope,
-			$nativeTypesPromoted,
-			$expr,
-			$varResult,
-			$nameResult,
-			$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
-		);
+		$typeCallback = $isEarlyTerminating
+			? static fn (bool $nativeTypesPromoted): Type => new NeverType(true)
+			: fn (bool $nativeTypesPromoted): Type => $this->resolveReturnType(
+				$nodeScopeResolver,
+				$beforeScope,
+				$nativeTypesPromoted,
+				$expr,
+				$varResult,
+				$nameResult,
+				$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+			);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,
 			$s,

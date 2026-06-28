@@ -205,9 +205,6 @@ class NodeScopeResolver
 	private array $analysedFiles = [];
 
 	/** @var array<string, true> */
-	private array $earlyTerminatingMethodNames;
-
-	/** @var array<string, true> */
 	private array $calledMethodStack = [];
 
 	/** @var array<string, MutatingScope|null> */
@@ -251,10 +248,6 @@ class NodeScopeResolver
 	 */
 	public static array $guardProcessedExprIds = [];
 
-	/**
-	 * @param string[][] $earlyTerminatingMethodCalls className(string) => methods(string[])
-	 * @param array<int, string> $earlyTerminatingFunctionCalls
-	 */
 	public function __construct(
 		private readonly Container $container,
 		private readonly ReflectionProvider $reflectionProvider,
@@ -279,10 +272,6 @@ class NodeScopeResolver
 		private readonly bool $polluteScopeWithAlwaysIterableForeach,
 		#[AutowiredParameter]
 		private readonly bool $polluteScopeWithBlock,
-		#[AutowiredParameter]
-		private readonly array $earlyTerminatingMethodCalls,
-		#[AutowiredParameter]
-		private readonly array $earlyTerminatingFunctionCalls,
 		#[AutowiredParameter(ref: '%exceptions.implicitThrows%')]
 		private readonly bool $implicitThrows,
 		#[AutowiredParameter]
@@ -291,14 +280,6 @@ class NodeScopeResolver
 		private readonly ExpressionResultFactory $expressionResultFactory,
 	)
 	{
-		$earlyTerminatingMethodNames = [];
-		foreach ($this->earlyTerminatingMethodCalls as $methodNames) {
-			foreach ($methodNames as $methodName) {
-				$earlyTerminatingMethodNames[strtolower($methodName)] = true;
-			}
-		}
-		$this->earlyTerminatingMethodNames = $earlyTerminatingMethodNames;
-
 		self::$guardNewWorld = getenv('PHPSTAN_GUARD_NW') === '1';
 	}
 
@@ -1253,7 +1234,6 @@ class NodeScopeResolver
 				}
 				$nodeCallback($node, $scope);
 			}, ExpressionContext::createTopLevel());
-			$earlyTerminationExpr = $this->findEarlyTerminatingExpr($stmt->expr, $scope);
 			$throwPoints = array_filter($result->getThrowPoints(), static fn ($throwPoint) => $throwPoint->isExplicit());
 			if (
 				count($result->getImpurePoints()) === 0
@@ -1274,7 +1254,11 @@ class NodeScopeResolver
 			$impurePoints = $result->getImpurePoints();
 			$isAlwaysTerminating = $result->isAlwaysTerminating();
 
-			if ($earlyTerminationExpr !== null) {
+			// The expression statement is an exit point when its value type is an
+			// explicit never: exit/die/throw, a never-returning call, or a call
+			// configured as early-terminating (the call handlers give those never).
+			$statementType = $result->getType();
+			if ($statementType instanceof NeverType && $statementType->isExplicit()) {
 				return new InternalStatementResult($scope, $hasYield, true, [
 					new InternalStatementExitPoint($stmt, $scope),
 				], $overridingThrowPoints ?? $throwPoints, $impurePoints);
@@ -2873,57 +2857,6 @@ class NodeScopeResolver
 		}
 
 		return $scope;
-	}
-
-	private function findEarlyTerminatingExpr(Expr $expr, Scope $scope): ?Expr
-	{
-		if (($expr instanceof MethodCall || $expr instanceof Expr\StaticCall) && $expr->name instanceof Node\Identifier) {
-			if (array_key_exists($expr->name->toLowerString(), $this->earlyTerminatingMethodNames)) {
-				if ($expr instanceof MethodCall) {
-					$methodCalledOnType = $this->readStoredOrPriceOnDemand($expr->var, $scope->toMutatingScope());
-				} else {
-					if ($expr->class instanceof Name) {
-						$methodCalledOnType = $scope->resolveTypeByName($expr->class);
-					} else {
-						$methodCalledOnType = $this->readStoredOrPriceOnDemand($expr->class, $scope->toMutatingScope());
-					}
-				}
-
-				foreach ($methodCalledOnType->getObjectClassNames() as $referencedClass) {
-					if (!$this->reflectionProvider->hasClass($referencedClass)) {
-						continue;
-					}
-
-					$classReflection = $this->reflectionProvider->getClass($referencedClass);
-					foreach (array_merge([$referencedClass], $classReflection->getParentClassesNames(), $classReflection->getNativeReflection()->getInterfaceNames()) as $className) {
-						if (!isset($this->earlyTerminatingMethodCalls[$className])) {
-							continue;
-						}
-
-						if (in_array((string) $expr->name, $this->earlyTerminatingMethodCalls[$className], true)) {
-							return $expr;
-						}
-					}
-				}
-			}
-		}
-
-		if ($expr instanceof FuncCall && $expr->name instanceof Name) {
-			if (in_array((string) $expr->name, $this->earlyTerminatingFunctionCalls, true)) {
-				return $expr;
-			}
-		}
-
-		if ($expr instanceof Expr\Exit_ || $expr instanceof Expr\Throw_) {
-			return $expr;
-		}
-
-		$exprType = $scope->getType($expr);
-		if ($exprType instanceof NeverType && $exprType->isExplicit()) {
-			return $expr;
-		}
-
-		return null;
 	}
 
 	/**

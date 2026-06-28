@@ -21,6 +21,7 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\EarlyTerminatingCallHelper;
 use PHPStan\Analyser\ExprHandler\Helper\OutputBufferHelper;
 use PHPStan\Analyser\ExprHandler\Helper\VoidToNullTypeTransformer;
 use PHPStan\Analyser\ImpurePoint;
@@ -102,6 +103,7 @@ final class FuncCallHandler implements ExprHandler
 		private ExpressionResultFactory $expressionResultFactory,
 		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private EarlyTerminatingCallHelper $earlyTerminatingHelper,
 	)
 	{
 	}
@@ -121,7 +123,12 @@ final class FuncCallHandler implements ExprHandler
 		$nameResult = null;
 		$throwPoints = [];
 		$impurePoints = [];
-		$isAlwaysTerminating = false;
+		// A call configured as early-terminating never returns: give it an explicit
+		// never so the statement's exit point follows from the result type, instead of
+		// NodeScopeResolver re-deriving it via Scope::getType().
+		$isEarlyTerminating = $expr->name instanceof Name
+			&& $this->earlyTerminatingHelper->isEarlyTerminatingFunctionCall($expr->name->toString());
+		$isAlwaysTerminating = $isEarlyTerminating;
 		if ($expr->name instanceof Expr) {
 			// process the dynamic callee name first, then consume its type (single-pass
 			// inside-out) rather than reading it before processExprNode() stores it
@@ -322,15 +329,17 @@ final class FuncCallHandler implements ExprHandler
 		// (native-types-promoted, on-demand / synthetic pricing, or special cases
 		// inside resolveReturnType), the acceptor is re-derived from the
 		// already-processed argument results on the asking scope.
-		$typeCallback = fn (bool $nativeTypesPromoted): Type => $this->resolveReturnType(
-			$nodeScopeResolver,
-			$beforeScope,
-			$nativeTypesPromoted,
-			$expr,
-			$nameResult,
-			$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
-			$argsResult,
-		);
+		$typeCallback = $isEarlyTerminating
+			? static fn (bool $nativeTypesPromoted): Type => new NeverType(true)
+			: fn (bool $nativeTypesPromoted): Type => $this->resolveReturnType(
+				$nodeScopeResolver,
+				$beforeScope,
+				$nativeTypesPromoted,
+				$expr,
+				$nameResult,
+				$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+				$argsResult,
+			);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,
 			$s,
