@@ -1168,7 +1168,7 @@ final class AssignHandler implements ExprHandler
 					$variableType,
 					$innerExpr,
 					$this->exprPrinter->printExpr($innerExpr),
-					$nodeScopeResolver->readStoredOrPriceOnDemand($innerExpr, $scope),
+					$this->currentTypeForConditionalHolder($nodeScopeResolver, $scope, $innerExpr),
 					TrinaryLogic::createMaybe(),
 				);
 				continue;
@@ -1182,7 +1182,7 @@ final class AssignHandler implements ExprHandler
 				$variableType,
 				$expr,
 				$exprString,
-				TypeCombinator::intersect($nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope), $exprType),
+				TypeCombinator::intersect($this->currentTypeForConditionalHolder($nodeScopeResolver, $scope, $expr), $exprType),
 				TrinaryLogic::createYes(),
 			);
 		}
@@ -1224,12 +1224,33 @@ final class AssignHandler implements ExprHandler
 				$variableType,
 				$expr,
 				$exprString,
-				TypeCombinator::remove($nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope), $exprType),
+				TypeCombinator::remove($this->currentTypeForConditionalHolder($nodeScopeResolver, $scope, $expr), $exprType),
 				TrinaryLogic::createYes(),
 			);
 		}
 
 		return $conditionalExpressions;
+	}
+
+	/**
+	 * Current type of a conditional-holder expression, used to refine the holder's
+	 * projected type. Prefers the tracked scope state over readStoredOrPriceOnDemand(),
+	 * whose stored ExpressionResult can be stale after a by-ref write - e.g.
+	 * preg_match($p, $s, $matches) updates $matches in the scope state but leaves the
+	 * stored result from the earlier `$matches = []` untouched, so reading it back would
+	 * intersect the matched shape against the stale array{} and collapse to NEVER.
+	 */
+	private function currentTypeForConditionalHolder(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr): Type
+	{
+		// A by-ref write lands in the variable's tracked type, so read it from the
+		// scope state (getVariableType is null-safe for superglobals/undefined too).
+		// Method calls and other non-variable holder exprs have no by-ref hazard and
+		// keep reading their stored result.
+		if ($expr instanceof Variable && is_string($expr->name) && $scope->hasVariableType($expr->name)->yes()) {
+			return $scope->getVariableType($expr->name);
+		}
+
+		return $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
 	}
 
 	/**
