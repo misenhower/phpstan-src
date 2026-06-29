@@ -126,9 +126,9 @@ final class BooleanAndHandler implements ExprHandler
 				return new BooleanType();
 			},
 			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): SpecifiedTypes {
-				$leftTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->left, $leftResult, $context)->setRootExpr($expr);
+				$leftTypes = $leftResult->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
 				$rightScope = $leftResult->getTruthyScope();
-				$rightTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($rightScope, $expr->right, $rightResult, $context)->setRootExpr($expr);
+				$rightTypes = $rightResult->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
 				if ($context->true()) {
 					$types = $leftTypes->unionWith($rightTypes);
 				} else {
