@@ -6,7 +6,6 @@ use ArrayAccess;
 use Closure;
 use IteratorAggregate;
 use Override;
-use PHPStan\Analyser\SpecifiedTypes;
 use PhpParser\Comment\Doc;
 use PhpParser\Modifiers;
 use PhpParser\Node;
@@ -260,7 +259,6 @@ class NodeScopeResolver
 		private readonly FileTypeMapper $fileTypeMapper,
 		private readonly PhpDocInheritanceResolver $phpDocInheritanceResolver,
 		private readonly FileHelper $fileHelper,
-		private readonly TypeSpecifier $typeSpecifier,
 		private readonly ReadWritePropertiesExtensionProvider $readWritePropertiesExtensionProvider,
 		private readonly ParameterClosureThisExtensionProvider $parameterClosureThisExtensionProvider,
 		private readonly ParameterClosureTypeExtensionProvider $parameterClosureTypeExtensionProvider,
@@ -433,8 +431,7 @@ class NodeScopeResolver
 	 */
 	private function narrowScopeWithCondition(MutatingScope $scope, Expr $expr, TypeSpecifierContext $context): MutatingScope
 	{
-		$specifiedTypes = $scope->specifyTypesOfNewWorldHandlerNode($expr, $context)
-			?? $this->typeSpecifier->specifyDefaultTypes($scope, $expr, $context);
+		$specifiedTypes = $scope->specifyTypesOfNewWorldHandlerNode($expr, $context);
 
 		return $scope->applySpecifiedTypes($specifiedTypes);
 	}

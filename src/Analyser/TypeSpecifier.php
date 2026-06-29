@@ -91,10 +91,7 @@ final class TypeSpecifier
 		$exprHandler = ExprHandlerRegistry::resolve($expr, $this->container);
 		if ($exprHandler !== null) {
 			if ($scope instanceof MutatingScope) {
-				$specifiedTypes = $scope->specifyTypesOfNewWorldHandlerNode($expr, $context);
-				if ($specifiedTypes !== null) {
-					return $specifiedTypes;
-				}
+				return $scope->specifyTypesOfNewWorldHandlerNode($expr, $context);
 			}
 		}
 

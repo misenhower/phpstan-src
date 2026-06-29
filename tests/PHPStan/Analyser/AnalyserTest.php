@@ -821,7 +821,6 @@ class AnalyserTest extends PHPStanTestCase
 			$fileTypeMapper,
 			$phpDocInheritanceResolver,
 			$fileHelper,
-			$typeSpecifier,
 			$container->getByType(ReadWritePropertiesExtensionProvider::class),
 			$container->getByType(ParameterClosureThisExtensionProvider::class),
 			$container->getByType(ParameterClosureTypeExtensionProvider::class),

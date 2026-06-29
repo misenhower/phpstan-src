@@ -1240,7 +1240,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 *
 	 * @internal
 	 */
-	public function specifyTypesOfNewWorldHandlerNode(Expr $node, TypeSpecifierContext $context): ?SpecifiedTypes
+	public function specifyTypesOfNewWorldHandlerNode(Expr $node, TypeSpecifierContext $context): SpecifiedTypes
 	{
 		// see resolveTypeOfNewWorldHandlerNode() - rules ask the dispatcher
 		// with their FiberScope (e.g. ImpossibleCheckTypeHelper), the engine

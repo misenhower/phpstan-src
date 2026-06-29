@@ -65,8 +65,7 @@ final class DefaultNarrowingHelper
 			return (new SpecifiedTypes([], []))->setRootExpr($node);
 		}
 
-		return $scope->toMutatingScope()->specifyTypesOfNewWorldHandlerNode($node, $context)
-			?? $this->specifyDefaultTypes($node, $context);
+		return $scope->toMutatingScope()->specifyTypesOfNewWorldHandlerNode($node, $context);
 	}
 
 	public function specifyDefaultTypes(Expr $expr, TypeSpecifierContext $context): SpecifiedTypes

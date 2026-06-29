@@ -80,7 +80,6 @@ abstract class TypeInferenceTestCase extends PHPStanTestCase
 			$container->getByType(FileTypeMapper::class),
 			$container->getByType(PhpDocInheritanceResolver::class),
 			$container->getByType(FileHelper::class),
-			$typeSpecifier,
 			$container->getByType(ReadWritePropertiesExtensionProvider::class),
 			$container->getByType(ParameterClosureThisExtensionProvider::class),
 			$container->getByType(ParameterClosureTypeExtensionProvider::class),
