@@ -232,7 +232,7 @@ final class ConditionalExpressionHolderHelper
 				// holder must allow the values it excluded, or it over-narrows when
 				// only the remaining conditions hold. So union back the complement.
 				if ($droppedSelfCondition !== null) {
-					$complement = TypeCombinator::remove($nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope), $droppedSelfCondition->getType());
+					$complement = TypeCombinator::remove($scope->getType($expr), $droppedSelfCondition->getType());
 					if (!$complement instanceof NeverType) {
 						$holderType = TypeCombinator::union($holderType, $complement);
 					}
