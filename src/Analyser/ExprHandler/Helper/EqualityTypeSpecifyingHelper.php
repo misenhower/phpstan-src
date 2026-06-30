@@ -96,19 +96,15 @@ final class EqualityTypeSpecifyingHelper
 			}
 
 			if (!$context->null() && $constantType->getValue() === false) {
-				return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+				return ($resultFor($exprNode) ?? $scope->toMutatingScope()->obtainResultForNode($exprNode))->getSpecifiedTypesForScope(
 					$scope->toMutatingScope(),
-					$exprNode,
-					$resultFor($exprNode),
 					$context->true() ? TypeSpecifierContext::createFalsey() : TypeSpecifierContext::createFalsey()->negate(),
 				)->setRootExpr($expr);
 			}
 
 			if (!$context->null() && $constantType->getValue() === true) {
-				return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+				return ($resultFor($exprNode) ?? $scope->toMutatingScope()->obtainResultForNode($exprNode))->getSpecifiedTypesForScope(
 					$scope->toMutatingScope(),
-					$exprNode,
-					$resultFor($exprNode),
 					$context->true() ? TypeSpecifierContext::createTruthy() : TypeSpecifierContext::createTruthy()->negate(),
 				)->setRootExpr($expr);
 			}
@@ -477,10 +473,8 @@ final class EqualityTypeSpecifyingHelper
 			&& $unwrappedLeftExpr->name->toLowerString() === 'preg_match'
 			&& (new ConstantIntegerType(1))->isSuperTypeOf($rightType)->yes()
 		) {
-			return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
+			return ($resultFor($leftExpr) ?? $scope->toMutatingScope()->obtainResultForNode($leftExpr))->getSpecifiedTypesForScope(
 				$scope->toMutatingScope(),
-				$leftExpr,
-				$resultFor($leftExpr),
 				$context,
 			)->setRootExpr($expr);
 		}
@@ -803,10 +797,8 @@ final class EqualityTypeSpecifyingHelper
 				return $types;
 			}
 
-			return $types->unionWith($this->defaultNarrowingHelper->getChildSpecifiedTypes(
+			return $types->unionWith(($resultFor($exprNode) ?? $scope->toMutatingScope()->obtainResultForNode($exprNode))->getSpecifiedTypesForScope(
 				$scope->toMutatingScope(),
-				$exprNode,
-				$resultFor($exprNode),
 				$context->true() ? TypeSpecifierContext::createFalse() : TypeSpecifierContext::createFalse()->negate(),
 			)->setRootExpr($rootExpr));
 		}
@@ -817,10 +809,8 @@ final class EqualityTypeSpecifyingHelper
 				return $types;
 			}
 
-			return $types->unionWith($this->defaultNarrowingHelper->getChildSpecifiedTypes(
+			return $types->unionWith(($resultFor($exprNode) ?? $scope->toMutatingScope()->obtainResultForNode($exprNode))->getSpecifiedTypesForScope(
 				$scope->toMutatingScope(),
-				$exprNode,
-				$resultFor($exprNode),
 				$context->true() ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createTrue()->negate(),
 			)->setRootExpr($rootExpr));
 		}

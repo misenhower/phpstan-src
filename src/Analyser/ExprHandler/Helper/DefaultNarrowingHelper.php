@@ -36,23 +36,6 @@ final class DefaultNarrowingHelper
 	}
 
 	/**
-	 * The narrowing of an already-processed child expression in the given
-	 * boolean context: answered by the child result's specifyTypesCallback.
-	 * When the child wired no callback, or is a synthetic node with no result,
-	 * it is processed on demand and asked for its narrowing - the same path
-	 * TypeSpecifier::specifyTypesInCondition() routes handler-supported nodes
-	 * through, but without the old-world dispatcher.
-	 */
-	public function getChildSpecifiedTypes(MutatingScope $s, Expr $childExpr, ?ExpressionResult $childResult, TypeSpecifierContext $context): SpecifiedTypes
-	{
-		if ($childResult !== null) {
-			return $childResult->getSpecifiedTypesForScope($s, $context);
-		}
-
-		return $this->specifyTypesForNode($s, $childExpr, $context);
-	}
-
-	/**
 	 * Narrows an arbitrary (often synthetic) node in the given boolean context by
 	 * processing it on demand and asking its result, the inside-out replacement
 	 * for TypeSpecifier::specifyTypesInCondition() on the handler path. A node not

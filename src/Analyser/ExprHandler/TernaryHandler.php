@@ -163,7 +163,7 @@ final class TernaryHandler implements ExprHandler
 
 				// the synthetic condition takes the on-demand bridge; its real
 				// subnodes answer from stored results
-				return $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $conditionExpr, null, $context)->setRootExpr($expr);
+				return $s->obtainResultForNode($conditionExpr)->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
 			},
 		);
 	}

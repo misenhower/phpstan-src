@@ -12,7 +12,6 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ConditionalExpressionHolderHelper;
-use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
@@ -36,7 +35,6 @@ final class BooleanAndHandler implements ExprHandler
 	public function __construct(
 		private ConditionalExpressionHolderHelper $conditionalExpressionHolderHelper,
 		private ExpressionResultFactory $expressionResultFactory,
-		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -146,10 +144,10 @@ final class BooleanAndHandler implements ExprHandler
 					// In a mixed truthy-and-false context, re-derive empty holders from the falsey narrowing.
 					if ($context->truthy()) {
 						if ($leftHolderTypes->getSureTypes() === [] && $leftHolderTypes->getSureNotTypes() === []) {
-							$leftHolderTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->left, $leftResult, TypeSpecifierContext::createFalsey())->setRootExpr($expr);
+							$leftHolderTypes = $leftResult->getSpecifiedTypesForScope($s, TypeSpecifierContext::createFalsey())->setRootExpr($expr);
 						}
 						if ($rightHolderTypes->getSureTypes() === [] && $rightHolderTypes->getSureNotTypes() === []) {
-							$rightHolderTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($rightScope, $expr->right, $rightResult, TypeSpecifierContext::createFalsey())->setRootExpr($expr);
+							$rightHolderTypes = $rightResult->getSpecifiedTypesForScope($rightScope, TypeSpecifierContext::createFalsey())->setRootExpr($expr);
 						}
 					}
 					// Condition (antecedent) narrowings: when an arm has no falsey narrowing
@@ -162,13 +160,13 @@ final class BooleanAndHandler implements ExprHandler
 					$leftCondTypes = $leftHolderTypes;
 					$rightCondTypes = $rightHolderTypes;
 					if ($leftCondTypes->getSureTypes() === [] && $leftCondTypes->getSureNotTypes() === []) {
-						$truthyLeftTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->left, $leftResult, TypeSpecifierContext::createTruthy());
+						$truthyLeftTypes = $leftResult->getSpecifiedTypesForScope($s, TypeSpecifierContext::createTruthy());
 						if ($this->allExpressionsTrackable($truthyLeftTypes)) {
 							$leftCondTypes = new SpecifiedTypes($truthyLeftTypes->getSureNotTypes(), $truthyLeftTypes->getSureTypes());
 						}
 					}
 					if ($rightCondTypes->getSureTypes() === [] && $rightCondTypes->getSureNotTypes() === []) {
-						$truthyRightTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($rightScope, $expr->right, $rightResult, TypeSpecifierContext::createTruthy());
+						$truthyRightTypes = $rightResult->getSpecifiedTypesForScope($rightScope, TypeSpecifierContext::createTruthy());
 						if ($this->allExpressionsTrackable($truthyRightTypes)) {
 							$rightCondTypes = new SpecifiedTypes($truthyRightTypes->getSureNotTypes(), $truthyRightTypes->getSureTypes());
 						}

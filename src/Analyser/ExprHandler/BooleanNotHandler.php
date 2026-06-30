@@ -71,7 +71,7 @@ final class BooleanNotHandler implements ExprHandler
 
 				// The negated operand was processed above; compose its narrowing
 				// directly from its result rather than re-resolving the node.
-				return $this->defaultNarrowingHelper->getChildSpecifiedTypes($s, $expr->expr, $exprResult, $context->negate())->setRootExpr($expr);
+				return $exprResult->getSpecifiedTypesForScope($s, $context->negate())->setRootExpr($expr);
 			},
 		);
 	}

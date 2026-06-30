@@ -267,7 +267,9 @@ final class AssignHandler implements ExprHandler
 	{
 		return function (MutatingScope $s, TypeSpecifierContext $context) use ($nodeScopeResolver, $expr, $assignedExprResult): SpecifiedTypes {
 			if ($context->null()) {
-				$specifiedTypes = $this->defaultNarrowingHelper->getChildSpecifiedTypes($s->exitFirstLevelStatements(), $expr->expr, $assignedExprResult, $context)->setRootExpr($expr);
+				$assignedScope = $s->exitFirstLevelStatements();
+				$result = $assignedExprResult ?? $assignedScope->obtainResultForNode($expr->expr);
+				$specifiedTypes = $result->getSpecifiedTypesForScope($assignedScope, $context)->setRootExpr($expr);
 				$specifiedTypes = $specifiedTypes->removeExpr($this->exprPrinter->printExpr($expr->var));
 			} else {
 				$specifiedTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr->var, $context)->setRootExpr($expr);

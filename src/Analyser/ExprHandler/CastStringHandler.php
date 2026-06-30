@@ -12,7 +12,6 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
-use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
@@ -35,7 +34,6 @@ final class CastStringHandler implements ExprHandler
 		private InitializerExprTypeResolver $initializerExprTypeResolver,
 		private ImplicitToStringCallHelper $implicitToStringCallHelper,
 		private ExpressionResultFactory $expressionResultFactory,
-		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -73,12 +71,9 @@ final class CastStringHandler implements ExprHandler
 
 					throw new ShouldNotHappenException();
 			}),
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->getChildSpecifiedTypes(
-				$s,
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $s->obtainResultForNode(
 				new NotEqual($expr->expr, new String_('')),
-				null,
-				$context,
-			)->setRootExpr($expr),
+			)->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr),
 		);
 	}
 

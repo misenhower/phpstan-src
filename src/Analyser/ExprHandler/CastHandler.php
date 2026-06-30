@@ -76,30 +76,15 @@ final class CastHandler implements ExprHandler
 			},
 			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
 				if ($expr instanceof Cast\Bool_) {
-					return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
-						$s,
-						new Equal($expr->expr, new ConstFetch(new FullyQualified('true'))),
-						null,
-						$context,
-					)->setRootExpr($expr);
+					return $s->obtainResultForNode(new Equal($expr->expr, new ConstFetch(new FullyQualified('true'))))->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
 				}
 
 				if ($expr instanceof Cast\Int_) {
-					return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
-						$s,
-						new NotEqual($expr->expr, new Int_(0)),
-						null,
-						$context,
-					)->setRootExpr($expr);
+					return $s->obtainResultForNode(new NotEqual($expr->expr, new Int_(0)))->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
 				}
 
 				if ($expr instanceof Cast\Double) {
-					return $this->defaultNarrowingHelper->getChildSpecifiedTypes(
-						$s,
-						new NotEqual($expr->expr, new Float_(0.0)),
-						null,
-						$context,
-					)->setRootExpr($expr);
+					return $s->obtainResultForNode(new NotEqual($expr->expr, new Float_(0.0)))->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
 				}
 
 				return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
