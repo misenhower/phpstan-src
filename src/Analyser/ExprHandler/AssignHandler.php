@@ -1723,7 +1723,17 @@ final class AssignHandler implements ExprHandler
 	 */
 	private function getOriginalPropertyType(NodeScopeResolver $nodeScopeResolver, PropertyFetch|StaticPropertyFetch $propertyFetch, MutatingScope $scope): Type
 	{
-		$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNode($propertyFetch, $scope);
+		// the fetch is a write target inside an offset chain - nothing of it is
+		// processed yet, so the holder type is read maybe-stored (a plain variable
+		// receiver like $this answers from scope state without a walk)
+		if ($propertyFetch instanceof PropertyFetch) {
+			$propertyHolderType = $nodeScopeResolver->readTypeOfMaybeStored($propertyFetch->var, $scope);
+		} elseif ($propertyFetch->class instanceof Name) {
+			$propertyHolderType = $scope->resolveTypeByName($propertyFetch->class);
+		} else {
+			$propertyHolderType = $nodeScopeResolver->readTypeOfMaybeStored($propertyFetch->class, $scope);
+		}
+		$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNodeWithHolderType($propertyFetch, $propertyHolderType, $scope);
 		$originalPropertyType = $propertyReflection !== null ? $propertyReflection->getReadableType() : new ErrorType();
 		if ($originalPropertyType instanceof UnionType) {
 			$currentPropertyType = $nodeScopeResolver->readTypeOfMaybeStored($propertyFetch, $scope);
