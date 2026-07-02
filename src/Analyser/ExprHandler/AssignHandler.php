@@ -1320,8 +1320,10 @@ final class AssignHandler implements ExprHandler
 		Match_ $expr,
 	): array
 	{
-		$armScopesAndTypes = $this->matchHandler->getArmScopesAndTypes($nodeScopeResolver, $scope, $storage, $expr);
-		if (count($armScopesAndTypes) < 2) {
+		// the pairs were captured while the match (the assigned expression) was
+		// processed just above - no arm re-walk
+		$armScopesAndTypes = $this->matchHandler->getCapturedArmScopesAndTypes($expr);
+		if ($armScopesAndTypes === null || count($armScopesAndTypes) < 2) {
 			return [];
 		}
 

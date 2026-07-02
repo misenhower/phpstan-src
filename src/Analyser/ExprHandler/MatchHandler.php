@@ -40,6 +40,7 @@ use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\UnionType;
 use UnhandledMatchError;
 use function array_key_exists;
+use WeakMap;
 use function array_merge;
 use function array_values;
 use function count;
@@ -54,6 +55,9 @@ use const SORT_NUMERIC;
 final class MatchHandler implements ExprHandler
 {
 
+	/** @var WeakMap<Match_, list<array{ExpressionResult, MutatingScope, Expr}>> */
+	private WeakMap $capturedArmResults;
+
 	public function __construct(
 		#[AutowiredParameter]
 		private bool $treatPhpDocTypesAsCertain,
@@ -61,6 +65,7 @@ final class MatchHandler implements ExprHandler
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
+		$this->capturedArmResults = new WeakMap();
 	}
 
 	public function supports(Expr $expr): bool
@@ -69,139 +74,28 @@ final class MatchHandler implements ExprHandler
 	}
 
 	/**
-	 * For each reachable match arm, returns the arm's body type together with the
-	 * scope in which the match subject is narrowed to that arm's condition. This
-	 * lets callers reconstruct the relationship between the match result and the
+	 * For each reachable arm of an already-processed match, the arm's body type
+	 * together with the scope in which the subject is narrowed to that arm's
+	 * condition - the pairs captured during processExpr()'s single walk. Lets
+	 * callers reconstruct the relationship between the match result and the
 	 * narrowed subject (e.g. to project a later narrowing of the assigned result
-	 * back onto the subject).
+	 * back onto the subject) without re-walking the arms. Null when the node was
+	 * never processed.
 	 *
-	 * @return list<array{MutatingScope, Type}>
+	 * @return list<array{MutatingScope, Type}>|null
 	 */
-	public function getArmScopesAndTypes(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, ExpressionResultStorage $storage, Match_ $expr): array
+	public function getCapturedArmScopesAndTypes(Match_ $expr): ?array
 	{
-		$cond = $expr->cond;
-		// the subject was processed before this shadow walk runs; read its stored
-		// result on the incoming scope instead of re-walking via Scope::getType().
-		$condType = $nodeScopeResolver->readStoredResult($cond, $storage)->getTypeOnScope($scope, false);
-		$armScopesAndTypes = [];
-
-		$matchScope = $scope;
-		$arms = $expr->arms;
-		if ($condType->isEnum()->yes()) {
-			// enum match analysis would work even without this if branch
-			// but would be much slower
-			// this avoids using ObjectType::$subtractedType which is slow for huge enums
-			// because of repeated union type normalization
-			$enumCases = $condType->getEnumCases();
-			if (count($enumCases) > 0) {
-				$indexedEnumCases = [];
-				foreach ($enumCases as $enumCase) {
-					$indexedEnumCases[strtolower($enumCase->getClassName())][$enumCase->getEnumCaseName()] = $enumCase;
-				}
-				$unusedIndexedEnumCases = $indexedEnumCases;
-
-				foreach ($arms as $i => $arm) {
-					if ($arm->conds === null) {
-						continue;
-					}
-
-					$conditionCases = [];
-					foreach ($arm->conds as $armCond) {
-						if (!$armCond instanceof Expr\ClassConstFetch) {
-							continue 2;
-						}
-						if (!$armCond->class instanceof Name) {
-							continue 2;
-						}
-						if (!$armCond->name instanceof Identifier) {
-							continue 2;
-						}
-						$fetchedClassName = $scope->resolveName($armCond->class);
-						$loweredFetchedClassName = strtolower($fetchedClassName);
-						if (!array_key_exists($loweredFetchedClassName, $indexedEnumCases)) {
-							continue 2;
-						}
-
-						$caseName = $armCond->name->toString();
-						if (!array_key_exists($caseName, $indexedEnumCases[$loweredFetchedClassName])) {
-							continue 2;
-						}
-
-						$conditionCases[] = $indexedEnumCases[$loweredFetchedClassName][$caseName];
-						unset($unusedIndexedEnumCases[$loweredFetchedClassName][$caseName]);
-					}
-
-					$conditionCasesCount = count($conditionCases);
-					if ($conditionCasesCount === 0) {
-						throw new ShouldNotHappenException();
-					} elseif ($conditionCasesCount === 1) {
-						$conditionCaseType = $conditionCases[0];
-					} else {
-						$conditionCaseType = new UnionType($conditionCases);
-					}
-
-					$armScope = $matchScope->addTypeToExpression(
-						$cond,
-						$conditionCaseType,
-					);
-					// the arm body is read on the subject-narrowed scope this shadow
-					// walk built; that (body, narrowed-scope) pair is not stored, so
-					// price the body on demand against the current storage.
-					$armScopesAndTypes[] = [$armScope, $nodeScopeResolver->processSyntheticOnDemand($arm->body, $armScope)->getTypeOnScope($armScope, false)];
-					unset($arms[$i]);
-				}
-
-				$remainingCases = [];
-				foreach ($unusedIndexedEnumCases as $cases) {
-					foreach ($cases as $case) {
-						$remainingCases[] = $case;
-					}
-				}
-
-				$remainingCasesCount = count($remainingCases);
-				if ($remainingCasesCount === 0) {
-					$remainingType = new NeverType();
-				} elseif ($remainingCasesCount === 1) {
-					$remainingType = $remainingCases[0];
-				} else {
-					$remainingType = new UnionType($remainingCases);
-				}
-
-				$matchScope = $matchScope->addTypeToExpression($cond, $remainingType);
-			}
+		if (!isset($this->capturedArmResults[$expr])) {
+			return null;
 		}
 
-		foreach ($arms as $arm) {
-			if ($arm->conds === null) {
-				if ($expr->hasAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME)) {
-					$arm->body->setAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME, $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME));
-				}
-				$armScopesAndTypes[] = [$matchScope, $nodeScopeResolver->processSyntheticOnDemand($arm->body, $matchScope)->getTypeOnScope($matchScope, false)];
-				continue;
-			}
-
-			if (count($arm->conds) === 0) {
-				throw new ShouldNotHappenException();
-			}
-
-			$filteringExpr = $this->getFilteringExprForMatchArm($expr, $arm->conds);
-
-			// the filtering expression is synthetic - price it on demand against the
-			// current storage instead of re-walking via Scope::getType().
-			$filteringExprType = $nodeScopeResolver->processSyntheticOnDemand($filteringExpr, $matchScope)->getTypeOnScope($matchScope, false);
-
-			if (!$filteringExprType->isFalse()->yes()) {
-				$truthyScope = $matchScope->filterByTruthyValue($filteringExpr);
-				if ($expr->hasAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME)) {
-					$arm->body->setAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME, $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME));
-				}
-				$armScopesAndTypes[] = [$truthyScope, $nodeScopeResolver->processSyntheticOnDemand($arm->body, $truthyScope)->getTypeOnScope($truthyScope, false)];
-			}
-
-			$matchScope = $matchScope->filterByFalseyValue($filteringExpr);
+		$pairs = [];
+		foreach ($this->capturedArmResults[$expr] as [$armResult, $bodyScope]) {
+			$pairs[] = [$bodyScope, $armResult->getType()];
 		}
 
-		return $armScopesAndTypes;
+		return $pairs;
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -529,6 +423,8 @@ final class MatchHandler implements ExprHandler
 		if ($expr->cond instanceof AlwaysRememberedExpr) {
 			$expr->cond = $expr->cond->getExpr();
 		}
+
+		$this->capturedArmResults[$expr] = $armTypeResults;
 
 		return $this->expressionResultFactory->create(
 			$scope,
