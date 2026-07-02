@@ -97,7 +97,7 @@ final class BinaryOpHandler implements ExprHandler
 			($expr instanceof BinaryOp\Div || $expr instanceof BinaryOp\Mod) &&
 			// the right operand was just processed on $leftResult's scope; read its
 			// result instead of re-walking via Scope::getType().
-			!$rightResult->getTypeForScope($leftResult->getScope())->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
+			!$rightResult->getType()->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
 		) {
 			$throwPoints[] = InternalThrowPoint::createExplicit($leftResult->getScope(), new ObjectType(DivisionByZeroError::class), $expr, false);
 		}
@@ -643,8 +643,8 @@ final class BinaryOpHandler implements ExprHandler
 		}
 
 		// the operands were processed during processExpr; use their results' types.
-		$leftType = $leftResult->getTypeForScope($scope);
-		$rightType = $rightResult->getTypeForScope($scope);
+		$leftType = $leftResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+		$rightType = $rightResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 
 		return $this->initializerExprTypeResolver->resolveEqualType($leftType, $rightType)->type;
 	}

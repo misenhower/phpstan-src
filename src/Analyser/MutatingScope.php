@@ -1151,7 +1151,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		if ($storage !== null) {
 			$result = $storage->findExpressionResult($node);
 			if ($result !== null && $result->canResolveOwnType()) {
-				return $scope->nativeTypesPromoted ? $result->getNativeTypeForScope($scope) : $result->getTypeForScope($scope);
+				return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 			}
 		}
 
@@ -1181,7 +1181,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
 		);
 
-		return $scope->nativeTypesPromoted ? $onDemandResult->getNativeTypeForScope($scope) : $onDemandResult->getTypeForScope($scope);
+		return $onDemandResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 	}
 
 	/**
@@ -1217,18 +1217,19 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			);
 
 			return [
-				$result->getTypeForScope($scope),
-				$result->getNativeTypeForScope($scope),
+				$result->getTypeOnScope($scope, $scope->nativeTypesPromoted),
+				$result->getTypeOnScope($scope, true),
 			];
 		}
 
-		// re-evaluate on the asking scope, not the stored beforeScope: a handler
-		// (e.g. isset/empty via NonNullabilityHelper) may have processed the
-		// inner expression on a scope that strips null, so the cached type would
-		// be stale for the narrowing the caller is applying
+		// a type tracked for the whole expression on the asking scope wins over
+		// the stored result's own type: a handler (e.g. isset/empty via
+		// NonNullabilityHelper) may have processed the inner expression on a
+		// scope that strips null, so the result's type would be stale for the
+		// narrowing the caller is applying
 		return [
-			$result->getTypeForScope($this),
-			$result->getNativeTypeForScope($this),
+			$result->getTypeOnScope($this, $this->nativeTypesPromoted),
+			$result->getTypeOnScope($this, true),
 		];
 	}
 
@@ -1247,7 +1248,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 	/**
 	 * Obtains the ExpressionResult of a node so its narrowing/type can be asked
-	 * (getSpecifiedTypesForScope()/getTypeForScope()): the stored result of an
+	 * (getSpecifiedTypesForScope()/getTypeOnScope()): the stored result of an
 	 * already-processed node, or - for a synthetic node (or with no analysis in
 	 * progress) - the result of processing it on demand against a duplicate of
 	 * the current storage, so the throwaway walk never pollutes the live one.

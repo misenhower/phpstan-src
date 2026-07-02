@@ -96,8 +96,8 @@ final class IssetabilityDescriptor
 				throw new ShouldNotHappenException();
 			}
 
-			$varType = $useNativeTypes ? $varResult->getNativeTypeForScope($scope) : $varResult->getTypeForScope($scope);
-			$dimType = $useNativeTypes ? $dimResult->getNativeTypeForScope($scope) : $dimResult->getTypeForScope($scope);
+			$varType = $varResult->getTypeOnScope($scope, $useNativeTypes);
+			$dimType = $dimResult->getTypeOnScope($scope, $useNativeTypes);
 			$hasOffsetValue = $varType->hasOffsetValueType($dimType);
 			$valueType = $hasOffsetValue->no() ? new NeverType() : $varType->getOffsetValueType($dimType);
 

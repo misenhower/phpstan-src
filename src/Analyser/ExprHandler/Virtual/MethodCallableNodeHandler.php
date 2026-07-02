@@ -82,7 +82,7 @@ final class MethodCallableNodeHandler implements ExprHandler
 
 		// $originalNode->var is the same node as $expr->getVar(), processed in
 		// processExpr - read its ExpressionResult instead of Scope::getType()
-		$varType = $varResult->getTypeForScope($scope);
+		$varType = $varResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 		$method = $scope->getMethodReflection($varType, $originalNode->name->toString());
 		if ($method === null) {
 			return new ObjectType(Closure::class);

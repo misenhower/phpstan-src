@@ -59,6 +59,16 @@ final class IssetCheck
 	{
 		$link = $resolution->getLink();
 		$inner = $resolution->getInner();
+		if (getenv('ISSET_DEBUG') !== false) {
+			$fetch = $link->isProperty() ? $link->getPropertyFetch() : null;
+			fwrite(STDERR, sprintf(
+				"LINK line=%d prop=%s hasExprTypeOfFetch=%s writable=%s\n",
+				$fetch !== null ? $fetch->getStartLine() : ($link->isVariable() ? -1 : -2),
+				$fetch !== null && $fetch->name instanceof \PhpParser\Node\Identifier ? $fetch->name->name : '?',
+				$link->isProperty() ? ($link->hasExpressionTypeOfFetch() ? 'Y' : 'N') : '-',
+				$link->isProperty() && $link->getPropertyReflection() !== null ? $link->getPropertyReflection()->getWritableType()->describe(\PHPStan\Type\VerbosityLevel::precise()) : '-',
+			));
+		}
 
 		if ($link->isVariable()) {
 			$hasVariable = $link->getHasVariable();

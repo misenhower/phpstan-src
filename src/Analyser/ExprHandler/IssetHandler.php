@@ -123,7 +123,7 @@ final class IssetHandler implements ExprHandler
 		// The subjects and their chain links were just processed, so their
 		// ExpressionResults are in the storage; capture them (the results, not the
 		// storage - no reference cycle) so the narrowing reads their types via
-		// getTypeForScope() instead of re-walking through Scope::getType().
+		// getTypeOnScope() instead of re-walking through Scope::getType().
 		$chainResults = [];
 		foreach ($expr->vars as $var) {
 			$this->captureChainResults($var, $storage, $chainResults);
@@ -174,7 +174,7 @@ final class IssetHandler implements ExprHandler
 				$readType = static function (Expr $e) use ($chainResults, $s, $nodeScopeResolver): Type {
 					$result = $chainResults[spl_object_id($e)] ?? null;
 
-					return $result !== null ? $result->getTypeForScope($s) : $nodeScopeResolver->readStoredOrPriceOnDemand($e, $s);
+					return $result !== null ? $result->getTypeOnScope($s, $s->nativeTypesPromoted) : $nodeScopeResolver->readStoredOrPriceOnDemand($e, $s);
 				};
 
 				if (count($expr->vars) === 0 || $context->null()) {

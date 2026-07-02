@@ -76,7 +76,7 @@ final class BooleanAndHandler implements ExprHandler
 		$leftResult = $nodeScopeResolver->processExprNode($stmt, $expr->left, $scope, $storage, $nodeCallback, $context->enterDeep());
 		$leftTruthyScope = $leftResult->getTruthyScope();
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $leftTruthyScope, $storage, $nodeCallback, $context);
-		$rightExprType = $rightResult->getTypeForScope($rightResult->getScope());
+		$rightExprType = $rightResult->getType();
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
 			$leftMergedWithRightScope = $leftResult->getFalseyScope();
 		} else {

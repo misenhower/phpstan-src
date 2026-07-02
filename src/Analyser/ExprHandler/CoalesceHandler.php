@@ -76,7 +76,7 @@ final class CoalesceHandler implements ExprHandler
 		// mid-processing would take the on-demand path and recurse
 		$rightScope = $scope->applySpecifiedTypes($this->getFalseySpecifiedTypes($scope, $expr, $condResult, TypeSpecifierContext::createFalsey()));
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $rightScope, $storage, $nodeCallback, $context->enterDeep());
-		$rightExprType = $rightResult->getTypeForScope($scope);
+		$rightExprType = $rightResult->getType();
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
 			$scope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Expr\Isset_([$expr->left]), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()));
 		} else {
@@ -133,7 +133,7 @@ final class CoalesceHandler implements ExprHandler
 					return $this->getFalseySpecifiedTypes($s, $expr, $condResult, $context);
 				}
 
-				if ((new ConstantBooleanType(false))->isSuperTypeOf($rightResult->getTypeForScope($s)->toBoolean())->yes()) {
+				if ((new ConstantBooleanType(false))->isSuperTypeOf($rightResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean())->yes()) {
 					return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, new NullType(), TypeSpecifierContext::createFalse())->setRootExpr($expr);
 				}
 
@@ -147,7 +147,7 @@ final class CoalesceHandler implements ExprHandler
 			// TypeSpecifier::create() recovered by unwrapping the coalesce
 			createTypesCallback: function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult): SpecifiedTypes {
 				if (!$context->null()) {
-					$rightType = $rightResult->getTypeForScope($s);
+					$rightType = $rightResult->getTypeOnScope($s, $s->nativeTypesPromoted);
 					if (
 						($context->true() && $type->isSuperTypeOf($rightType)->no())
 						|| ($context->false() && $type->isSuperTypeOf($rightType)->yes())

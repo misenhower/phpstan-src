@@ -41,7 +41,7 @@ final class ImplicitToStringCallHelper
 		$impurePoints = [];
 
 		$exprType = $exprResult !== null
-			? $exprResult->getTypeForScope($scope)
+			? $exprResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
 			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
 
 		$toStringMethod = null;

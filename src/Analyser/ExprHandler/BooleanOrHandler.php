@@ -133,7 +133,7 @@ final class BooleanOrHandler implements ExprHandler
 		$leftResult = $nodeScopeResolver->processExprNode($stmt, $expr->left, $scope, $storage, $nodeCallback, $context->enterDeep());
 		$leftFalseyScope = $leftResult->getFalseyScope();
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $leftFalseyScope, $storage, $nodeCallback, $context);
-		$rightExprType = $rightResult->getTypeForScope($rightResult->getScope());
+		$rightExprType = $rightResult->getType();
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
 			$leftMergedWithRightScope = $leftResult->getTruthyScope();
 		} else {
@@ -187,12 +187,12 @@ final class BooleanOrHandler implements ExprHandler
 
 				if ($context->true()) {
 					if (
-						$leftResult->getTypeForScope($s)->toBoolean()->isFalse()->yes()
+						$leftResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean()->isFalse()->yes()
 					) {
 						$types = $rightTypes->normalize($rightScope, $nodeScopeResolver);
 					} elseif (
-						$leftResult->getTypeForScope($s)->toBoolean()->isTrue()->yes()
-						|| $rightResult->getTypeForScope($s)->toBoolean()->isFalse()->yes()
+						$leftResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean()->isTrue()->yes()
+						|| $rightResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean()->isFalse()->yes()
 					) {
 						$types = $leftTypes->normalize($s, $nodeScopeResolver);
 					} else {

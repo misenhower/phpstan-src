@@ -184,7 +184,7 @@ final class NewHandler implements ExprHandler
 			// The instantiated object type derives from the class expression - read
 			// its already-processed result rather than asking Scope::getType() for
 			// the not-yet-stored New_ node, which would re-enter this handler.
-			$objectClasses = $classResult->getTypeForScope($scope)->getObjectTypeOrClassStringObjectType()->getObjectClassNames();
+			$objectClasses = $classResult->getType()->getObjectTypeOrClassStringObjectType()->getObjectClassNames();
 			if (count($objectClasses) === 1) {
 				$objectExprResult = $nodeScopeResolver->processExprNode($stmt, new New_(new Name($objectClasses[0])), $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 				$className = $objectClasses[0];

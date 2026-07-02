@@ -81,7 +81,7 @@ final class FunctionCallableNodeHandler implements ExprHandler
 			if ($nameResult === null) {
 				throw new ShouldNotHappenException();
 			}
-			$callableType = $nameResult->getTypeForScope($scope);
+			$callableType = $nameResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 			if (!$callableType->isCallable()->yes()) {
 				return new ObjectType(Closure::class);
 			}

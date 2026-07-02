@@ -133,7 +133,7 @@ final class FuncCallHandler implements ExprHandler
 			// process the dynamic callee name first, then consume its type (single-pass
 			// inside-out) rather than reading it before processExprNode() stores it
 			$nameResult = $nodeScopeResolver->processExprNode($stmt, $expr->name, $scope, $storage, $nodeCallback, $context->enterDeep());
-			$nameType = $nameResult->getTypeForScope($scope);
+			$nameType = $nameResult->getType();
 			if (!$nameType->isCallable()->no()) {
 				$variants = $nameType->getCallableParametersAcceptors($scope);
 				// A structural acceptor (names/positions/variadic) drives the per-arg
@@ -203,7 +203,7 @@ final class FuncCallHandler implements ExprHandler
 			// so the NoopNodeCallback here avoids duplicate node-callbacks.
 			$nodeScopeResolver->processExprNode($stmt, $normalizedExpr->getArgs()[0]->value, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 			$clonePropertiesArgResult = $nodeScopeResolver->processExprNode($stmt, $normalizedExpr->getArgs()[1]->value, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
-			$clonePropertiesArgType = $clonePropertiesArgResult->getTypeForScope($scope);
+			$clonePropertiesArgType = $clonePropertiesArgResult->getType();
 			$cloneExpr = new TypeExpr($scope->getType(new Expr\Clone_($normalizedExpr->getArgs()[0]->value)));
 			$clonePropertiesArgTypeConstantArrays = $clonePropertiesArgType->getConstantArrays();
 			foreach ($clonePropertiesArgTypeConstantArrays as $clonePropertiesArgTypeConstantArray) {
@@ -541,17 +541,17 @@ final class FuncCallHandler implements ExprHandler
 		) {
 			$arrayArg = $normalizedExpr->getArgs()[0]->value;
 			$arrayArgResult = $argsResult->getArgResult($arrayArg);
-			$arrayArgType = $arrayArgResult !== null ? $arrayArgResult->getTypeForScope($scope) : $scope->getType($arrayArg);
-			$arrayArgNativeType = $arrayArgResult !== null ? $arrayArgResult->getNativeTypeForScope($scope) : $scope->getNativeType($arrayArg);
+			$arrayArgType = $arrayArgResult !== null ? $arrayArgResult->getType() : $scope->getType($arrayArg);
+			$arrayArgNativeType = $arrayArgResult !== null ? $arrayArgResult->getNativeType() : $scope->getNativeType($arrayArg);
 
 			$offsetArg = $normalizedExpr->getArgs()[1]->value;
 			$offsetArgResult = $argsResult->getArgResult($offsetArg);
-			$offsetType = $offsetArgResult !== null ? $offsetArgResult->getTypeForScope($scopeBeforeArgs) : $scopeBeforeArgs->getType($offsetArg);
+			$offsetType = $offsetArgResult !== null ? $offsetArgResult->getType() : $scopeBeforeArgs->getType($offsetArg);
 
 			if (isset($normalizedExpr->getArgs()[2])) {
 				$lengthArg = $normalizedExpr->getArgs()[2]->value;
 				$lengthArgResult = $argsResult->getArgResult($lengthArg);
-				$lengthType = $lengthArgResult !== null ? $lengthArgResult->getTypeForScope($scopeBeforeArgs) : $scopeBeforeArgs->getType($lengthArg);
+				$lengthType = $lengthArgResult !== null ? $lengthArgResult->getType() : $scopeBeforeArgs->getType($lengthArg);
 			} else {
 				$lengthType = new NullType();
 			}
@@ -771,7 +771,7 @@ final class FuncCallHandler implements ExprHandler
 		$arrayArgResult = $argsResult->getArgResult($arrayArg);
 		// closure args have no ExpressionResult (ProcessClosureResult carries none);
 		// they fall back to the scope, every other arg reads its captured result.
-		$arrayType = $arrayArgResult !== null ? $arrayArgResult->getTypeForScope($scope->toMutatingScope()) : $scope->getType($arrayArg);
+		$arrayType = $arrayArgResult !== null ? $arrayArgResult->getTypeOnScope($scope->toMutatingScope(), $scope->toMutatingScope()->nativeTypesPromoted) : $scope->getType($arrayArg);
 		$callArgs = array_slice($expr->getArgs(), 1);
 
 		/**
@@ -781,7 +781,7 @@ final class FuncCallHandler implements ExprHandler
 		$setOffsetValueTypes = static function (Scope $scope, array $callArgs, callable $setOffsetValueType, ?bool &$nonConstantArrayWasUnpacked = null) use ($argsResult): void {
 			foreach ($callArgs as $callArg) {
 				$callArgResult = $argsResult->getArgResult($callArg->value);
-				$callArgType = $callArgResult !== null ? $callArgResult->getTypeForScope($scope->toMutatingScope()) : $scope->getType($callArg->value);
+				$callArgType = $callArgResult !== null ? $callArgResult->getTypeOnScope($scope->toMutatingScope(), $scope->toMutatingScope()->nativeTypesPromoted) : $scope->getType($callArg->value);
 				if ($callArg->unpack) {
 					$constantArrays = $callArgType->getConstantArrays();
 					if (count($constantArrays) === 1) {
@@ -1127,7 +1127,7 @@ final class FuncCallHandler implements ExprHandler
 		}
 
 		$calleeType = $nameResult !== null
-			? $nameResult->getTypeForScope($scope)
+			? $nameResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
 			: $nodeScopeResolver->readStoredOrPriceOnDemand($call->name, $scope);
 
 		$assertions = null;
@@ -1195,7 +1195,7 @@ final class FuncCallHandler implements ExprHandler
 		}
 
 		$nameType = $nameResult !== null
-			? $nameResult->getTypeForScope($scope)
+			? $nameResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
 			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $scope);
 		if (!$nameType->isCallable()->yes()) {
 			return true;

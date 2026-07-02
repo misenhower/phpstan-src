@@ -211,8 +211,8 @@ final class MatchHandler implements ExprHandler
 		$condResult = $nodeScopeResolver->processExprNode($stmt, $expr->cond, $scope, $storage, $nodeCallback, $deepContext);
 		// the subject was just processed on this scope; read its result instead of
 		// re-walking via Scope::getType().
-		$condType = $condResult->getTypeForScope($scope);
-		$condNativeType = $condResult->getNativeTypeForScope($scope);
+		$condType = $condResult->getType();
+		$condNativeType = $condResult->getNativeType();
 		$scope = $condResult->getScope();
 		$hasYield = $condResult->hasYield();
 		$throwPoints = $condResult->getThrowPoints();

@@ -171,7 +171,7 @@ final class InstanceofHandler implements ExprHandler
 				if ($classResult === null) {
 					throw new ShouldNotHappenException();
 				}
-				$classNameType = $classResult->getTypeForScope($s);
+				$classNameType = $classResult->getTypeOnScope($s, $s->nativeTypesPromoted);
 				$result = $classNameType->toObjectTypeForInstanceofCheck();
 				$type = $result->type;
 				$uncertainty = $result->uncertainty;
@@ -184,7 +184,7 @@ final class InstanceofHandler implements ExprHandler
 						);
 						return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 					} elseif ($context->false() && !$uncertainty) {
-						$exprType = $exprResult->getTypeForScope($s);
+						$exprType = $exprResult->getTypeOnScope($s, $s->nativeTypesPromoted);
 						if (!$type->isSuperTypeOf($exprType)->yes()) {
 							return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 						}

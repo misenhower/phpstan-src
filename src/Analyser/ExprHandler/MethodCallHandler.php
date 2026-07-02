@@ -92,8 +92,8 @@ final class MethodCallHandler implements ExprHandler
 			// argument; the NoopNodeCallback here avoids a duplicate node-callback.
 			$newThisResult = $nodeScopeResolver->processExprNode($stmt, $expr->getArgs()[0]->value, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 			$closureCallScope = $scope->enterClosureCall(
-				$newThisResult->getTypeForScope($scope),
-				$newThisResult->getNativeTypeForScope($scope),
+				$newThisResult->getType(),
+				$newThisResult->getNativeType(),
 			);
 		}
 
@@ -113,7 +113,7 @@ final class MethodCallHandler implements ExprHandler
 		$nameResult = null;
 		// the var was processed above as the receiver; read its already-computed
 		// result instead of re-walking via Scope::getType().
-		$calledOnType = $varResult->getTypeForScope($scope);
+		$calledOnType = $varResult->getType();
 		// A call configured as early-terminating never returns: give it an explicit
 		// never so the statement's exit point follows from the result type, instead of
 		// NodeScopeResolver re-deriving it via Scope::getType().
@@ -278,7 +278,7 @@ final class MethodCallHandler implements ExprHandler
 							$acceptorForGenerics instanceof ExtendedParametersAcceptor ? $acceptorForGenerics->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
 							TemplateTypeVariance::createCovariant(),
 						),
-						$varResult->getNativeTypeForScope($scope),
+						$varResult->getNativeType(),
 					);
 				}
 			}
@@ -316,7 +316,7 @@ final class MethodCallHandler implements ExprHandler
 
 		// the var was processed above as the receiver; read its already-computed
 		// result on the original scope instead of re-walking via Scope::getType().
-		$calledOnType = $varResult->getTypeForScope($originalScope);
+		$calledOnType = $varResult->getType();
 		if (!$expr->name instanceof Identifier) {
 			return $result;
 		}
@@ -447,7 +447,7 @@ final class MethodCallHandler implements ExprHandler
 
 		// the var was processed during processExpr; read its already-computed
 		// result instead of re-walking via Scope::getType().
-		$methodCalledOnType = $varResult->getTypeForScope($scope);
+		$methodCalledOnType = $varResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 		$methodReflection = $scope->getMethodReflection($methodCalledOnType, $expr->name->name);
 		if ($methodReflection !== null) {
 			$args = $expr->getArgs();
@@ -520,7 +520,7 @@ final class MethodCallHandler implements ExprHandler
 			return true;
 		}
 
-		$calledOnType = $varResult->getTypeForScope($scope);
+		$calledOnType = $varResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 		$methodReflection = $scope->getMethodReflection($calledOnType, $expr->name->toString());
 		if ($methodReflection === null) {
 			return false;

@@ -30,6 +30,10 @@ final class ExpressionResult
 
 	private ?Type $cachedNativeType = null;
 
+	private ?Type $resolvedType = null;
+
+	private ?Type $resolvedNativeType = null;
+
 	/**
 	 * @param InternalThrowPoint[] $throwPoints
 	 * @param ImpurePoint[] $impurePoints
@@ -113,7 +117,7 @@ final class ExpressionResult
 			return $this->issetabilityDescriptor->resolve($scope, $useNativeTypes, $this->expr);
 		}
 
-		$type = $useNativeTypes ? $this->getNativeTypeForScope($scope) : $this->getTypeForScope($scope);
+		$type = $this->getTypeOnScope($scope, $useNativeTypes);
 
 		return new IssetabilityResolution(
 			IssetabilityLinkInfo::leaf($type, $this->expr, $this->expr instanceof Expr\NullsafePropertyFetch),
@@ -198,7 +202,7 @@ final class ExpressionResult
 		}
 
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope)) {
-			return $this->cachedType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(false));
+			return $this->cachedType = $this->resolveOwnType(false);
 		}
 
 		// The guard above leaves only one way here: the expression is tracked on
@@ -218,12 +222,40 @@ final class ExpressionResult
 		}
 
 		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope->doNotTreatPhpDocTypesAsCertain())) {
-			return $this->cachedNativeType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(true));
+			return $this->cachedNativeType = $this->resolveOwnType(true);
 		}
 
 		// Tracked native holder (getNativeType() promotes the scope, so its
 		// expressionTypes are the native ones) - read it directly.
 		return $this->cachedNativeType = $this->beforeScope->doNotTreatPhpDocTypesAsCertain()->getTrackedExpressionType($this->expr);
+	}
+
+	/**
+	 * The result's own type - the eager value or the memoized typeCallback,
+	 * with no tracked-holder interference. The callback is a pure function of
+	 * the flavour flag, so one memo slot per flavour is exact.
+	 */
+	private function resolveOwnType(bool $nativeTypesPromoted): Type
+	{
+		if ($nativeTypesPromoted) {
+			if ($this->nativeType !== null) {
+				return $this->nativeType;
+			}
+			if ($this->typeCallback === null) {
+				throw new ShouldNotHappenException();
+			}
+
+			return $this->resolvedNativeType ??= TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(true));
+		}
+
+		if ($this->type !== null) {
+			return $this->type;
+		}
+		if ($this->typeCallback === null) {
+			throw new ShouldNotHappenException();
+		}
+
+		return $this->resolvedType ??= TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(false));
 	}
 
 	/**
@@ -277,42 +309,20 @@ final class ExpressionResult
 	}
 
 	/**
-	 * Re-evaluates the expression type on a different scope (e.g. a narrowed one).
-	 * Unlike getType(), the result is not cached.
+	 * The type of this expression as the given scope sees it: a narrowed or
+	 * ensured type the scope tracks for the whole expression wins over the
+	 * result's own (position-time) type. For the deliberately scope-sensitive
+	 * consumers - isset/empty/?? chain folding and the stored-result read in
+	 * NodeScopeResolver - everything else reads getType()/getNativeType().
 	 */
-	public function getTypeForScope(MutatingScope $scope): Type
+	public function getTypeOnScope(MutatingScope $scope, bool $useNativeTypes): Type
 	{
-		// A native-promoted scope asks getType() but means the native flavour
-		// (MutatingScope::getNativeType() promotes then calls getType()); the
-		// eager value is stored as a (phpdoc, native) pair, so honour the scope.
-		if ($this->nativeType !== null && $scope->nativeTypesPromoted) {
-			return $this->nativeType;
+		$readScope = $useNativeTypes ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
+		if ($this->type === null && $this->hasTrackedExpressionType($readScope)) {
+			return $readScope->getTrackedExpressionType($this->expr);
 		}
 
-		if ($this->type !== null) {
-			return $this->type;
-		}
-
-		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($scope)) {
-			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)($scope->nativeTypesPromoted));
-		}
-
-		return $scope->getTrackedExpressionType($this->expr);
-	}
-
-	/** Native counterpart of getTypeForScope(). */
-	public function getNativeTypeForScope(MutatingScope $scope): Type
-	{
-		if ($this->nativeType !== null) {
-			return $this->nativeType;
-		}
-
-		$nativeScope = $scope->doNotTreatPhpDocTypesAsCertain();
-		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($nativeScope)) {
-			return TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(true));
-		}
-
-		return $nativeScope->getTrackedExpressionType($this->expr);
+		return $this->resolveOwnType($useNativeTypes);
 	}
 
 }

@@ -108,7 +108,7 @@ final class StaticCallHandler implements ExprHandler
 		if ($expr->name instanceof Identifier) {
 			$earlyTerminatingClassType = $expr->class instanceof Name
 				? $scope->resolveTypeByName($expr->class)
-				: $classResult->getTypeForScope($scope);
+				: $classResult->getType();
 			$isEarlyTerminating = $this->earlyTerminatingHelper->isEarlyTerminatingMethodCall($expr->name->name, $earlyTerminatingClassType);
 		}
 		$isAlwaysTerminating = $isAlwaysTerminating || $isEarlyTerminating;
@@ -181,7 +181,7 @@ final class StaticCallHandler implements ExprHandler
 			} elseif ($expr->class instanceof Expr) {
 				// the class expr was processed above as the receiver; read its
 				// already-computed result instead of re-walking via Scope::getType().
-				$classType = $classResult->getTypeForScope($scope)->getObjectTypeOrClassStringObjectType();
+				$classType = $classResult->getType()->getObjectTypeOrClassStringObjectType();
 				$methodName = $expr->name->name;
 				$methodReflection = $scope->getMethodReflection($classType, $methodName);
 				if ($methodReflection !== null) {
@@ -201,7 +201,7 @@ final class StaticCallHandler implements ExprHandler
 		if ($expr->class instanceof Expr) {
 			// the class expr was processed above as the receiver; read its
 			// already-computed result instead of re-walking via Scope::getType().
-			$objectClasses = $classResult->getTypeForScope($scope)->getObjectClassNames();
+			$objectClasses = $classResult->getType()->getObjectClassNames();
 			if (count($objectClasses) !== 1) {
 				$objectClasses = $scope->getType(new New_($expr->class))->getObjectClassNames();
 			}
@@ -518,7 +518,7 @@ final class StaticCallHandler implements ExprHandler
 			// the class expr was processed during processExpr; read its
 			// already-computed result instead of re-walking via Scope::getType().
 			$calleeType = $classResult !== null
-				? $classResult->getTypeForScope($scope)
+				? $classResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
 				: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $scope);
 		}
 
@@ -598,7 +598,7 @@ final class StaticCallHandler implements ExprHandler
 			$calleeType = $scope->resolveTypeByName($expr->class);
 		} else {
 			$calleeType = $classResult !== null
-				? $classResult->getTypeForScope($scope)
+				? $classResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
 				: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $scope);
 		}
 

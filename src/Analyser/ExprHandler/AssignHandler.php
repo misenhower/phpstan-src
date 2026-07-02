@@ -658,8 +658,8 @@ final class AssignHandler implements ExprHandler
 					// process the dimension first, then consume its ExpressionResult
 					// (single-pass inside-out) rather than reading it before processExprNode()
 					$result = $nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, $nodeCallback, $context->enterDeep());
-					$offsetTypes[] = [$result->getTypeForScope($scope), $dimFetch];
-					$offsetNativeTypes[] = [$result->getNativeTypeForScope($scope), $dimFetch];
+					$offsetTypes[] = [$result->getType(), $dimFetch];
+					$offsetNativeTypes[] = [$result->getNativeType(), $dimFetch];
 					$hasYield = $hasYield || $result->hasYield();
 					$throwPoints = array_merge($throwPoints, $result->getThrowPoints());
 
@@ -699,8 +699,8 @@ final class AssignHandler implements ExprHandler
 			$valueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scopeBeforeAssignEval);
 			$nativeValueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scopeBeforeAssignEval);
 
-			$varType = $varResult->getTypeForScope($scope);
-			$varNativeType = $varResult->getNativeTypeForScope($scope);
+			$varType = $varResult->getType();
+			$varNativeType = $varResult->getNativeType();
 
 			// 4. compose types
 			$isImplicitArrayCreation = $this->isImplicitArrayCreation($dimFetchStack, $scope);
@@ -828,7 +828,7 @@ final class AssignHandler implements ExprHandler
 				$throwPoints[] = InternalThrowPoint::createImplicit($scope, $var);
 			}
 
-			$propertyHolderType = $objectResult->getTypeForScope($scope);
+			$propertyHolderType = $objectResult->getType();
 			if ($propertyName !== null && $propertyHolderType->hasInstanceProperty($propertyName)->yes()) {
 				$propertyReflection = $propertyHolderType->getInstanceProperty($propertyName, $scope);
 				$assignedExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
@@ -913,7 +913,7 @@ final class AssignHandler implements ExprHandler
 				$propertyHolderType = $scope->resolveTypeByName($var->class);
 			} else {
 				$classResult = $nodeScopeResolver->processExprNode($stmt, $var->class, $scope, $storage, $nodeCallback, $context);
-				$propertyHolderType = $classResult->getTypeForScope($scope);
+				$propertyHolderType = $classResult->getType();
 			}
 
 			$propertyName = null;
@@ -1053,14 +1053,14 @@ final class AssignHandler implements ExprHandler
 			foreach (array_reverse($dimFetchStack) as $dimFetch) {
 				$dimExpr = $dimFetch->getDim();
 				$dimResult = $nodeScopeResolver->processExprNode($stmt, $dimExpr, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
-				$offsetTypes[] = [$dimResult->getTypeForScope($scope), $dimFetch];
-				$offsetNativeTypes[] = [$dimResult->getNativeTypeForScope($scope), $dimFetch];
+				$offsetTypes[] = [$dimResult->getType(), $dimFetch];
+				$offsetNativeTypes[] = [$dimResult->getNativeType(), $dimFetch];
 			}
 
 			$valueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
 			$nativeValueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope);
-			$varType = $varResult->getTypeForScope($scope);
-			$varNativeType = $varResult->getNativeTypeForScope($scope);
+			$varType = $varResult->getType();
+			$varNativeType = $varResult->getNativeType();
 
 			$offsetValueType = $varType;
 			$offsetNativeValueType = $varNativeType;

@@ -76,7 +76,7 @@ final class ArrayDimFetchHandler implements ExprHandler
 		$impurePoints = array_merge($dimResult->getImpurePoints(), $varResult->getImpurePoints());
 		$scope = $varResult->getScope();
 
-		$varType = $varResult->getTypeForScope($scope);
+		$varType = $varResult->getType();
 		$offsetGetResult = null;
 		if (!$varType->isArray()->yes() && !(new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
 			$throwPoints = array_merge($throwPoints, $nodeScopeResolver->processExprNode(
