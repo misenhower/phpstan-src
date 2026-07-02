@@ -80,9 +80,9 @@ final class ConditionalExpressionHolderHelper
 
 			// the operands were processed during processExpr; read their stored
 			// results on these filtered scopes instead of re-walking via getType().
-			$originalType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $scope);
-			$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $leftFilteredScope);
-			$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $rightFilteredScope);
+			$originalType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
+			$leftType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftFilteredScope);
+			$rightType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightFilteredScope);
 
 			if ($leftType->equals($originalType) || !$originalType->isSuperTypeOf($leftType)->yes()) {
 				continue;
@@ -149,7 +149,7 @@ final class ConditionalExpressionHolderHelper
 				continue;
 			}
 
-			$scopeType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
+			$scopeType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
 			$conditionType = TypeCombinator::remove($scopeType, $type);
 			if ($scopeType->equals($conditionType)) {
 				$droppedNoOpConditions[$exprString] = true;
@@ -166,7 +166,7 @@ final class ConditionalExpressionHolderHelper
 				continue;
 			}
 
-			$scopeType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
+			$scopeType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
 			$conditionType = TypeCombinator::intersect($scopeType, $type);
 			if ($scopeType->equals($conditionType)) {
 				$droppedNoOpConditions[$exprString] = true;
@@ -223,7 +223,7 @@ final class ConditionalExpressionHolderHelper
 				}
 
 				$targetScope = $expr instanceof Expr\Variable ? $scope : $rightScope;
-				$targetType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $targetScope);
+				$targetType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $targetScope);
 				$holderType = $holdersFromSureTypes
 					? TypeCombinator::intersect($targetType, $type)
 					: TypeCombinator::remove($targetType, $type);

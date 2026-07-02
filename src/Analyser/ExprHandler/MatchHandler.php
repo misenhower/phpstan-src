@@ -82,7 +82,7 @@ final class MatchHandler implements ExprHandler
 		$cond = $expr->cond;
 		// the subject was processed before this shadow walk runs; read its stored
 		// result on the incoming scope instead of re-walking via Scope::getType().
-		$condType = $nodeScopeResolver->readStoredOrPriceOnDemand($cond, $scope);
+		$condType = $nodeScopeResolver->readTypeOfMaybeStored($cond, $scope);
 		$armScopesAndTypes = [];
 
 		$matchScope = $scope;
@@ -147,7 +147,7 @@ final class MatchHandler implements ExprHandler
 					// the arm body is read on the subject-narrowed scope this shadow
 					// walk built; that (body, narrowed-scope) pair is not stored, so
 					// price the body on demand against the current storage.
-					$armScopesAndTypes[] = [$armScope, $nodeScopeResolver->priceSyntheticOnDemand($arm->body, $armScope)];
+					$armScopesAndTypes[] = [$armScope, $nodeScopeResolver->processSyntheticOnDemand($arm->body, $armScope)->getTypeOnScope($armScope, false)];
 					unset($arms[$i]);
 				}
 
@@ -176,7 +176,7 @@ final class MatchHandler implements ExprHandler
 				if ($expr->hasAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME)) {
 					$arm->body->setAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME, $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME));
 				}
-				$armScopesAndTypes[] = [$matchScope, $nodeScopeResolver->priceSyntheticOnDemand($arm->body, $matchScope)];
+				$armScopesAndTypes[] = [$matchScope, $nodeScopeResolver->processSyntheticOnDemand($arm->body, $matchScope)->getTypeOnScope($matchScope, false)];
 				continue;
 			}
 
@@ -188,14 +188,14 @@ final class MatchHandler implements ExprHandler
 
 			// the filtering expression is synthetic - price it on demand against the
 			// current storage instead of re-walking via Scope::getType().
-			$filteringExprType = $nodeScopeResolver->priceSyntheticOnDemand($filteringExpr, $matchScope);
+			$filteringExprType = $nodeScopeResolver->processSyntheticOnDemand($filteringExpr, $matchScope)->getTypeOnScope($matchScope, false);
 
 			if (!$filteringExprType->isFalse()->yes()) {
 				$truthyScope = $matchScope->filterByTruthyValue($filteringExpr);
 				if ($expr->hasAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME)) {
 					$arm->body->setAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME, $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME));
 				}
-				$armScopesAndTypes[] = [$truthyScope, $nodeScopeResolver->priceSyntheticOnDemand($arm->body, $truthyScope)];
+				$armScopesAndTypes[] = [$truthyScope, $nodeScopeResolver->processSyntheticOnDemand($arm->body, $truthyScope)->getTypeOnScope($truthyScope, false)];
 			}
 
 			$matchScope = $matchScope->filterByFalseyValue($filteringExpr);
@@ -441,8 +441,8 @@ final class MatchHandler implements ExprHandler
 				// the `subject === cond` comparison is synthetic - price it on demand
 				// against the current storage instead of re-walking via Scope::getType().
 				$armCondType = $this->treatPhpDocTypesAsCertain
-					? $nodeScopeResolver->priceSyntheticOnDemand($armCondExpr, $armCondResultScope)
-					: $nodeScopeResolver->priceSyntheticOnDemand($armCondExpr, $armCondResultScope->doNotTreatPhpDocTypesAsCertain());
+					? $nodeScopeResolver->processSyntheticOnDemand($armCondExpr, $armCondResultScope)->getTypeOnScope($armCondResultScope, false)
+					: $nodeScopeResolver->processSyntheticOnDemand($armCondExpr, $armCondResultScope->doNotTreatPhpDocTypesAsCertain())->getTypeOnScope($armCondResultScope, true);
 				if ($armCondType->isTrue()->yes()) {
 					$hasAlwaysTrueCond = true;
 				}
@@ -479,7 +479,7 @@ final class MatchHandler implements ExprHandler
 			// always false is unreachable and does not contribute to the result
 			// type. The filtering expression is synthetic - price it on demand
 			// against the current storage instead of re-walking via Scope::getType().
-			$filteringExprType = $nodeScopeResolver->priceSyntheticOnDemand($filteringExpr, $matchScope);
+			$filteringExprType = $nodeScopeResolver->processSyntheticOnDemand($filteringExpr, $matchScope)->getTypeOnScope($matchScope, false);
 			if (!$filteringExprType->isFalse()->yes()) {
 				$armTypeResults[] = [$armResult, $bodyScope, $arm->body];
 			}

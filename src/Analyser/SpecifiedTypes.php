@@ -227,7 +227,7 @@ final class SpecifiedTypes
 				// $nodeScopeResolver is passed from inside-out callbacks so the expr
 				// type is read from its ExpressionResult instead of Scope::getType().
 				$exprType = $nodeScopeResolver !== null
-					? $nodeScopeResolver->readStoredOrPriceOnDemand($exprNode, $scope->toMutatingScope())
+					? $nodeScopeResolver->readTypeOfMaybeStored($exprNode, $scope->toMutatingScope())
 					: $scope->getType($exprNode);
 				$sureTypes[$exprString] = [$exprNode, TypeCombinator::remove($exprType, $sureNotType)];
 				continue;

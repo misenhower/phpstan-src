@@ -403,7 +403,7 @@ final class FuncCallHandler implements ExprHandler
 
 		if ($functionReflection !== null) {
 			// The call's return type, computed from the already-processed argument
-			// results (resolveReturnType reads them via readStoredOrPriceOnDemand,
+			// results (resolveReturnType reads them from the stored results,
 			// never re-running processArgs) - asking Scope::getType() for the
 			// FuncCall here would re-enter this handler on demand, as its result is
 			// not stored yet.
@@ -943,9 +943,7 @@ final class FuncCallHandler implements ExprHandler
 
 			// Synthetic nodes (call_user_func's inner FuncCall, clone-with's Clone_)
 			// have no captured arg result; they are priced on demand.
-			return $nativeTypesPromoted
-				? $nodeScopeResolver->readStoredOrPriceOnDemandNative($e, $reflectionScope)
-				: $nodeScopeResolver->readStoredOrPriceOnDemand($e, $reflectionScope);
+			return $nodeScopeResolver->readTypeOfMaybeStored($e, $nativeTypesPromoted ? $reflectionScope->doNotTreatPhpDocTypesAsCertain() : $reflectionScope);
 		};
 
 		if ($expr->name instanceof Expr) {
@@ -1128,7 +1126,7 @@ final class FuncCallHandler implements ExprHandler
 
 		$calleeType = $nameResult !== null
 			? $nameResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
-			: $nodeScopeResolver->readStoredOrPriceOnDemand($call->name, $scope);
+			: $nodeScopeResolver->readTypeOfMaybeStored($call->name, $scope);
 
 		$assertions = null;
 		$parametersAcceptor = null;
@@ -1196,7 +1194,7 @@ final class FuncCallHandler implements ExprHandler
 
 		$nameType = $nameResult !== null
 			? $nameResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
-			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $scope);
+			: $nodeScopeResolver->readTypeOfMaybeStored($expr->name, $scope);
 		if (!$nameType->isCallable()->yes()) {
 			return true;
 		}

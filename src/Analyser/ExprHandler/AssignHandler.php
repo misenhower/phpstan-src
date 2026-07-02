@@ -186,8 +186,8 @@ final class AssignHandler implements ExprHandler
 		) {
 			$varName = $expr->var->name;
 			$refName = $expr->expr->name;
-			$type = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $scope);
-			$nativeType = $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->var, $scope);
+			$type = $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope);
+			$nativeType = $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope->doNotTreatPhpDocTypesAsCertain());
 
 			// When $varName is assigned, update $refName
 			$scope = $scope->assignExpression(
@@ -227,8 +227,8 @@ final class AssignHandler implements ExprHandler
 				}
 
 				return $nativeTypesPromoted
-					? $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->expr, $beforeScope)
-					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $beforeScope);
+					? $nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $beforeScope->doNotTreatPhpDocTypesAsCertain())
+					: $nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $beforeScope);
 			},
 			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($nodeScopeResolver, $expr, $assignedExprResult) : fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult) : null,
@@ -284,7 +284,7 @@ final class AssignHandler implements ExprHandler
 				&& count($expr->expr->getArgs()) >= 1
 			) {
 				$arrayArg = $expr->expr->getArgs()[0]->value;
-				$arrayType = $nodeScopeResolver->readStoredOrPriceOnDemand($arrayArg, $s);
+				$arrayType = $nodeScopeResolver->readTypeOfMaybeStored($arrayArg, $s);
 
 				if ($arrayType->isArray()->yes()) {
 					if ($context->true()) {
@@ -302,7 +302,7 @@ final class AssignHandler implements ExprHandler
 							$this->defaultNarrowingHelper->createSubjectTypes($s, $dimFetch, null, $arrayType->getIterableValueType(), TypeSpecifierContext::createTrue()),
 						);
 					} elseif ($expr->var instanceof Variable && is_string($expr->var->name)) {
-						$keyType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $s);
+						$keyType = $nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $s);
 						$nonNullKeyType = TypeCombinator::removeNull($keyType);
 						if (!$nonNullKeyType instanceof NeverType) {
 							$specifiedTypes = $specifiedTypes->unionWith(
@@ -328,14 +328,14 @@ final class AssignHandler implements ExprHandler
 				if ($funcName === 'array_search') {
 					$arrayArg = $expr->expr->getArgs()[1]->value;
 					$sentinelType = new ConstantBooleanType(false);
-					$isStrictArraySearch = count($expr->expr->getArgs()) >= 3 && $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr->getArgs()[2]->value, $s)->isTrue()->yes();
+					$isStrictArraySearch = count($expr->expr->getArgs()) >= 3 && $nodeScopeResolver->readTypeOfMaybeStored($expr->expr->getArgs()[2]->value, $s)->isTrue()->yes();
 				} elseif ($funcName === 'array_find_key') {
 					$arrayArg = $expr->expr->getArgs()[0]->value;
 					$sentinelType = new NullType();
 				}
 
 				if ($arrayArg !== null) {
-					$arrayType = $nodeScopeResolver->readStoredOrPriceOnDemand($arrayArg, $s);
+					$arrayType = $nodeScopeResolver->readTypeOfMaybeStored($arrayArg, $s);
 
 					if ($arrayType->isArray()->yes()) {
 						if ($context->true()) {
@@ -346,7 +346,7 @@ final class AssignHandler implements ExprHandler
 							$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
 
 							if ($isStrictArraySearch) {
-								$needleType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr->getArgs()[0]->value, $s);
+								$needleType = $nodeScopeResolver->readTypeOfMaybeStored($expr->expr->getArgs()[0]->value, $s);
 								$dimFetchType = TypeCombinator::intersect($needleType, $arrayType->getIterableValueType());
 							} else {
 								$dimFetchType = $arrayType->getIterableValueType();
@@ -356,11 +356,11 @@ final class AssignHandler implements ExprHandler
 								$this->defaultNarrowingHelper->createSubjectTypes($s, $dimFetch, null, $dimFetchType, TypeSpecifierContext::createTrue()),
 							);
 						} elseif ($expr->var instanceof Variable && is_string($expr->var->name)) {
-							$keyType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $s);
+							$keyType = $nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $s);
 							$narrowedKeyType = TypeCombinator::remove($keyType, $sentinelType);
 							if (!$narrowedKeyType instanceof NeverType) {
 								if ($isStrictArraySearch) {
-									$needleType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr->getArgs()[0]->value, $s);
+									$needleType = $nodeScopeResolver->readTypeOfMaybeStored($expr->expr->getArgs()[0]->value, $s);
 									$dimFetchType = TypeCombinator::intersect($needleType, $arrayType->getIterableValueType());
 								} else {
 									$dimFetchType = $arrayType->getIterableValueType();
@@ -390,12 +390,12 @@ final class AssignHandler implements ExprHandler
 						$numArg = $args[1]->value;
 					}
 					$one = new ConstantIntegerType(1);
-					$arrayType = $nodeScopeResolver->readStoredOrPriceOnDemand($arrayArg, $s);
+					$arrayType = $nodeScopeResolver->readTypeOfMaybeStored($arrayArg, $s);
 
 					if (
 						$arrayType->isArray()->yes()
 						&& $arrayType->isIterableAtLeastOnce()->yes()
-						&& ($numArg === null || $one->isSuperTypeOf($nodeScopeResolver->readStoredOrPriceOnDemand($numArg, $s))->yes())
+						&& ($numArg === null || $one->isSuperTypeOf($nodeScopeResolver->readTypeOfMaybeStored($numArg, $s))->yes())
 					) {
 						$dimFetch = new ArrayDimFetch($arrayArg, $expr->var);
 
@@ -417,7 +417,7 @@ final class AssignHandler implements ExprHandler
 					&& count($expr->expr->left->getArgs()) >= 1
 				) {
 					$arrayArg = $expr->expr->left->getArgs()[0]->value;
-					$arrayType = $nodeScopeResolver->readStoredOrPriceOnDemand($arrayArg, $s);
+					$arrayType = $nodeScopeResolver->readTypeOfMaybeStored($arrayArg, $s);
 					if (
 						$arrayType->isList()->yes()
 						&& $arrayType->isIterableAtLeastOnce()->yes()
@@ -472,7 +472,7 @@ final class AssignHandler implements ExprHandler
 					$impurePoints[] = new ImpurePoint($scopeBeforeAssignEval, $var, 'superglobal', 'assign to superglobal variable', true);
 				}
 				$assignedExpr = $this->unwrapAssign($assignedExpr);
-				$type = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scopeBeforeAssignEval);
+				$type = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval);
 
 				$conditionalExpressions = [];
 				if ($assignedExpr instanceof Ternary) {
@@ -485,8 +485,8 @@ final class AssignHandler implements ExprHandler
 					$falseySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($condScope, $assignedExpr->cond, TypeSpecifierContext::createFalsey());
 					$truthyScope = $condScope->applySpecifiedTypes($truthySpecifiedTypes);
 					$falsyScope = $condScope->applySpecifiedTypes($falseySpecifiedTypes);
-					$truthyType = $nodeScopeResolver->readStoredOrPriceOnDemand($if, $truthyScope);
-					$falseyType = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr->else, $falsyScope);
+					$truthyType = $nodeScopeResolver->readTypeOfMaybeStored($if, $truthyScope);
+					$falseyType = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr->else, $falsyScope);
 
 					if (
 						$truthyType->isSuperTypeOf($falseyType)->no()
@@ -559,7 +559,7 @@ final class AssignHandler implements ExprHandler
 				}
 
 				$nodeScopeResolver->callNodeCallback($nodeCallback, new VariableAssignNode($var, $assignedExpr), $scopeBeforeAssignEval, $storage);
-				$scope = $scope->assignVariable($var->name, $type, $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope), TrinaryLogic::createYes());
+				$scope = $scope->assignVariable($var->name, $type, $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain()), TrinaryLogic::createYes());
 				foreach ($conditionalExpressions as $exprString => $holders) {
 					$scope = $scope->addConditionalExpressions((string) $exprString, $holders);
 				}
@@ -671,7 +671,7 @@ final class AssignHandler implements ExprHandler
 						isAlwaysTerminating: false,
 						throwPoints: [],
 						impurePoints: [],
-						typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($dimFetch->var, $scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch->var, $scope))->getOffsetValueType($nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($dimExpr, $scope) : $nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $scope)),
+						typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $nodeScopeResolver->readTypeOfMaybeStored($dimFetch->var, $scope->doNotTreatPhpDocTypesAsCertain()) : $nodeScopeResolver->readTypeOfMaybeStored($dimFetch->var, $scope))->getOffsetValueType($nativeTypesPromoted ? $nodeScopeResolver->readTypeOfMaybeStored($dimExpr, $scope->doNotTreatPhpDocTypesAsCertain()) : $nodeScopeResolver->readTypeOfMaybeStored($dimExpr, $scope)),
 						specifyTypesCallback: static fn () => new SpecifiedTypes(),
 					));
 					$scope = $result->getScope();
@@ -696,8 +696,8 @@ final class AssignHandler implements ExprHandler
 			$isAlwaysTerminating = $isAlwaysTerminating || $result->isAlwaysTerminating();
 			$scope = $result->getScope();
 
-			$valueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scopeBeforeAssignEval);
-			$nativeValueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scopeBeforeAssignEval);
+			$valueToWrite = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval);
+			$nativeValueToWrite = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval->doNotTreatPhpDocTypesAsCertain());
 
 			$varType = $varResult->getType();
 			$varNativeType = $varResult->getNativeType();
@@ -751,7 +751,7 @@ final class AssignHandler implements ExprHandler
 					if ($var instanceof PropertyFetch || $var instanceof StaticPropertyFetch) {
 						$nodeScopeResolver->callNodeCallback($nodeCallback, new PropertyAssignNode($var, $assignedPropertyExpr, $isAssignOp), $scopeBeforeAssignEval, $storage);
 						if ($var instanceof PropertyFetch && $var->name instanceof Node\Identifier && !$isAssignOp) {
-							$scope = $scope->assignInitializedProperty($nodeScopeResolver->readStoredOrPriceOnDemand($var->var, $scope), $var->name->toString());
+							$scope = $scope->assignInitializedProperty($nodeScopeResolver->readTypeOfMaybeStored($var->var, $scope), $var->name->toString());
 						}
 					}
 					$scope = $scope->assignExpression(
@@ -766,7 +766,7 @@ final class AssignHandler implements ExprHandler
 				} elseif ($var instanceof PropertyFetch || $var instanceof StaticPropertyFetch) {
 					$nodeScopeResolver->callNodeCallback($nodeCallback, new PropertyAssignNode($var, $assignedPropertyExpr, $isAssignOp), $scopeBeforeAssignEval, $storage);
 					if ($var instanceof PropertyFetch && $var->name instanceof Node\Identifier && !$isAssignOp) {
-						$scope = $scope->assignInitializedProperty($nodeScopeResolver->readStoredOrPriceOnDemand($var->var, $scope), $var->name->toString());
+						$scope = $scope->assignInitializedProperty($nodeScopeResolver->readTypeOfMaybeStored($var->var, $scope), $var->name->toString());
 					}
 				}
 			}
@@ -781,7 +781,7 @@ final class AssignHandler implements ExprHandler
 				$scope = $scope->assignExpression($expr, $type, $nativeType);
 			}
 
-			$setVarType = $nodeScopeResolver->readStoredOrPriceOnDemand($originalVar->var, $scope);
+			$setVarType = $nodeScopeResolver->readTypeOfMaybeStored($originalVar->var, $scope);
 			if (
 				!$setVarType instanceof ErrorType
 				&& !$setVarType->isArray()->yes()
@@ -831,7 +831,7 @@ final class AssignHandler implements ExprHandler
 			$propertyHolderType = $objectResult->getType();
 			if ($propertyName !== null && $propertyHolderType->hasInstanceProperty($propertyName)->yes()) {
 				$propertyReflection = $propertyHolderType->getInstanceProperty($propertyName, $scope);
-				$assignedExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
+				$assignedExprType = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope);
 				$nodeScopeResolver->callNodeCallback($nodeCallback, new PropertyAssignNode($var, $assignedExpr, $isAssignOp), $scopeBeforeAssignEval, $storage);
 				if ($propertyReflection->canChangeTypeAfterAssignment()) {
 					if ($propertyReflection->hasNativeType()) {
@@ -848,16 +848,16 @@ final class AssignHandler implements ExprHandler
 						}
 
 						if ($assignedTypeIsCompatible) {
-							$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope));
+							$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain()));
 						} else {
 							$scope = $scope->assignExpression(
 								$var,
 								TypeCombinator::intersect($assignedExprType->toCoercedArgumentType($scope->isDeclareStrictTypes()), $propertyNativeType),
-								TypeCombinator::intersect($nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope)->toCoercedArgumentType($scope->isDeclareStrictTypes()), $propertyNativeType),
+								TypeCombinator::intersect($nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain())->toCoercedArgumentType($scope->isDeclareStrictTypes()), $propertyNativeType),
 							);
 						}
 					} else {
-						$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope));
+						$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain()));
 					}
 				}
 				$declaringClass = $propertyReflection->getDeclaringClass();
@@ -892,9 +892,9 @@ final class AssignHandler implements ExprHandler
 				}
 			} else {
 				// fallback
-				$assignedExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
+				$assignedExprType = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope);
 				$nodeScopeResolver->callNodeCallback($nodeCallback, new PropertyAssignNode($var, $assignedExpr, $isAssignOp), $scopeBeforeAssignEval, $storage);
-				$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope));
+				$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain()));
 				// simulate dynamic property assign by __set to get throw points
 				if (!$propertyHolderType->hasMethod('__set')->no()) {
 					$throwPoints = array_merge($throwPoints, $nodeScopeResolver->processExprNode(
@@ -938,7 +938,7 @@ final class AssignHandler implements ExprHandler
 
 			if ($propertyName !== null) {
 				$propertyReflection = $scope->getStaticPropertyReflection($propertyHolderType, $propertyName);
-				$assignedExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
+				$assignedExprType = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope);
 				$nodeScopeResolver->callNodeCallback($nodeCallback, new PropertyAssignNode($var, $assignedExpr, $isAssignOp), $scopeBeforeAssignEval, $storage);
 				if ($propertyReflection !== null && $propertyReflection->canChangeTypeAfterAssignment()) {
 					if ($propertyReflection->hasNativeType()) {
@@ -955,23 +955,23 @@ final class AssignHandler implements ExprHandler
 						}
 
 						if ($assignedTypeIsCompatible) {
-							$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope));
+							$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain()));
 						} else {
 							$scope = $scope->assignExpression(
 								$var,
 								TypeCombinator::intersect($assignedExprType->toCoercedArgumentType($scope->isDeclareStrictTypes()), $propertyNativeType),
-								TypeCombinator::intersect($nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope)->toCoercedArgumentType($scope->isDeclareStrictTypes()), $propertyNativeType),
+								TypeCombinator::intersect($nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain())->toCoercedArgumentType($scope->isDeclareStrictTypes()), $propertyNativeType),
 							);
 						}
 					} else {
-						$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope));
+						$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain()));
 					}
 				}
 			} else {
 				// fallback
-				$assignedExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
+				$assignedExprType = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope);
 				$nodeScopeResolver->callNodeCallback($nodeCallback, new PropertyAssignNode($var, $assignedExpr, $isAssignOp), $scopeBeforeAssignEval, $storage);
-				$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope));
+				$scope = $scope->assignExpression($var, $assignedExprType, $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain()));
 			}
 		} elseif ($var instanceof List_) {
 			$result = $processExprCallback($scope);
@@ -1005,7 +1005,7 @@ final class AssignHandler implements ExprHandler
 				} else {
 					$dimExpr = $arrayItem->key;
 				}
-				$getOffsetValueTypeExpr = new TypeExpr($nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope)->getOffsetValueType($nodeScopeResolver->readStoredOrPriceOnDemand($dimExpr, $scope)));
+				$getOffsetValueTypeExpr = new TypeExpr($nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope)->getOffsetValueType($nodeScopeResolver->readTypeOfMaybeStored($dimExpr, $scope)));
 				$result = $this->processAssignVar(
 					$nodeScopeResolver,
 					$scope,
@@ -1057,8 +1057,8 @@ final class AssignHandler implements ExprHandler
 				$offsetNativeTypes[] = [$dimResult->getNativeType(), $dimFetch];
 			}
 
-			$valueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemand($assignedExpr, $scope);
-			$nativeValueToWrite = $nodeScopeResolver->readStoredOrPriceOnDemandNative($assignedExpr, $scope);
+			$valueToWrite = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope);
+			$nativeValueToWrite = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope->doNotTreatPhpDocTypesAsCertain());
 			$varType = $varResult->getType();
 			$varNativeType = $varResult->getNativeType();
 
@@ -1236,7 +1236,7 @@ final class AssignHandler implements ExprHandler
 
 	/**
 	 * Current type of a conditional-holder expression, used to refine the holder's
-	 * projected type. Prefers the tracked scope state over readStoredOrPriceOnDemand(),
+	 * projected type. Prefers the tracked scope state over readTypeOfMaybeStored(),
 	 * whose stored ExpressionResult can be stale after a by-ref write - e.g.
 	 * preg_match($p, $s, $matches) updates $matches in the scope state but leaves the
 	 * stored result from the earlier `$matches = []` untouched, so reading it back would
@@ -1252,7 +1252,7 @@ final class AssignHandler implements ExprHandler
 			return $scope->getVariableType($expr->name);
 		}
 
-		return $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
+		return $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
 	}
 
 	/**
@@ -1453,7 +1453,7 @@ final class AssignHandler implements ExprHandler
 		$implicitIndex = 0;
 		foreach ($arrayExpr->items as $arrayItem) {
 			if ($arrayItem->key !== null) {
-				$keyType = $nodeScopeResolver->readStoredOrPriceOnDemand($arrayItem->key, $scope)->toArrayKey();
+				$keyType = $nodeScopeResolver->readTypeOfMaybeStored($arrayItem->key, $scope)->toArrayKey();
 
 				if ($implicitIndex !== null) {
 					$keyValues = $keyType->getConstantScalarValues();
@@ -1488,8 +1488,8 @@ final class AssignHandler implements ExprHandler
 
 			$refVarName = $arrayItem->value->name;
 			$dimFetchExpr = new ArrayDimFetch($parentExpr, $dimExpr);
-			$refType = $nodeScopeResolver->readStoredOrPriceOnDemand(new Variable($refVarName), $scope);
-			$refNativeType = $nodeScopeResolver->readStoredOrPriceOnDemandNative(new Variable($refVarName), $scope);
+			$refType = $nodeScopeResolver->processSyntheticOnDemand(new Variable($refVarName), $scope)->getTypeOnScope($scope, false);
+			$refNativeType = $nodeScopeResolver->processSyntheticOnDemand(new Variable($refVarName), $scope)->getTypeOnScope($scope, true);
 
 			// When $rootVarName's array key changes, update $refVarName
 			$scope = $scope->assignExpression(
@@ -1536,14 +1536,14 @@ final class AssignHandler implements ExprHandler
 					$has = $offsetValueType->hasOffsetValueType($offsetType);
 					if ($has->yes()) {
 						if ($scope->hasExpressionType($dimFetch)->yes()) {
-							$offsetValueType = $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch, $scope);
+							$offsetValueType = $nodeScopeResolver->readTypeOfMaybeStored($dimFetch, $scope);
 						} else {
 							$offsetValueType = $offsetValueType->getOffsetValueType($offsetType);
 						}
 					} elseif ($has->maybe()) {
 						if ($scope->hasExpressionType($dimFetch)->yes()) {
 							$generalizeOnWrite = false;
-							$offsetValueType = $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch, $scope);
+							$offsetValueType = $nodeScopeResolver->readTypeOfMaybeStored($dimFetch, $scope);
 						} else {
 							$offsetValueType = TypeCombinator::union($offsetValueType->getOffsetValueType($offsetType), new ConstantArrayType([], []));
 						}
@@ -1644,7 +1644,7 @@ final class AssignHandler implements ExprHandler
 			} elseif (isset($computedContainerValues[$key])) {
 				$additionalValueType = $computedContainerValues[$key];
 			} else {
-				$offsetType = $nodeScopeResolver->readStoredOrPriceOnDemand($dimFetch->dim, $scope);
+				$offsetType = $nodeScopeResolver->readTypeOfMaybeStored($dimFetch->dim, $scope);
 				$additionalValueType = $valueToWrite->getOffsetValueType($offsetType);
 			}
 
@@ -1680,7 +1680,7 @@ final class AssignHandler implements ExprHandler
 			&& in_array($arrayDimFetch->dim->left->name->toLowerString(), ['count', 'sizeof'], true)
 			&& count($arrayDimFetch->dim->left->getArgs()) === 1 // could support COUNT_RECURSIVE, COUNT_NORMAL
 			&& $this->isSameVariable($arrayDimFetch->var, $arrayDimFetch->dim->left->getArgs()[0]->value)
-			&& IntegerRangeType::fromInterval(0, null)->isSuperTypeOf($nodeScopeResolver->readStoredOrPriceOnDemand($arrayDimFetch->dim, $scope))->yes()
+			&& IntegerRangeType::fromInterval(0, null)->isSuperTypeOf($nodeScopeResolver->readTypeOfMaybeStored($arrayDimFetch->dim, $scope))->yes()
 			&& $offsetValueType->isIterableAtLeastOnce()->yes()
 		) {
 			return true;
@@ -1723,7 +1723,7 @@ final class AssignHandler implements ExprHandler
 		$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNode($propertyFetch, $scope);
 		$originalPropertyType = $propertyReflection !== null ? $propertyReflection->getReadableType() : new ErrorType();
 		if ($originalPropertyType instanceof UnionType) {
-			$currentPropertyType = $nodeScopeResolver->readStoredOrPriceOnDemand($propertyFetch, $scope);
+			$currentPropertyType = $nodeScopeResolver->readTypeOfMaybeStored($propertyFetch, $scope);
 			$originalPropertyType = $originalPropertyType->filterTypes(static fn (Type $innerType) => !$innerType->isSuperTypeOf($currentPropertyType)->no());
 		}
 

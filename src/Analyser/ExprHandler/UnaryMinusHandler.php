@@ -57,7 +57,7 @@ final class UnaryMinusHandler implements ExprHandler
 
 				// a synthetic node ($expr->expr * -1, derived for an IntegerRangeType
 				// operand) created inside getUnaryMinusType - priced on demand
-				return $nativeTypesPromoted ? $nodeScopeResolver->priceSyntheticOnDemandNative($e, $scope) : $nodeScopeResolver->priceSyntheticOnDemand($e, $scope);
+				return $nodeScopeResolver->processSyntheticOnDemand($e, $scope)->getTypeOnScope($scope, $nativeTypesPromoted);
 			}),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);

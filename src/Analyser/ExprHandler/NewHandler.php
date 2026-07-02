@@ -413,7 +413,7 @@ final class NewHandler implements ExprHandler
 
 		// the class expression was processed during processExpr; read its already
 		// computed result instead of re-walking via Scope::getType().
-		$exprType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $scope);
+		$exprType = $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $scope);
 		return $exprType->getObjectTypeOrClassStringObjectType();
 	}
 

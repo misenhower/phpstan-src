@@ -241,8 +241,8 @@ final class MethodCallHandler implements ExprHandler
 			}
 
 			// The call's return type, computed from the already-processed argument
-			// results (resolveReturnType reads them via the receiver/name results and
-			// readStoredOrPriceOnDemand, never re-running processArgs) - asking
+			// results (resolveReturnType reads them via the receiver/name results,
+			// never re-running processArgs) - asking
 			// Scope::getType() for the MethodCall here would re-enter this handler on
 			// demand, as its final result is not stored yet.
 			$methodCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $varResult, $nameResult, $resolvedParametersAcceptor);
@@ -407,7 +407,7 @@ final class MethodCallHandler implements ExprHandler
 		// calls can be less precise.
 		$nameType = $nameResult !== null
 			? ($nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
-			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $reflectionScope);
+			: $nodeScopeResolver->readTypeOfMaybeStored($expr->name, $reflectionScope);
 		if (count($nameType->getConstantStrings()) > 0) {
 			return TypeCombinator::union(
 				...array_map(static function ($constantString) use ($expr, $resolveMethod): Type {

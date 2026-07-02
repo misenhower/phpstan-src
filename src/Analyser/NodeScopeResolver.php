@@ -1073,7 +1073,7 @@ class NodeScopeResolver
 							&& $scope->getFunction() instanceof PhpMethodFromParserNodeReflection
 							&& $scope->getFunction()->getDeclaringClass()->hasConstructor()
 							&& $scope->getFunction()->getDeclaringClass()->getConstructor()->getName() === $scope->getFunction()->getName()
-							&& TypeUtils::findThisType($this->readStoredOrPriceOnDemand($node->getPropertyFetch()->var, $scope->toMutatingScope())) !== null
+							&& TypeUtils::findThisType($this->readTypeOfMaybeStored($node->getPropertyFetch()->var, $scope->toMutatingScope())) !== null
 						) {
 							return;
 						}
@@ -1707,8 +1707,8 @@ class NodeScopeResolver
 				foreach ($scopesWithIterableValueType as $scopeWithIterableValueType) {
 					if ($keyVarExpr !== null) {
 						$arrayExprDimFetch = new ArrayDimFetch($stmt->expr, $keyVarExpr);
-						$dimFetchType = $this->priceSyntheticOnDemand($arrayExprDimFetch, $scopeWithIterableValueType);
-						$dimFetchNativeType = $this->priceSyntheticOnDemand($arrayExprDimFetch, $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain());
+						$dimFetchType = $this->processSyntheticOnDemand($arrayExprDimFetch, $scopeWithIterableValueType)->getTypeOnScope($scopeWithIterableValueType, false);
+						$dimFetchNativeType = $this->processSyntheticOnDemand($arrayExprDimFetch, $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain())->getTypeOnScope($scopeWithIterableValueType, true);
 						// Condition-based narrowings like `is_string($type)` apply to the value
 						// variable but not automatically to the array dim fetch, even though the
 						// two describe the same element for a given iteration. If the value var
@@ -1730,8 +1730,8 @@ class NodeScopeResolver
 								$dimFetchNativeType = $valueVarNativeType;
 							}
 						}
-						$keyLoopTypes[] = $this->readStoredOrPriceOnDemand($keyVarExpr, $scopeWithIterableValueType);
-						$keyLoopNativeTypes[] = $this->readStoredOrPriceOnDemand($keyVarExpr, $scopeWithIterableValueType);
+						$keyLoopTypes[] = $this->readTypeOfMaybeStored($keyVarExpr, $scopeWithIterableValueType);
+						$keyLoopNativeTypes[] = $this->readTypeOfMaybeStored($keyVarExpr, $scopeWithIterableValueType);
 					} else {
 						// No key variable: the narrowed value var is the array element type
 						// directly. Read it by name (assigned, not processExprNode-processed);
@@ -1988,7 +1988,7 @@ class NodeScopeResolver
 
 			$alwaysIterates = false;
 			if ($context->isTopLevel()) {
-				$condBooleanType = ($this->treatPhpDocTypesAsCertain ? $this->readStoredOrPriceOnDemand($stmt->cond, $bodyScope) : $this->readStoredOrPriceOnDemand($stmt->cond, $bodyScope->doNotTreatPhpDocTypesAsCertain()))->toBoolean();
+				$condBooleanType = ($this->treatPhpDocTypesAsCertain ? $this->readTypeOfMaybeStored($stmt->cond, $bodyScope) : $this->readTypeOfMaybeStored($stmt->cond, $bodyScope->doNotTreatPhpDocTypesAsCertain()))->toBoolean();
 				$alwaysIterates = $condBooleanType->isTrue()->yes();
 			}
 
@@ -2109,7 +2109,7 @@ class NodeScopeResolver
 
 			$alwaysIterates = TrinaryLogic::createFromBoolean($context->isTopLevel());
 			if ($lastCondExpr !== null) {
-				$alwaysIterates = $alwaysIterates->and($this->readStoredOrPriceOnDemand($lastCondExpr, $bodyScope)->toBoolean()->isTrue());
+				$alwaysIterates = $alwaysIterates->and($this->readTypeOfMaybeStored($lastCondExpr, $bodyScope)->toBoolean()->isTrue());
 				$bodyScope = $this->processExprNode($stmt, $lastCondExpr, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep())->getTruthyScope();
 				$bodyScope = $this->inferForLoopExpressions($stmt, $lastCondExpr, $bodyScope);
 			}
@@ -2489,7 +2489,7 @@ class NodeScopeResolver
 				$throwPoints = array_merge($throwPoints, $exprResult->getThrowPoints());
 				$impurePoints = array_merge($impurePoints, $exprResult->getImpurePoints());
 				if ($var instanceof ArrayDimFetch && $var->dim !== null) {
-					$varType = $this->readStoredOrPriceOnDemand($var->var, $scope);
+					$varType = $this->readTypeOfMaybeStored($var->var, $scope);
 					if (!$varType->isArray()->yes() && !(new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
 						$throwPoints = array_merge($throwPoints, $this->processExprNode(
 							$stmt,
@@ -2881,26 +2881,23 @@ class NodeScopeResolver
 		}
 	}
 
-	/**
-	 * Reads the type, on the given scope, of a node an ExprHandler already
-	 * processed (its ExpressionResult is in the storage of the analysis in
-	 * progress). Used from lazily-invoked typeCallbacks instead of
-	 * Scope::getType(): it reads the stored result rather than re-walking, and
-	 * does not allocate a throwaway duplicate storage. Falls back to pricing the
-	 * node as synthetic when it is not stored (e.g. a re-evaluation reached this
-	 * before the original processing did).
-	 */
-	public function readStoredOrPriceOnDemand(Expr $expr, MutatingScope $scope): Type
+	public function findStoredResult(Expr $expr, MutatingScope $scope): ?ExpressionResult
 	{
-		$current = $scope->getCurrentExpressionResultStorage();
-		$result = $current?->findExpressionResult($expr);
-		if ($result !== null) {
-			return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
-		}
+		return $scope->getCurrentExpressionResultStorage()?->findExpressionResult($expr);
+	}
 
-		$this->guardAgainstUnprocessedRealNode($expr, __FUNCTION__);
+	/**
+	 * The type, on the given scope, of a node that may or may not have a stored
+	 * ExpressionResult. Every call site of this method is UNDECIDED about whether
+	 * the node was already analysed - each should eventually either consume the
+	 * node's ExpressionResult where it was processed or be a synthetic node
+	 * (processSyntheticOnDemand()).
+	 */
+	public function readTypeOfMaybeStored(Expr $expr, MutatingScope $scope): Type
+	{
+		$result = $this->findStoredResult($expr, $scope) ?? $this->processSyntheticOnDemand($expr, $scope);
 
-		return $this->priceSyntheticOnDemand($expr, $scope);
+		return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 	}
 
 	/**
@@ -2929,39 +2926,18 @@ class NodeScopeResolver
 	}
 
 	/**
-	 * Prices a synthetic node (one an ExprHandler built itself) on a duplicate of
-	 * the storage of the analysis currently in progress, mirroring
+	 * Processes a synthetic node (one an ExprHandler built itself) on a duplicate
+	 * of the storage of the analysis currently in progress, mirroring
 	 * MutatingScope::resolveTypeOfNewWorldHandlerNode(): the duplicate isolates
 	 * the synthetic node's own stored result from the live storage while its real
 	 * subnodes still resolve from the fallback.
 	 */
-	public function priceSyntheticOnDemand(Expr $expr, MutatingScope $scope): Type
+	public function processSyntheticOnDemand(Expr $expr, MutatingScope $scope): ExpressionResult
 	{
-		$current = $scope->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage();
-
-		return $this->processExprOnDemand($expr, $scope, $current->duplicate())->getTypeOnScope($scope, $scope->nativeTypesPromoted);
-	}
-
-	/** Native counterpart of readStoredOrPriceOnDemand(). */
-	public function readStoredOrPriceOnDemandNative(Expr $expr, MutatingScope $scope): Type
-	{
-		$current = $scope->getCurrentExpressionResultStorage();
-		$result = $current?->findExpressionResult($expr);
-		if ($result !== null) {
-			return $result->getTypeOnScope($scope, true);
-		}
-
 		$this->guardAgainstUnprocessedRealNode($expr, __FUNCTION__);
-
-		return $this->priceSyntheticOnDemandNative($expr, $scope);
-	}
-
-	/** Native counterpart of priceSyntheticOnDemand(). */
-	public function priceSyntheticOnDemandNative(Expr $expr, MutatingScope $scope): Type
-	{
 		$current = $scope->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage();
 
-		return $this->processExprOnDemand($expr, $scope, $current->duplicate())->getTypeOnScope($scope, true);
+		return $this->processExprOnDemand($expr, $scope, $current->duplicate());
 	}
 
 	/**
@@ -3613,7 +3589,7 @@ class NodeScopeResolver
 			return $this->container->getByType(ClosureTypeResolver::class)->getClosureType($scope, $expr);
 		}
 
-		return $this->readStoredOrPriceOnDemand($expr, $scope);
+		return $this->readTypeOfMaybeStored($expr, $scope);
 	}
 
 	/**
@@ -4407,7 +4383,7 @@ class NodeScopeResolver
 						$scope = $this->lookForUnsetAllowedUndefinedExpressions($scope, $argValue);
 					}
 				} elseif ($calleeReflection !== null && $calleeReflection->hasSideEffects()->yes()) {
-					$argType = $this->readStoredOrPriceOnDemand($arg->value, $scope);
+					$argType = $this->readTypeOfMaybeStored($arg->value, $scope);
 					if (!$argType->isObject()->no()) {
 						$nakedReturnType = null;
 						if ($nakedMethodReflection !== null) {
@@ -4552,8 +4528,8 @@ class NodeScopeResolver
 			$parametersAcceptors,
 			$namedArgumentsVariants,
 			$scope,
-			fn (Expr $e): Type => $this->readStoredOrPriceOnDemand($e, $scope),
-			fn (Expr $e): Type => $this->readStoredOrPriceOnDemandNative($e, $scope),
+			fn (Expr $e): Type => $this->readTypeOfMaybeStored($e, $scope),
+			fn (Expr $e): Type => $this->readTypeOfMaybeStored($e, $scope->doNotTreatPhpDocTypesAsCertain()),
 			static fn (Type $t): Type => $scope->getIterableValueType($t),
 			static fn (Type $t): Type => $scope->getIterableKeyType($t),
 		);
@@ -4815,14 +4791,14 @@ class NodeScopeResolver
 				$scope = $scope->assignVariable(
 					$name,
 					$varTag->getType(),
-					$this->priceSyntheticOnDemand($variableNode, $scope->doNotTreatPhpDocTypesAsCertain()),
+					$this->processSyntheticOnDemand($variableNode, $scope->doNotTreatPhpDocTypesAsCertain())->getTypeOnScope($scope, true),
 					$certainty,
 				);
 			}
 		}
 
 		if (count($variableLessTags) === 1 && $defaultExpr !== null) {
-			$originalType = $this->readStoredOrPriceOnDemand($defaultExpr, $scope);
+			$originalType = $this->readTypeOfMaybeStored($defaultExpr, $scope);
 			$varTag = $variableLessTags[0];
 			if (!$originalType->equals($varTag->getType())) {
 				$this->callNodeCallback($nodeCallback, new VarTagChangedExpressionTypeNode($varTag, $defaultExpr), $scope, $storage);
@@ -5234,8 +5210,8 @@ class NodeScopeResolver
 				$arrayArg = $args[0]->value;
 				$scope = $scope->assignExpression(
 					new ArrayDimFetch($arrayArg, $stmt->valueVar),
-					$this->readStoredOrPriceOnDemand($arrayArg, $scope)->getIterableValueType(),
-					$this->readStoredOrPriceOnDemand($arrayArg, $scope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
+					$this->readTypeOfMaybeStored($arrayArg, $scope)->getIterableValueType(),
+					$this->readTypeOfMaybeStored($arrayArg, $scope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
 				);
 			}
 		}
@@ -5533,7 +5509,7 @@ class NodeScopeResolver
 				$statementResult = $executionEnd->getStatementResult();
 				$endNode = $executionEnd->getNode();
 				if ($endNode instanceof Node\Stmt\Expression) {
-					$exprType = $this->readStoredOrPriceOnDemand($endNode->expr, $statementResult->getScope()->toMutatingScope());
+					$exprType = $this->readTypeOfMaybeStored($endNode->expr, $statementResult->getScope()->toMutatingScope());
 					if ($exprType instanceof NeverType && $exprType->isExplicit()) {
 						continue;
 					}
@@ -5920,12 +5896,12 @@ class NodeScopeResolver
 				&& $stmt->init[0]->var->name === $lastCondExpr->left->name
 			) {
 				$arrayArg = $lastCondExpr->right->getArgs()[0]->value;
-				$arrayType = $this->readStoredOrPriceOnDemand($arrayArg, $bodyScope);
+				$arrayType = $this->readTypeOfMaybeStored($arrayArg, $bodyScope);
 				if ($arrayType->isList()->yes()) {
 					$bodyScope = $bodyScope->assignExpression(
 						new ArrayDimFetch($lastCondExpr->right->getArgs()[0]->value, $lastCondExpr->left),
 						$arrayType->getIterableValueType(),
-						$this->readStoredOrPriceOnDemand($arrayArg, $bodyScope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
+						$this->readTypeOfMaybeStored($arrayArg, $bodyScope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
 					);
 				}
 			}
@@ -5945,12 +5921,12 @@ class NodeScopeResolver
 				&& $stmt->init[0]->var->name === $lastCondExpr->right->name
 			) {
 				$arrayArg = $lastCondExpr->left->getArgs()[0]->value;
-				$arrayType = $this->readStoredOrPriceOnDemand($arrayArg, $bodyScope);
+				$arrayType = $this->readTypeOfMaybeStored($arrayArg, $bodyScope);
 				if ($arrayType->isList()->yes()) {
 					$bodyScope = $bodyScope->assignExpression(
 						new ArrayDimFetch($lastCondExpr->left->getArgs()[0]->value, $lastCondExpr->right),
 						$arrayType->getIterableValueType(),
-						$this->readStoredOrPriceOnDemand($arrayArg, $bodyScope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
+						$this->readTypeOfMaybeStored($arrayArg, $bodyScope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
 					);
 				}
 			}

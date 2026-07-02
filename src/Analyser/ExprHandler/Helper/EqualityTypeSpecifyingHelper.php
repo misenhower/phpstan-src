@@ -189,8 +189,8 @@ final class EqualityTypeSpecifyingHelper
 
 		// the operands were processed during processExpr; read their stored results
 		// instead of re-walking via Scope::getType().
-		$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->left, $scope->toMutatingScope());
-		$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->right, $scope->toMutatingScope());
+		$leftType = $nodeScopeResolver->readTypeOfMaybeStored($expr->left, $scope->toMutatingScope());
+		$rightType = $nodeScopeResolver->readTypeOfMaybeStored($expr->right, $scope->toMutatingScope());
 
 		$leftBooleanType = $leftType->toBoolean();
 		if ($leftBooleanType instanceof ConstantBooleanType && $rightType->isBoolean()->yes()) {
@@ -310,7 +310,7 @@ final class EqualityTypeSpecifyingHelper
 
 		// the operands and their subexpressions were processed during processExpr;
 		// read their stored results instead of re-walking via Scope::getType().
-		$getType = static fn (Expr $e): Type => $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope->toMutatingScope());
+		$getType = static fn (Expr $e): Type => $nodeScopeResolver->readTypeOfMaybeStored($e, $scope->toMutatingScope());
 
 		$rightType = $getType($rightExpr);
 
@@ -751,8 +751,8 @@ final class EqualityTypeSpecifyingHelper
 	{
 		// the operands were processed during processExpr; read their stored results
 		// instead of re-walking via Scope::getType().
-		$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($binaryOperation->left, $scope->toMutatingScope());
-		$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($binaryOperation->right, $scope->toMutatingScope());
+		$leftType = $nodeScopeResolver->readTypeOfMaybeStored($binaryOperation->left, $scope->toMutatingScope());
+		$rightType = $nodeScopeResolver->readTypeOfMaybeStored($binaryOperation->right, $scope->toMutatingScope());
 
 		$rightExpr = $binaryOperation->right;
 		if ($rightExpr instanceof AlwaysRememberedExpr) {
@@ -883,7 +883,7 @@ final class EqualityTypeSpecifyingHelper
 		) {
 			// the argument was processed during processExpr; read its stored result
 			// instead of re-walking via Scope::getType().
-			$argType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprNode->getArgs()[0]->value, $scope->toMutatingScope());
+			$argType = $nodeScopeResolver->readTypeOfMaybeStored($exprNode->getArgs()[0]->value, $scope->toMutatingScope());
 			$objectType = new ObjectType($constantStringValue);
 			$classStringType = new GenericClassStringType($objectType);
 
@@ -928,7 +928,7 @@ final class EqualityTypeSpecifyingHelper
 			$argValue = $exprNode->getArgs()[0]->value;
 			// the argument was processed during processExpr; read its stored result
 			// instead of re-walking via Scope::getType().
-			$argType = $nodeScopeResolver->readStoredOrPriceOnDemand($argValue, $scope->toMutatingScope());
+			$argType = $nodeScopeResolver->readTypeOfMaybeStored($argValue, $scope->toMutatingScope());
 			if ($argType->isString()->yes()) {
 				return $this->defaultNarrowingHelper->createForSubject(
 					$argValue,

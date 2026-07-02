@@ -43,10 +43,10 @@ final class RicherScopeGetTypeHelper
 		// typeCallback) so the operands are read from their ExpressionResults
 		// instead of Scope::getType(); rules call this without it (BC).
 		$leftType = $nodeScopeResolver !== null
-			? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->left, $scope->toMutatingScope())
+			? $nodeScopeResolver->readTypeOfMaybeStored($expr->left, $scope->toMutatingScope())
 			: $scope->getType($expr->left);
 		$rightType = $nodeScopeResolver !== null
-			? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->right, $scope->toMutatingScope())
+			? $nodeScopeResolver->readTypeOfMaybeStored($expr->right, $scope->toMutatingScope())
 			: $scope->getType($expr->right);
 
 		if (

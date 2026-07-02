@@ -134,7 +134,7 @@ final class BinaryOpHandler implements ExprHandler
 						return ($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType());
 					}
 
-					return $nativeTypesPromoted ? $nodeScopeResolver->readStoredOrPriceOnDemandNative($e, $beforeScope) : $nodeScopeResolver->readStoredOrPriceOnDemand($e, $beforeScope);
+					return $nodeScopeResolver->readTypeOfMaybeStored($e, $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope);
 				};
 
 				if ($expr instanceof BinaryOp\Smaller) {
@@ -335,7 +335,7 @@ final class BinaryOpHandler implements ExprHandler
 							return $scope->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 						}
 
-						return $nodeScopeResolver->readStoredOrPriceOnDemand($e, $scope);
+						return $nodeScopeResolver->readTypeOfMaybeStored($e, $scope);
 					};
 					$leftType = $getType($expr->left);
 					$result = (new SpecifiedTypes([], []))->setRootExpr($expr);

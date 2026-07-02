@@ -112,7 +112,7 @@ final class StaticPropertyFetchHandler implements ExprHandler
 				if ($expr->class instanceof Name) {
 					$staticPropertyFetchedOnType = $reflectionScope->resolveTypeByName($expr->class);
 				} else {
-					$resolvedClassType = $classType ?? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $beforeScope);
+					$resolvedClassType = $classType ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $beforeScope);
 					$staticPropertyFetchedOnType = TypeCombinator::removeNull($resolvedClassType)->getObjectTypeOrClassStringObjectType();
 				}
 
@@ -141,7 +141,7 @@ final class StaticPropertyFetchHandler implements ExprHandler
 				// so such fetches can be less precise.
 				$nameType = $nameResult !== null
 					? ($nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
-					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $beforeScope);
+					: $nodeScopeResolver->readTypeOfMaybeStored($expr->name, $beforeScope);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(
 						...array_map(static function ($constantString) use ($resolveProperty): Type {

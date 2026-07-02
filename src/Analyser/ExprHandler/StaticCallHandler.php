@@ -309,8 +309,8 @@ final class StaticCallHandler implements ExprHandler
 
 		if ($methodReflection !== null) {
 			// The call's return type, computed from the already-processed argument
-			// results (resolveReturnType reads them via the class/name results and
-			// readStoredOrPriceOnDemand, never re-running processArgs) - asking
+			// results (resolveReturnType reads them via the class/name results,
+			// never re-running processArgs) - asking
 			// Scope::getType() for the StaticCall here would re-enter this handler on
 			// demand, as its final result is not stored yet.
 			$staticCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $classResult, $nameResult, $resolvedParametersAcceptor);
@@ -439,7 +439,7 @@ final class StaticCallHandler implements ExprHandler
 				if ($expr->class instanceof Name) {
 					$staticMethodCalledOnType = $reflectionScope->resolveTypeByName($expr->class);
 				} else {
-					$staticMethodCalledOnType = $classType ?? $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->class, $reflectionScope);
+					$staticMethodCalledOnType = $classType ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $reflectionScope->doNotTreatPhpDocTypesAsCertain());
 				}
 				$methodReflection = $reflectionScope->getMethodReflection($staticMethodCalledOnType, $methodName);
 				if ($methodReflection === null) {
@@ -452,7 +452,7 @@ final class StaticCallHandler implements ExprHandler
 			if ($expr->class instanceof Name) {
 				$staticMethodCalledOnType = $reflectionScope->resolveTypeByName($expr->class);
 			} else {
-				$resolvedClassType = $classType ?? $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $reflectionScope);
+				$resolvedClassType = $classType ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $reflectionScope);
 				$staticMethodCalledOnType = TypeCombinator::removeNull($resolvedClassType)->getObjectTypeOrClassStringObjectType();
 			}
 
@@ -474,7 +474,7 @@ final class StaticCallHandler implements ExprHandler
 		// calls can be less precise.
 		$nameType = $nameResult !== null
 			? ($nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
-			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $reflectionScope);
+			: $nodeScopeResolver->readTypeOfMaybeStored($expr->name, $reflectionScope);
 		if (count($nameType->getConstantStrings()) > 0) {
 			return TypeCombinator::union(
 				...array_map(static function ($constantString) use ($expr, $resolveStaticMethod): Type {
@@ -519,7 +519,7 @@ final class StaticCallHandler implements ExprHandler
 			// already-computed result instead of re-walking via Scope::getType().
 			$calleeType = $classResult !== null
 				? $classResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
-				: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $scope);
+				: $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $scope);
 		}
 
 		$staticMethodReflection = $scope->getMethodReflection($calleeType, $expr->name->name);
@@ -599,7 +599,7 @@ final class StaticCallHandler implements ExprHandler
 		} else {
 			$calleeType = $classResult !== null
 				? $classResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
-				: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->class, $scope);
+				: $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $scope);
 		}
 
 		$methodReflection = $scope->getMethodReflection($calleeType, $expr->name->toString());

@@ -134,7 +134,7 @@ final class PropertyFetchHandler implements ExprHandler
 				// $obj->{'foo'}-style fetches can be less precise.
 				$nameType = $nameResult !== null
 					? ($nativeTypesPromoted ? $nameResult->getNativeType() : $nameResult->getType())
-					: $nodeScopeResolver->readStoredOrPriceOnDemand($expr->name, $beforeScope);
+					: $nodeScopeResolver->readTypeOfMaybeStored($expr->name, $beforeScope);
 				if (count($nameType->getConstantStrings()) > 0) {
 					return TypeCombinator::union(
 						...array_map(static function ($constantString) use ($resolveProperty): Type {

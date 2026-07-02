@@ -84,9 +84,7 @@ final class AssignOpHandler implements ExprHandler
 			// processExpr (the var as the assignment target, the value expr by the
 			// inner closure below), so their ExpressionResults are stored - read
 			// them instead of re-walking via Scope::getType().
-			$getType = static fn (Expr $e): Type => $nativeTypesPromoted
-				? $nodeScopeResolver->readStoredOrPriceOnDemandNative($e, $beforeScope)
-				: $nodeScopeResolver->readStoredOrPriceOnDemand($e, $beforeScope);
+			$getType = static fn (Expr $e): Type => $nodeScopeResolver->readTypeOfMaybeStored($e, $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope);
 
 			if ($expr instanceof Expr\AssignOp\Coalesce) {
 				// The coalesce is synthetic; price it on demand. The ??= left is stored
@@ -195,7 +193,7 @@ final class AssignOpHandler implements ExprHandler
 
 				$exprResult = $nodeScopeResolver->processExprNode($stmt, $expr->expr, $scope, $storage, $nodeCallback, $context->enterDeep());
 				if ($expr instanceof Expr\AssignOp\Coalesce) {
-					$isAlwaysTerminating = $exprResult->isAlwaysTerminating() && $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $originalScope)->isNull()->yes();
+					$isAlwaysTerminating = $exprResult->isAlwaysTerminating() && $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $originalScope)->isNull()->yes();
 					return $this->expressionResultFactory->create(
 						$exprResult->getScope()->mergeWith($originalScope),
 						$originalScope,
@@ -218,7 +216,7 @@ final class AssignOpHandler implements ExprHandler
 		$impurePoints = $assignResult->getImpurePoints();
 		if (
 			($expr instanceof Expr\AssignOp\Div || $expr instanceof Expr\AssignOp\Mod) &&
-			!$nodeScopeResolver->readStoredOrPriceOnDemand($expr->expr, $scope)->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
+			!$nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $scope)->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
 		) {
 			$throwPoints[] = InternalThrowPoint::createExplicit($scope, new ObjectType(DivisionByZeroError::class), $expr, false);
 		}

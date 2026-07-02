@@ -99,7 +99,7 @@ final class IssetHandler implements ExprHandler
 				continue;
 			}
 
-			$varType = $nodeScopeResolver->readStoredOrPriceOnDemand($var->var, $scope);
+			$varType = $nodeScopeResolver->readTypeOfMaybeStored($var->var, $scope);
 			if ($varType->isArray()->yes() || (new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
 				continue;
 			}
@@ -174,7 +174,7 @@ final class IssetHandler implements ExprHandler
 				$readType = static function (Expr $e) use ($chainResults, $s, $nodeScopeResolver): Type {
 					$result = $chainResults[spl_object_id($e)] ?? null;
 
-					return $result !== null ? $result->getTypeOnScope($s, $s->nativeTypesPromoted) : $nodeScopeResolver->readStoredOrPriceOnDemand($e, $s);
+					return $result !== null ? $result->getTypeOnScope($s, $s->nativeTypesPromoted) : $nodeScopeResolver->readTypeOfMaybeStored($e, $s);
 				};
 
 				if (count($expr->vars) === 0 || $context->null()) {

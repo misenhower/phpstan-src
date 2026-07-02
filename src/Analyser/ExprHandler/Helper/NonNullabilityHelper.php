@@ -25,7 +25,7 @@ final class NonNullabilityHelper
 		// the expression has not been processed into the storage yet (this runs
 		// before processExprNode), so read its type from the stored result or
 		// price it on demand instead of re-walking via Scope::getType().
-		$exprType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $scope);
+		$exprType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $scope);
 		$isNull = $exprType->isNull();
 		if ($isNull->yes()) {
 			return new EnsuredNonNullabilityResult($scope, []);
@@ -35,9 +35,9 @@ final class NonNullabilityHelper
 
 		$exprTypeWithoutNull = TypeCombinator::removeNull($exprType);
 		if ($exprType->equals($exprTypeWithoutNull)) {
-			$originalExprType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $originalScope);
+			$originalExprType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $originalScope);
 			if (!$originalExprType->equals($exprTypeWithoutNull)) {
-				$originalNativeType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $originalScope->doNotTreatPhpDocTypesAsCertain());
+				$originalNativeType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $originalScope->doNotTreatPhpDocTypesAsCertain());
 
 				return new EnsuredNonNullabilityResult($scope, [
 					new EnsuredNonNullabilityResultExpression($exprToSpecify, $originalExprType, $originalNativeType, $hasExpressionType),
@@ -55,8 +55,8 @@ final class NonNullabilityHelper
 			$parentExpr = $exprToSpecify->var;
 			$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression(
 				$parentExpr,
-				$nodeScopeResolver->readStoredOrPriceOnDemand($parentExpr, $scope),
-				$nodeScopeResolver->readStoredOrPriceOnDemand($parentExpr, $scope->doNotTreatPhpDocTypesAsCertain()),
+				$nodeScopeResolver->readTypeOfMaybeStored($parentExpr, $scope),
+				$nodeScopeResolver->readTypeOfMaybeStored($parentExpr, $scope->doNotTreatPhpDocTypesAsCertain()),
 				$originalScope->hasExpressionType($parentExpr),
 			);
 		}
@@ -67,7 +67,7 @@ final class NonNullabilityHelper
 			$certainty = $hasExpressionType;
 		}
 
-		$nativeType = $nodeScopeResolver->readStoredOrPriceOnDemand($exprToSpecify, $scope->doNotTreatPhpDocTypesAsCertain());
+		$nativeType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $scope->doNotTreatPhpDocTypesAsCertain());
 		$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression($exprToSpecify, $exprType, $nativeType, $certainty);
 		$scope = $scope->specifyExpressionType(
 			$exprToSpecify,

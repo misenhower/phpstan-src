@@ -42,7 +42,7 @@ final class ImplicitToStringCallHelper
 
 		$exprType = $exprResult !== null
 			? $exprResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)
-			: $nodeScopeResolver->readStoredOrPriceOnDemand($expr, $scope);
+			: $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
 
 		$toStringMethod = null;
 		if (!$exprType->isObject()->no()) {
@@ -82,7 +82,7 @@ final class ImplicitToStringCallHelper
 				$toStringCall,
 				$scope,
 				ExpressionContext::createDeep(),
-				$nodeScopeResolver->priceSyntheticOnDemand($toStringCall, $scope),
+				$nodeScopeResolver->processSyntheticOnDemand($toStringCall, $scope)->getTypeOnScope($scope, $scope->nativeTypesPromoted),
 			);
 			if ($throwPoint !== null) {
 				$throwPoints[] = $throwPoint;

@@ -103,9 +103,9 @@ final class BooleanOrHandler implements ExprHandler
 					continue;
 				}
 
-				$origType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $scope);
-				$leftType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $leftTruthyScope);
-				$rightType = $nodeScopeResolver->readStoredOrPriceOnDemand($targetExpr, $rightTruthyScope);
+				$origType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
+				$leftType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftTruthyScope);
+				$rightType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightTruthyScope);
 
 				$leftNarrowed = !$leftType->equals($origType) && $origType->isSuperTypeOf($leftType)->yes();
 				$rightNarrowed = !$rightType->equals($origType) && $origType->isSuperTypeOf($rightType)->yes();

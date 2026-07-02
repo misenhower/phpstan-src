@@ -57,8 +57,8 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		// the receiver's real (possibly null) type, captured before it is ensured
 		// non-null below: the short-circuit decision needs to know it can be null,
 		// which reading the ensured-non-null result would hide.
-		$receiverType = $nodeScopeResolver->readStoredOrPriceOnDemand($expr->var, $scope);
-		$receiverNativeType = $nodeScopeResolver->readStoredOrPriceOnDemandNative($expr->var, $scope);
+		$receiverType = $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope);
+		$receiverNativeType = $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope->doNotTreatPhpDocTypesAsCertain());
 		// carry the receiver type to NullsafeMethodCallRule so it reads it from here
 		// instead of asking the scope for the unprocessed receiver.
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new NullsafeMethodCallExpressionNode($expr, $receiverType, $receiverNativeType), $beforeScope, $storage, $context);
@@ -110,9 +110,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			$methodCall = new MethodCall($expr->var, $expr->name, $expr->args);
 
 			return TypeCombinator::union(
-				$nativeTypesPromoted
-					? $nodeScopeResolver->priceSyntheticOnDemandNative($methodCall, $truthyScope)
-					: $nodeScopeResolver->priceSyntheticOnDemand($methodCall, $truthyScope),
+				$nodeScopeResolver->processSyntheticOnDemand($methodCall, $truthyScope)->getTypeOnScope($truthyScope, $nativeTypesPromoted),
 				new NullType(),
 			);
 		};
