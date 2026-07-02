@@ -2932,6 +2932,18 @@ class NodeScopeResolver
 			return $scope->getVariableType($expr->name);
 		}
 
+		// a type tracked for the whole expression answers without a walk - the
+		// on-demand processing below would return this very holder anyway (the
+		// fresh result's beforeScope is the asking scope), after paying the walk
+		if (
+			!$expr instanceof Expr\Variable
+			&& !$expr instanceof Expr\Closure
+			&& !$expr instanceof Expr\ArrowFunction
+			&& $scope->hasExpressionType($expr)->yes()
+		) {
+			return $scope->getTrackedExpressionType($expr);
+		}
+
 		return $this->processSyntheticOnDemand($expr, $scope)->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 	}
 
