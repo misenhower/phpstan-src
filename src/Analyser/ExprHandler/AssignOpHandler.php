@@ -216,7 +216,7 @@ final class AssignOpHandler implements ExprHandler
 		$impurePoints = $assignResult->getImpurePoints();
 		if (
 			($expr instanceof Expr\AssignOp\Div || $expr instanceof Expr\AssignOp\Mod) &&
-			!$nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $scope)->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
+			!$nodeScopeResolver->readStoredResult($expr->expr, $storage)->getTypeOnScope($scope, false)->toNumber()->isSuperTypeOf(new ConstantIntegerType(0))->no()
 		) {
 			$throwPoints[] = InternalThrowPoint::createExplicit($scope, new ObjectType(DivisionByZeroError::class), $expr, false);
 		}

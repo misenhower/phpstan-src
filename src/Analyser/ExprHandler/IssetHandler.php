@@ -99,7 +99,7 @@ final class IssetHandler implements ExprHandler
 				continue;
 			}
 
-			$varType = $nodeScopeResolver->readTypeOfMaybeStored($var->var, $scope);
+			$varType = $nodeScopeResolver->readStoredResult($var->var, $storage)->getTypeOnScope($scope, false);
 			if ($varType->isArray()->yes() || (new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
 				continue;
 			}

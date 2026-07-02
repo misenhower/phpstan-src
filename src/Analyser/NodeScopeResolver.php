@@ -2111,7 +2111,7 @@ class NodeScopeResolver
 			if ($lastCondExpr !== null) {
 				$alwaysIterates = $alwaysIterates->and($this->readTypeOfMaybeStored($lastCondExpr, $bodyScope)->toBoolean()->isTrue());
 				$bodyScope = $this->processExprNode($stmt, $lastCondExpr, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep())->getTruthyScope();
-				$bodyScope = $this->inferForLoopExpressions($stmt, $lastCondExpr, $bodyScope);
+				$bodyScope = $this->inferForLoopExpressions($stmt, $lastCondExpr, $bodyScope, $storage);
 			}
 
 			$finalScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, $nodeCallback, $context)->filterOutLoopExitPoints();
@@ -2489,7 +2489,7 @@ class NodeScopeResolver
 				$throwPoints = array_merge($throwPoints, $exprResult->getThrowPoints());
 				$impurePoints = array_merge($impurePoints, $exprResult->getImpurePoints());
 				if ($var instanceof ArrayDimFetch && $var->dim !== null) {
-					$varType = $this->readTypeOfMaybeStored($var->var, $scope);
+					$varType = $this->readStoredResult($var->var, $storage)->getTypeOnScope($scope, false);
 					if (!$varType->isArray()->yes() && !(new ObjectType(ArrayAccess::class))->isSuperTypeOf($varType)->no()) {
 						$throwPoints = array_merge($throwPoints, $this->processExprNode(
 							$stmt,
@@ -2884,6 +2884,27 @@ class NodeScopeResolver
 	public function findStoredResult(Expr $expr, MutatingScope $scope): ?ExpressionResult
 	{
 		return $scope->getCurrentExpressionResultStorage()?->findExpressionResult($expr);
+	}
+
+	/**
+	 * The stored ExpressionResult of a node processExprNode() already processed
+	 * into the given storage - the caller asserts the processing order by
+	 * holding the very storage it processed the node into (a scope-based lookup
+	 * would miss loop-convergence storages, which are never scope-visible).
+	 * Throws when the node has no stored result.
+	 */
+	public function readStoredResult(Expr $expr, ExpressionResultStorage $storage): ExpressionResult
+	{
+		$result = $storage->findExpressionResult($expr);
+		if ($result === null) {
+			throw new ShouldNotHappenException(sprintf(
+				'%s on line %d has no stored ExpressionResult - it was not processed by processExprNode().',
+				get_class($expr),
+				$expr->getStartLine(),
+			));
+		}
+
+		return $result;
 	}
 
 	/**
@@ -4383,7 +4404,7 @@ class NodeScopeResolver
 						$scope = $this->lookForUnsetAllowedUndefinedExpressions($scope, $argValue);
 					}
 				} elseif ($calleeReflection !== null && $calleeReflection->hasSideEffects()->yes()) {
-					$argType = $this->readTypeOfMaybeStored($arg->value, $scope);
+					$argType = $this->readStoredResult($arg->value, $storage)->getTypeOnScope($scope, false);
 					if (!$argType->isObject()->no()) {
 						$nakedReturnType = null;
 						if ($nakedMethodReflection !== null) {
@@ -5210,8 +5231,8 @@ class NodeScopeResolver
 				$arrayArg = $args[0]->value;
 				$scope = $scope->assignExpression(
 					new ArrayDimFetch($arrayArg, $stmt->valueVar),
-					$this->readTypeOfMaybeStored($arrayArg, $scope)->getIterableValueType(),
-					$this->readTypeOfMaybeStored($arrayArg, $scope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
+					$this->readStoredResult($arrayArg, $storage)->getTypeOnScope($scope, false)->getIterableValueType(),
+					$this->readStoredResult($arrayArg, $storage)->getTypeOnScope($scope, true)->getIterableValueType(),
 				);
 			}
 		}
@@ -5865,7 +5886,7 @@ class NodeScopeResolver
 		return $stmts;
 	}
 
-	private function inferForLoopExpressions(For_ $stmt, Expr $lastCondExpr, MutatingScope $bodyScope): MutatingScope
+	private function inferForLoopExpressions(For_ $stmt, Expr $lastCondExpr, MutatingScope $bodyScope, ExpressionResultStorage $storage): MutatingScope
 	{
 		// infer $items[$i] type from for ($i = 0; $i < count($items); $i++) {...}
 
@@ -5896,12 +5917,12 @@ class NodeScopeResolver
 				&& $stmt->init[0]->var->name === $lastCondExpr->left->name
 			) {
 				$arrayArg = $lastCondExpr->right->getArgs()[0]->value;
-				$arrayType = $this->readTypeOfMaybeStored($arrayArg, $bodyScope);
+				$arrayType = $this->readStoredResult($arrayArg, $storage)->getTypeOnScope($bodyScope, false);
 				if ($arrayType->isList()->yes()) {
 					$bodyScope = $bodyScope->assignExpression(
 						new ArrayDimFetch($lastCondExpr->right->getArgs()[0]->value, $lastCondExpr->left),
 						$arrayType->getIterableValueType(),
-						$this->readTypeOfMaybeStored($arrayArg, $bodyScope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
+						$this->readStoredResult($arrayArg, $storage)->getTypeOnScope($bodyScope, true)->getIterableValueType(),
 					);
 				}
 			}
@@ -5921,12 +5942,12 @@ class NodeScopeResolver
 				&& $stmt->init[0]->var->name === $lastCondExpr->right->name
 			) {
 				$arrayArg = $lastCondExpr->left->getArgs()[0]->value;
-				$arrayType = $this->readTypeOfMaybeStored($arrayArg, $bodyScope);
+				$arrayType = $this->readStoredResult($arrayArg, $storage)->getTypeOnScope($bodyScope, false);
 				if ($arrayType->isList()->yes()) {
 					$bodyScope = $bodyScope->assignExpression(
 						new ArrayDimFetch($lastCondExpr->left->getArgs()[0]->value, $lastCondExpr->right),
 						$arrayType->getIterableValueType(),
-						$this->readTypeOfMaybeStored($arrayArg, $bodyScope->doNotTreatPhpDocTypesAsCertain())->getIterableValueType(),
+						$this->readStoredResult($arrayArg, $storage)->getTypeOnScope($bodyScope, true)->getIterableValueType(),
 					);
 				}
 			}

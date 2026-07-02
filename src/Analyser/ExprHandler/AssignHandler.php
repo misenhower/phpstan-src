@@ -502,7 +502,7 @@ final class AssignHandler implements ExprHandler
 				if ($assignedExpr instanceof Match_) {
 					$conditionalExpressions = $this->mergeConditionalExpressions(
 						$conditionalExpressions,
-						$this->processMatchForConditionalExpressionsAfterAssign($nodeScopeResolver, $scopeBeforeAssignEval, $var->name, $assignedExpr),
+						$this->processMatchForConditionalExpressionsAfterAssign($nodeScopeResolver, $scopeBeforeAssignEval, $storage, $var->name, $assignedExpr),
 					);
 				}
 
@@ -1315,11 +1315,12 @@ final class AssignHandler implements ExprHandler
 	private function processMatchForConditionalExpressionsAfterAssign(
 		NodeScopeResolver $nodeScopeResolver,
 		MutatingScope $scope,
+		ExpressionResultStorage $storage,
 		string $variableName,
 		Match_ $expr,
 	): array
 	{
-		$armScopesAndTypes = $this->matchHandler->getArmScopesAndTypes($nodeScopeResolver, $scope, $expr);
+		$armScopesAndTypes = $this->matchHandler->getArmScopesAndTypes($nodeScopeResolver, $scope, $storage, $expr);
 		if (count($armScopesAndTypes) < 2) {
 			return [];
 		}

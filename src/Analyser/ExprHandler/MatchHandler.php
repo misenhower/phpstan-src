@@ -77,12 +77,12 @@ final class MatchHandler implements ExprHandler
 	 *
 	 * @return list<array{MutatingScope, Type}>
 	 */
-	public function getArmScopesAndTypes(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Match_ $expr): array
+	public function getArmScopesAndTypes(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, ExpressionResultStorage $storage, Match_ $expr): array
 	{
 		$cond = $expr->cond;
 		// the subject was processed before this shadow walk runs; read its stored
 		// result on the incoming scope instead of re-walking via Scope::getType().
-		$condType = $nodeScopeResolver->readTypeOfMaybeStored($cond, $scope);
+		$condType = $nodeScopeResolver->readStoredResult($cond, $storage)->getTypeOnScope($scope, false);
 		$armScopesAndTypes = [];
 
 		$matchScope = $scope;
