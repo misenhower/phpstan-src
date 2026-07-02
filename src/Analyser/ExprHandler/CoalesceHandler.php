@@ -76,11 +76,24 @@ final class CoalesceHandler implements ExprHandler
 		// mid-processing would take the on-demand path and recurse
 		$rightScope = $scope->applySpecifiedTypes($this->getFalseySpecifiedTypes($scope, $expr, $condResult, TypeSpecifierContext::createFalsey()));
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $rightScope, $storage, $nodeCallback, $context->enterDeep());
+		// the left-is-set narrowing, composed from the already-processed chain
+		// results - the inside-out equivalent of narrowing by isset($expr->left)
+		// without synthesizing an Isset_ node and re-walking the chain on demand
+		$chainResults = [];
+		$this->defaultNarrowingHelper->captureChainResults($expr->left, $storage, $chainResults);
+		$leftIssetTypes = $this->defaultNarrowingHelper->createIssetTruthyChainTypes(
+			$scope,
+			$expr->left,
+			$this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $scope, $nodeScopeResolver),
+			$expr,
+			TypeSpecifierContext::createTruthy(),
+		);
+
 		$rightExprType = $rightResult->getType();
 		if ($rightExprType instanceof NeverType && $rightExprType->isExplicit()) {
-			$scope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Expr\Isset_([$expr->left]), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()));
+			$scope = $scope->applySpecifiedTypes($leftIssetTypes);
 		} else {
-			$scope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Expr\Isset_([$expr->left]), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()))->mergeWith($rightResult->getScope());
+			$scope = $scope->applySpecifiedTypes($leftIssetTypes)->mergeWith($rightResult->getScope());
 		}
 
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new CoalesceExpressionNode($expr, $condResult, 'on left side of ??'), $beforeScope, $storage, $context);
@@ -93,9 +106,7 @@ final class CoalesceHandler implements ExprHandler
 			isAlwaysTerminating: $condResult->isAlwaysTerminating(),
 			throwPoints: array_merge($condResult->getThrowPoints(), $rightResult->getThrowPoints()),
 			impurePoints: array_merge($condResult->getImpurePoints(), $rightResult->getImpurePoints()),
-			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $condResult, $rightResult, $nodeScopeResolver, $beforeScope): Type {
-				$issetLeftExpr = new Expr\Isset_([$expr->left]);
-
+			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $condResult, $rightResult, $nodeScopeResolver, $beforeScope, $chainResults): Type {
 				// the isset resolution and the left-is-set narrowing run on
 				// beforeScope (the evaluation point), not the asking scope.
 				$result = $condResult->getIssetabilityResolution($beforeScope, false)->isSet(static function (Type $type): ?bool {
@@ -107,8 +118,23 @@ final class CoalesceHandler implements ExprHandler
 					return !$isNull->yes();
 				});
 
+				// the left side's type when it is set: the left re-processed on the
+				// left-is-set narrowed scope (a genuinely different scope than the
+				// left's own - offsets resolve against the HasOffset-narrowed parent)
+				$leftIsSetType = function () use ($expr, $nodeScopeResolver, $beforeScope, $chainResults): Type {
+					$leftIssetTypes = $this->defaultNarrowingHelper->createIssetTruthyChainTypes(
+						$beforeScope,
+						$expr->left,
+						$this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $beforeScope, $nodeScopeResolver),
+						$expr,
+						TypeSpecifierContext::createTruthy(),
+					);
+
+					return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $beforeScope->applySpecifiedTypes($leftIssetTypes), new ExpressionResultStorage())->getType());
+				};
+
 				if ($result !== null && $result !== false) {
-					return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $beforeScope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $beforeScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($beforeScope, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType());
+					return $leftIsSetType();
 				}
 
 				// the right side was processed on the left-is-null scope, so its own
@@ -116,10 +142,7 @@ final class CoalesceHandler implements ExprHandler
 				$rightType = $nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 
 				if ($result === null) {
-					return TypeCombinator::union(
-						TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($expr->left, $beforeScope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand($issetLeftExpr, $beforeScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($beforeScope, TypeSpecifierContext::createTruthy())), new ExpressionResultStorage())->getType()),
-						$rightType,
-					);
+					return TypeCombinator::union($leftIsSetType(), $rightType);
 				}
 
 				return $rightType;

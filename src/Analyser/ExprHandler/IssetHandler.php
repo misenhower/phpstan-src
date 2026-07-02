@@ -24,7 +24,6 @@ use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\TypeExpr;
@@ -63,7 +62,6 @@ final class IssetHandler implements ExprHandler
 	public function __construct(
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
-		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
@@ -126,7 +124,7 @@ final class IssetHandler implements ExprHandler
 		// getTypeOnScope() instead of re-walking through Scope::getType().
 		$chainResults = [];
 		foreach ($expr->vars as $var) {
-			$this->captureChainResults($var, $storage, $chainResults);
+			$this->defaultNarrowingHelper->captureChainResults($var, $storage, $chainResults);
 		}
 
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new IssetExpressionNode($expr, $varResults), $beforeScope, $storage, $context);
@@ -171,14 +169,10 @@ final class IssetHandler implements ExprHandler
 				// type of an already-processed chain link, read from its captured
 				// result (re-evaluated on the asking scope, honouring narrowing) -
 				// never re-walked through the scope
-				$readType = static function (Expr $e) use ($chainResults, $s, $nodeScopeResolver): Type {
-					$result = $chainResults[spl_object_id($e)] ?? null;
-
-					return $result !== null ? $result->getTypeOnScope($s, $s->nativeTypesPromoted) : $nodeScopeResolver->readTypeOfMaybeStored($e, $s);
-				};
+				$readType = $this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $s, $nodeScopeResolver);
 
 				if (count($expr->vars) === 0 || $context->null()) {
-					return $this->typeSpecifier->specifyDefaultTypes($s, $expr, $context);
+					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
 				// rewrite multi param isset() to and-chained single param isset()
@@ -312,131 +306,9 @@ final class IssetHandler implements ExprHandler
 					return new SpecifiedTypes();
 				}
 
-				$tmpVars = [$issetExpr];
-				while (
-					$issetExpr instanceof ArrayDimFetch
-					|| $issetExpr instanceof PropertyFetch
-					|| (
-						$issetExpr instanceof StaticPropertyFetch
-						&& $issetExpr->class instanceof Expr
-					)
-				) {
-					if ($issetExpr instanceof StaticPropertyFetch) {
-						/** @var Expr $issetExpr */
-						$issetExpr = $issetExpr->class;
-					} else {
-						$issetExpr = $issetExpr->var;
-					}
-					$tmpVars[] = $issetExpr;
-				}
-				$vars = array_reverse($tmpVars);
-
-				$types = new SpecifiedTypes();
-				foreach ($vars as $var) {
-
-					if ($var instanceof Expr\Variable && is_string($var->name)) {
-						if ($s->hasVariableType($var->name)->no()) {
-							return (new SpecifiedTypes([], []))->setRootExpr($expr);
-						}
-					}
-
-					if (
-						$var instanceof ArrayDimFetch
-						&& $var->dim !== null
-						&& !$readType($var->var) instanceof MixedType
-					) {
-						$dimType = $readType($var->dim);
-
-						if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
-							$types = $types->unionWith(
-								$this->defaultNarrowingHelper->createForSubject(
-									$var->var,
-									new HasOffsetType($dimType),
-									$context,
-									$s,
-								)->setRootExpr($expr),
-							);
-						} else {
-							$varType = $readType($var->var);
-
-							$narrowedKey = AllowedArrayKeysTypes::narrowOffsetKeyType($varType, $dimType);
-							if ($narrowedKey !== null) {
-								$types = $types->unionWith(
-									$this->defaultNarrowingHelper->createForSubject(
-										$var->dim,
-										$narrowedKey,
-										$context,
-										$s,
-									)->setRootExpr($expr),
-								);
-							}
-
-							if ($varType->isArray()->yes()) {
-								$types = $types->unionWith(
-									$this->defaultNarrowingHelper->createForSubject(
-										$var->var,
-										new NonEmptyArrayType(),
-										$context,
-										$s,
-									)->setRootExpr($expr),
-								);
-							}
-						}
-					}
-
-					if (
-						$var instanceof PropertyFetch
-						&& $var->name instanceof Identifier
-					) {
-						$types = $types->unionWith(
-							$this->defaultNarrowingHelper->createForSubject($var->var, new IntersectionType([
-								new ObjectWithoutClassType(),
-								new HasPropertyType($var->name->toString()),
-							]), TypeSpecifierContext::createTruthy(), $s)->setRootExpr($expr),
-						);
-					} elseif (
-						$var instanceof StaticPropertyFetch
-						&& $var->class instanceof Expr
-						&& $var->name instanceof VarLikeIdentifier
-					) {
-						$types = $types->unionWith(
-							$this->defaultNarrowingHelper->createForSubject($var->class, new IntersectionType([
-								new ObjectWithoutClassType(),
-								new HasPropertyType($var->name->toString()),
-							]), TypeSpecifierContext::createTruthy(), $s)->setRootExpr($expr),
-						);
-					}
-
-					$types = $types->unionWith(
-						$this->defaultNarrowingHelper->createForSubject($var, new NullType(), TypeSpecifierContext::createFalse(), $s)->setRootExpr($expr),
-					);
-				}
-
-				return $types;
+				return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($s, $issetExpr, $readType, $expr, $context);
 			},
 		);
-	}
-
-	/**
-	 * @param array<int, ExpressionResult> $chainResults
-	 */
-	private function captureChainResults(Expr $node, ExpressionResultStorage $storage, array &$chainResults): void
-	{
-		$result = $storage->findExpressionResult($node);
-		if ($result !== null) {
-			$chainResults[spl_object_id($node)] = $result;
-		}
-
-		if ($node instanceof ArrayDimFetch) {
-			$this->captureChainResults($node->var, $storage, $chainResults);
-			if ($node->dim !== null) {
-				$this->captureChainResults($node->dim, $storage, $chainResults);
-			}
-		} elseif ($node instanceof PropertyFetch) {
-			$this->captureChainResults($node->var, $storage, $chainResults);
-		} elseif ($node instanceof StaticPropertyFetch && $node->class instanceof Expr) {
-			$this->captureChainResults($node->class, $storage, $chainResults);
-		}
 	}
 
 }

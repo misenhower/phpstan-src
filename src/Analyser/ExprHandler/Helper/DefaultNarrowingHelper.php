@@ -4,16 +4,36 @@ namespace PHPStan\Analyser\ExprHandler\Helper;
 
 use Closure;
 use PhpParser\Node\Expr;
+use PhpParser\Node\Expr\ArrayDimFetch;
+use PhpParser\Node\Expr\PropertyFetch;
+use PhpParser\Node\Expr\StaticPropertyFetch;
+use PhpParser\Node\Identifier;
+use PhpParser\Node\VarLikeIdentifier;
 use PHPStan\Analyser\ExpressionResult;
+use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Printer\ExprPrinter;
+use PHPStan\Rules\Arrays\AllowedArrayKeysTypes;
+use PHPStan\Type\Accessory\HasOffsetType;
+use PHPStan\Type\Accessory\HasPropertyType;
+use PHPStan\Type\Accessory\NonEmptyArrayType;
+use PHPStan\Type\Constant\ConstantIntegerType;
+use PHPStan\Type\Constant\ConstantStringType;
+use PHPStan\Type\IntersectionType;
+use PHPStan\Type\MixedType;
+use PHPStan\Type\NullType;
+use PHPStan\Type\ObjectWithoutClassType;
 use PHPStan\Type\StaticTypeFactory;
 use PHPStan\Type\Type;
+use function array_reverse;
+use function is_string;
+use function spl_object_id;
 
 /**
  * New-world replacement for TypeSpecifier::handleDefaultTruthyOrFalseyContext():
@@ -128,6 +148,164 @@ final class DefaultNarrowingHelper
 			$type,
 			$context,
 		);
+	}
+
+
+	/**
+	 * Captures the stored ExpressionResults of an isset/empty/?? subject's
+	 * chain links (the results, not the storage - no reference cycle) so
+	 * narrowing callbacks read their types instead of re-walking the chain.
+	 *
+	 * @param array<int, ExpressionResult> $chainResults
+	 */
+	public function captureChainResults(Expr $node, ExpressionResultStorage $storage, array &$chainResults): void
+	{
+		$result = $storage->findExpressionResult($node);
+		if ($result !== null) {
+			$chainResults[spl_object_id($node)] = $result;
+		}
+
+		if ($node instanceof ArrayDimFetch) {
+			$this->captureChainResults($node->var, $storage, $chainResults);
+			if ($node->dim !== null) {
+				$this->captureChainResults($node->dim, $storage, $chainResults);
+			}
+		} elseif ($node instanceof PropertyFetch) {
+			$this->captureChainResults($node->var, $storage, $chainResults);
+		} elseif ($node instanceof StaticPropertyFetch && $node->class instanceof Expr) {
+			$this->captureChainResults($node->class, $storage, $chainResults);
+		}
+	}
+
+	/**
+	 * The chain-link type reader for the captured results: an already-processed
+	 * link resolves through its result on the asking scope (honouring narrowing),
+	 * anything else through the maybe-stored fallback.
+	 *
+	 * @param array<int, ExpressionResult> $chainResults
+	 * @return Closure(Expr): Type
+	 */
+	public function buildChainTypeReader(array $chainResults, MutatingScope $s, NodeScopeResolver $nodeScopeResolver): Closure
+	{
+		return static function (Expr $e) use ($chainResults, $s, $nodeScopeResolver): Type {
+			$result = $chainResults[spl_object_id($e)] ?? null;
+
+			return $result !== null ? $result->getTypeOnScope($s, $s->nativeTypesPromoted) : $nodeScopeResolver->readTypeOfMaybeStored($e, $s);
+		};
+	}
+
+	/**
+	 * The truthy narrowing of isset($issetExpr), composed from the subject's
+	 * chain: per-link HasOffset/NonEmptyArray/HasProperty facts plus a not-null
+	 * entry for every link - exactly what the Isset_ handler emits in the true
+	 * context. Lets ?? narrow its left side without synthesizing an Isset_ node
+	 * and re-walking the chain on demand.
+	 *
+	 * @param Closure(Expr): Type $readType
+	 */
+	public function createIssetTruthyChainTypes(MutatingScope $s, Expr $issetExpr, Closure $readType, Expr $rootExpr, TypeSpecifierContext $context): SpecifiedTypes
+	{
+		$tmpVars = [$issetExpr];
+		while (
+			$issetExpr instanceof ArrayDimFetch
+			|| $issetExpr instanceof PropertyFetch
+			|| (
+				$issetExpr instanceof StaticPropertyFetch
+				&& $issetExpr->class instanceof Expr
+			)
+		) {
+			if ($issetExpr instanceof StaticPropertyFetch) {
+				/** @var Expr $issetExpr */
+				$issetExpr = $issetExpr->class;
+			} else {
+				$issetExpr = $issetExpr->var;
+			}
+			$tmpVars[] = $issetExpr;
+		}
+		$vars = array_reverse($tmpVars);
+
+		$types = new SpecifiedTypes();
+		foreach ($vars as $var) {
+
+			if ($var instanceof Expr\Variable && is_string($var->name)) {
+				if ($s->hasVariableType($var->name)->no()) {
+					return (new SpecifiedTypes([], []))->setRootExpr($rootExpr);
+				}
+			}
+
+			if (
+				$var instanceof ArrayDimFetch
+				&& $var->dim !== null
+				&& !$readType($var->var) instanceof MixedType
+			) {
+				$dimType = $readType($var->dim);
+
+				if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
+					$types = $types->unionWith(
+						$this->createForSubject(
+							$var->var,
+							new HasOffsetType($dimType),
+							$context,
+							$s,
+						)->setRootExpr($rootExpr),
+					);
+				} else {
+					$varType = $readType($var->var);
+
+					$narrowedKey = AllowedArrayKeysTypes::narrowOffsetKeyType($varType, $dimType);
+					if ($narrowedKey !== null) {
+						$types = $types->unionWith(
+							$this->createForSubject(
+								$var->dim,
+								$narrowedKey,
+								$context,
+								$s,
+							)->setRootExpr($rootExpr),
+						);
+					}
+
+					if ($varType->isArray()->yes()) {
+						$types = $types->unionWith(
+							$this->createForSubject(
+								$var->var,
+								new NonEmptyArrayType(),
+								$context,
+								$s,
+							)->setRootExpr($rootExpr),
+						);
+					}
+				}
+			}
+
+			if (
+				$var instanceof PropertyFetch
+				&& $var->name instanceof Identifier
+			) {
+				$types = $types->unionWith(
+					$this->createForSubject($var->var, new IntersectionType([
+						new ObjectWithoutClassType(),
+						new HasPropertyType($var->name->toString()),
+					]), TypeSpecifierContext::createTruthy(), $s)->setRootExpr($rootExpr),
+				);
+			} elseif (
+				$var instanceof StaticPropertyFetch
+				&& $var->class instanceof Expr
+				&& $var->name instanceof VarLikeIdentifier
+			) {
+				$types = $types->unionWith(
+					$this->createForSubject($var->class, new IntersectionType([
+						new ObjectWithoutClassType(),
+						new HasPropertyType($var->name->toString()),
+					]), TypeSpecifierContext::createTruthy(), $s)->setRootExpr($rootExpr),
+				);
+			}
+
+			$types = $types->unionWith(
+				$this->createForSubject($var, new NullType(), TypeSpecifierContext::createFalse(), $s)->setRootExpr($rootExpr),
+			);
+		}
+
+		return $types;
 	}
 
 }

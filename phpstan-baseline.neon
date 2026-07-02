@@ -51,7 +51,13 @@ parameters:
 		-
 			rawMessage: 'Doing instanceof PHPStan\Type\Constant\ConstantStringType is error-prone and deprecated. Use Type::getConstantStrings() instead.'
 			identifier: phpstanApi.instanceofType
-			count: 2
+			count: 1
+			path: src/Analyser/ExprHandler/Helper/DefaultNarrowingHelper.php
+
+		-
+			rawMessage: 'Doing instanceof PHPStan\Type\Constant\ConstantStringType is error-prone and deprecated. Use Type::getConstantStrings() instead.'
+			identifier: phpstanApi.instanceofType
+			count: 1
 			path: src/Analyser/ExprHandler/IssetHandler.php
 
 		-
