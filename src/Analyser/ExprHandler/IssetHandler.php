@@ -175,8 +175,23 @@ final class IssetHandler implements ExprHandler
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
-				// rewrite multi param isset() to and-chained single param isset()
 				if (count($expr->vars) > 1) {
+					// isset($a, $b) is true only when every subject is set - the
+					// truthy narrowing is the union of each subject's own truthy
+					// chain narrowing, composed directly from the captured results
+					if ($context->true()) {
+						$types = new SpecifiedTypes();
+						foreach ($expr->vars as $var) {
+							$types = $types->unionWith(
+								$this->defaultNarrowingHelper->createIssetTruthyChainTypes($s, $var, $readType, $expr, $context),
+							);
+						}
+
+						return $types->setRootExpr($expr);
+					}
+
+					// non-true contexts (only SOME subject is unset) keep the
+					// and-chained single-param rewrite
 					$issets = [];
 					foreach ($expr->vars as $var) {
 						$issets[] = new Isset_([$var], $expr->getAttributes());
