@@ -148,6 +148,7 @@ use PHPStan\TrinaryLogic;
 use PHPStan\Type\ClosureType;
 use PHPStan\Type\Constant\ConstantIntegerType;
 use PHPStan\Type\Constant\ConstantStringType;
+use PHPStan\Type\ErrorType;
 use PHPStan\Type\FileTypeMapper;
 use PHPStan\Type\Generic\TemplateTypeHelper;
 use PHPStan\Type\Generic\TemplateTypeMap;
@@ -2916,9 +2917,22 @@ class NodeScopeResolver
 	 */
 	public function readTypeOfMaybeStored(Expr $expr, MutatingScope $scope): Type
 	{
-		$result = $this->findStoredResult($expr, $scope) ?? $this->processSyntheticOnDemand($expr, $scope);
+		$result = $this->findStoredResult($expr, $scope);
+		if ($result !== null) {
+			return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+		}
 
-		return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+		// a plain variable read is scope state - answer it directly instead of
+		// processing the node on demand (mirrors VariableHandler's typeCallback)
+		if ($expr instanceof Expr\Variable && is_string($expr->name)) {
+			if ($scope->hasVariableType($expr->name)->no()) {
+				return new ErrorType();
+			}
+
+			return $scope->getVariableType($expr->name);
+		}
+
+		return $this->processSyntheticOnDemand($expr, $scope)->getTypeOnScope($scope, $scope->nativeTypesPromoted);
 	}
 
 	/**
