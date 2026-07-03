@@ -3315,25 +3315,8 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		);
 	}
 
-	private function setExpressionCertainty(Expr $expr, TrinaryLogic $certainty): self
-	{
-		if ($this->hasExpressionType($expr)->no()) {
-			throw new ShouldNotHappenException();
-		}
-
-		$originalExprType = $this->getType($expr);
-		$nativeType = $this->getNativeType($expr);
-
-		return $this->specifyExpressionType(
-			$expr,
-			$originalExprType,
-			$nativeType,
-			$certainty,
-		);
-	}
-
 	/**
-	 * Certainty change for applySpecifiedTypes(): unlike setExpressionCertainty(),
+	 * Certainty change for applySpecifiedTypes():
 	 * it keeps the type already held for the expression instead of re-reading it
 	 * via getType(). getType() only reports the type of Yes-certainty holders, so
 	 * for a maybe-defined variable it broadens to the original type - which would
@@ -3443,7 +3426,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		}
 
 		$specifiedTypes = $this->typeSpecifier->specifyTypesInCondition($this, $expr, TypeSpecifierContext::createTruthy());
-		$scope = $this->filterBySpecifiedTypes($specifiedTypes);
+		$scope = $this->applySpecifiedTypes($specifiedTypes);
 		$this->truthyScopes[$exprString] = $scope;
 
 		return $scope;
@@ -3460,94 +3443,21 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		}
 
 		$specifiedTypes = $this->typeSpecifier->specifyTypesInCondition($this, $expr, TypeSpecifierContext::createFalsey());
-		$scope = $this->filterBySpecifiedTypes($specifiedTypes);
+		$scope = $this->applySpecifiedTypes($specifiedTypes);
 		$this->falseyScopes[$exprString] = $scope;
 
 		return $scope;
 	}
 
 	/**
-	 * @return static
-	 */
-	public function filterBySpecifiedTypes(SpecifiedTypes $specifiedTypes): self
-	{
-		$typeSpecifications = ScopeOps::buildTypeSpecifications($specifiedTypes->getSureTypes(), $specifiedTypes->getSureNotTypes());
-
-		$scope = $this;
-		$specifiedExpressions = [];
-		foreach ($typeSpecifications as $typeSpecification) {
-			$expr = $typeSpecification['expr'];
-			$type = $typeSpecification['type'];
-
-			if ($expr instanceof IssetExpr) {
-				$issetExpr = $expr;
-				$expr = $issetExpr->getExpr();
-
-				if ($typeSpecification['sure']) {
-					$scope = $scope->setExpressionCertainty(
-						$expr,
-						TrinaryLogic::createMaybe(),
-					);
-				} else {
-					$scope = $scope->unsetExpression($expr);
-				}
-
-				continue;
-			}
-
-			if (
-				!$typeSpecification['sure']
-				&& $expr instanceof Variable && is_string($expr->name)
-				&& $scope->hasVariableType($expr->name)->no()
-			) {
-				// removing type from a certainly-undefined variable cannot make
-				// it defined; a sure specification (e.g. is_string($a)) still can -
-				// the condition can only hold for a defined variable
-				continue;
-			}
-
-			if ($typeSpecification['sure']) {
-				if ($specifiedTypes->shouldOverwrite()) {
-					$scope = $scope->assignExpression($expr, $type, $type);
-				} else {
-					$scope = $scope->addTypeToExpression($expr, $type);
-				}
-			} else {
-				$scope = $scope->removeTypeFromExpression($expr, $type);
-			}
-			$specifiedExpressions[$typeSpecification['exprString']] = ExpressionTypeHolder::createYes($expr, $scope->getScopeType($expr));
-		}
-
-		$scope = $scope->processConditionalExpressionsAfterSpecifying($specifiedExpressions);
-
-		/** @var static */
-		return $scope->scopeFactory->create(
-			$scope->context,
-			$scope->isDeclareStrictTypes(),
-			$scope->getFunction(),
-			$scope->getNamespace(),
-			$scope->expressionTypes,
-			$scope->nativeExpressionTypes,
-			$this->mergeConditionalExpressions($specifiedTypes->getNewConditionalExpressionHolders(), $scope->conditionalExpressions),
-			$scope->inClosureBindScopeClasses,
-			$scope->anonymousFunctionReflection,
-			$scope->inFirstLevelStatement,
-			$scope->currentlyAssignedExpressions,
-			$scope->currentlyAllowedUndefinedExpressions,
-			$scope->inFunctionCallsStack,
-			$scope->afterExtractCall,
-			$scope->parentScope,
-			$scope->nativeTypesPromoted,
-		);
-	}
-
-	/**
-	 * New-world counterpart of filterBySpecifiedTypes.
+	 * Applies computed narrowing to this scope.
 	 *
 	 * The types inside SpecifiedTypes were already computed from ExpressionResults
 	 * by the specifyTypesCallback of an ExprHandler. This method must never call
 	 * Scope::getType() - it only combines the given types with already-tracked
 	 * expression type holders.
+	 *
+	 * @return static
 	 */
 	public function applySpecifiedTypes(SpecifiedTypes $specifiedTypes): self
 	{
