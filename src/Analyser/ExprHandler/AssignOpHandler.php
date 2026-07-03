@@ -153,6 +153,12 @@ final class AssignOpHandler implements ExprHandler
 			throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
 		};
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+		$createTypesCallback = null;
+		if ($expr instanceof Expr\AssignOp\Coalesce) {
+			// a type constraint on `$x ??= y` constrains the assigned variable -
+			// what TypeSpecifier::create() recovered by its AssignOp\Coalesce arm
+			$createTypesCallback = fn (MutatingScope $cs, Type $constraintType, TypeSpecifierContext $cctx): SpecifiedTypes => $this->defaultNarrowingHelper->createSubjectTypes($cs, $expr->var, $nodeScopeResolver->findStoredResult($expr->var, $cs), $constraintType, $cctx);
+		}
 
 		// processAssignVar asks getType($expr) for the value to assign; store this
 		// result first so it resolves from the typeCallback above rather than
@@ -167,6 +173,7 @@ final class AssignOpHandler implements ExprHandler
 			impurePoints: [],
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		));
 
 		$assignResult = $this->assignHandler->processAssignVar(
@@ -244,6 +251,7 @@ final class AssignOpHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			typeCallback: $typeCallback,
 			specifyTypesCallback: $specifyTypesCallback,
+			createTypesCallback: $createTypesCallback,
 		);
 	}
 

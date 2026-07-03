@@ -12,11 +12,12 @@ use PhpParser\Node\VarLikeIdentifier;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\NullsafeOperatorHelper;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
+use PHPStan\DependencyInjection\AutowiredParameter;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Rules\Arrays\AllowedArrayKeysTypes;
@@ -30,6 +31,7 @@ use PHPStan\Type\MixedType;
 use PHPStan\Type\NullType;
 use PHPStan\Type\ObjectWithoutClassType;
 use PHPStan\Type\StaticTypeFactory;
+use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\Type;
 use function array_reverse;
 use function is_string;
@@ -50,7 +52,8 @@ final class DefaultNarrowingHelper
 
 	public function __construct(
 		private ExprPrinter $exprPrinter,
-		private TypeSpecifier $typeSpecifier,
+		#[AutowiredParameter]
+		private bool $rememberPossiblyImpureFunctionValues,
 	)
 	{
 	}
@@ -91,24 +94,16 @@ final class DefaultNarrowingHelper
 	}
 
 	/**
-	 * A greatly simplified TypeSpecifier::create() for a subject the calling
-	 * handler has already processed: one sure (truthy) or sureNot (falsey)
-	 * entry for the subject node. A coalesce subject narrows its left side
-	 * when the narrowed type rules the right side in or out. No purity gates,
-	 * no nullsafe chain-walking, no assignment fan-out - an entry about an
-	 * assignment narrows the assigned variables in the appliers, and the
-	 * subject's own narrowing composes in through
-	 * ExpressionResult::getSpecifiedTypesForScope() at the call site.
-	 */
-	/**
-	 * A greatly simplified TypeSpecifier::create() for a subject the calling
-	 * handler has already processed: the subject's own result says how a type
-	 * constraint on it translates into entries (an assignment fans out to the
-	 * assigned variable, a coalesce delegates to its left side); without a
-	 * createTypesCallback a single sure (truthy) or sureNot (falsey) entry
-	 * for the subject node is emitted. No purity gates, no nullsafe
-	 * chain-walking, no structural unwrapping - the handlers that own those
-	 * nodes compose their children's results inside-out.
+	 * The new-world counterpart of TypeSpecifier::create() for a subject the
+	 * calling handler has already processed. The subject's own result says how
+	 * a type constraint on it translates into entries (an assignment fans out
+	 * to the assigned variable, a coalesce delegates to its left side); without
+	 * a createTypesCallback the entries are composed here from the result's own
+	 * facts: a call whose execution is (possibly) impure gets none, a chain
+	 * containing a nullsafe additionally narrows its short-circuited plain twin.
+	 * TypeSpecifier::create()/createForExpr() are never reached - their
+	 * old-world machinery re-derives from the scope what the result already
+	 * carries.
 	 */
 	public function createSubjectTypes(MutatingScope $s, Expr $subject, ?ExpressionResult $subjectResult, Type $type, TypeSpecifierContext $context): SpecifiedTypes
 	{
@@ -119,11 +114,67 @@ final class DefaultNarrowingHelper
 			}
 		}
 
-		// No composable result (a synthetic node, or a subject whose handler wired
-		// no createTypesCallback): fall back to the raw-Expr create(), which does the
-		// structural fan-out (assignment / remembered wrapper) and createForExpr. For
-		// a plain subject this equals the single sure/sureNot entry it used to emit.
-		return $this->typeSpecifier->create($subject, $type, $context, $s);
+		if ($subject instanceof Expr\Instanceof_ || $subject instanceof Expr\List_) {
+			return new SpecifiedTypes([], []);
+		}
+
+		$exprToSpecify = $subject;
+		if ($subjectResult !== null) {
+			// a call whose own execution is (possibly) impure must not get a
+			// remembered type - the gate reads the result's own impure point
+			// instead of re-asking reflection like the old create() did
+			if (
+				$subject instanceof Expr\FuncCall
+				|| $subject instanceof Expr\MethodCall
+				|| $subject instanceof Expr\StaticCall
+				|| $subject instanceof Expr\NullsafeMethodCall
+			) {
+				foreach ($subjectResult->getImpurePoints() as $impurePoint) {
+					if ($impurePoint->getNode() !== $subject) {
+						continue;
+					}
+					if ($impurePoint->isCertain() || !$this->rememberPossiblyImpureFunctionValues) {
+						return new SpecifiedTypes([], []);
+					}
+
+					break;
+				}
+			}
+
+			// a chain containing a nullsafe narrows its short-circuited plain
+			// twin too, when the constraint (or the subject's own type) rules
+			// the short-circuit null out - the containsNullsafe flag and the
+			// memoized result type replace the old scope-type probe
+			if ($subjectResult->containsNullsafe()) {
+				if ($context->true()) {
+					$nullRuledOut = $type->isNull()->no() || $subjectResult->getTypeOnScope($s, $s->nativeTypesPromoted)->isNull()->no();
+				} elseif ($context->false()) {
+					$nullRuledOut = TypeCombinator::containsNull($type) || $subjectResult->getTypeOnScope($s, $s->nativeTypesPromoted)->isNull()->no();
+				} else {
+					$nullRuledOut = false;
+				}
+
+				if ($nullRuledOut) {
+					$exprToSpecify = NullsafeOperatorHelper::getNullsafeShortcircuitedExpr($subject);
+				}
+			}
+		}
+
+		$sureTypes = [];
+		$sureNotTypes = [];
+		if ($context->false()) {
+			$sureNotTypes[$this->exprPrinter->printExpr($exprToSpecify)] = [$exprToSpecify, $type];
+			if ($exprToSpecify !== $subject) {
+				$sureNotTypes[$this->exprPrinter->printExpr($subject)] = [$subject, $type];
+			}
+		} elseif ($context->true()) {
+			$sureTypes[$this->exprPrinter->printExpr($exprToSpecify)] = [$exprToSpecify, $type];
+			if ($exprToSpecify !== $subject) {
+				$sureTypes[$this->exprPrinter->printExpr($subject)] = [$subject, $type];
+			}
+		}
+
+		return new SpecifiedTypes($sureTypes, $sureNotTypes);
 	}
 
 	/**
