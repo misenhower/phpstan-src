@@ -144,6 +144,10 @@ final class ConditionalExpressionHolderHelper
 		// let the resulting holder fire too eagerly.
 		$conditionExpressionTypes = [];
 		$droppedNoOpConditions = [];
+		// the unnarrowed type of each condition expression, pinned at
+		// holder-build time: the dropped-self-condition complement below must
+		// not re-ask the scope later, when a different storage may be current
+		$conditionOriginalTypes = [];
 		foreach ($conditionSpecifiedTypes->getSureTypes() as $exprString => [$expr, $type]) {
 			if (!$this->isTrackableExpression($expr)) {
 				continue;
@@ -160,6 +164,7 @@ final class ConditionalExpressionHolderHelper
 				$expr,
 				$conditionType,
 			);
+			$conditionOriginalTypes[$exprString] = $scopeType;
 		}
 		foreach ($conditionSpecifiedTypes->getSureNotTypes() as $exprString => [$expr, $type]) {
 			if (!$this->isTrackableExpression($expr)) {
@@ -177,6 +182,7 @@ final class ConditionalExpressionHolderHelper
 				$expr,
 				$conditionType,
 			);
+			$conditionOriginalTypes[$exprString] = $scopeType;
 		}
 
 		if (count($conditionExpressionTypes) > 0) {
@@ -230,9 +236,10 @@ final class ConditionalExpressionHolderHelper
 
 				// The dropped self-condition narrowed the target; without it the
 				// holder must allow the values it excluded, or it over-narrows when
-				// only the remaining conditions hold. So union back the complement.
+				// only the remaining conditions hold. So union back the complement,
+				// computed from the type pinned when the condition set was built.
 				if ($droppedSelfCondition !== null) {
-					$complement = TypeCombinator::remove($scope->getType($expr), $droppedSelfCondition->getType());
+					$complement = TypeCombinator::remove($conditionOriginalTypes[$exprString], $droppedSelfCondition->getType());
 					if (!$complement instanceof NeverType) {
 						$holderType = TypeCombinator::union($holderType, $complement);
 					}
