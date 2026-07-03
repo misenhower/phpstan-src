@@ -544,10 +544,15 @@ final class TypeSpecifier
 		Scope $scope,
 	): SpecifiedTypes
 	{
-		if ($context->true()) {
-			$containsNull = !$type->isNull()->no() && !$scope->getType($expr)->isNull()->no();
-		} elseif ($context->false()) {
-			$containsNull = !TypeCombinator::containsNull($type) && !$scope->getType($expr)->isNull()->no();
+		// the null-containment probe only feeds the nullsafe-shortcircuit unwrap
+		// and createNullsafeTypes() - both are no-ops for a bare variable, so the
+		// probe (and its type ask) is skipped for one
+		if (!$expr instanceof Expr\Variable) {
+			if ($context->true()) {
+				$containsNull = !$type->isNull()->no() && !$scope->getType($expr)->isNull()->no();
+			} elseif ($context->false()) {
+				$containsNull = !TypeCombinator::containsNull($type) && !$scope->getType($expr)->isNull()->no();
+			}
 		}
 
 		$originalExpr = $expr;
