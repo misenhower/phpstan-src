@@ -204,6 +204,19 @@ class Basics
 		}
 	}
 
+	public function pregMatchNarrowing(string $s): void
+	{
+		if (preg_match('/^a(b)c$/', $s, $matches) === 1) {
+			assertType("array{non-falsy-string, 'b'}", $matches);
+		}
+		if (1 === preg_match('/^a(b)c$/', $s, $matches2)) {
+			assertType("array{non-falsy-string, 'b'}", $matches2);
+		}
+		if (preg_match('/^a(b)c$/', $s, $matches3) === 0) {
+			assertType("array{}|array{non-falsy-string, 'b'}", $matches3);
+		}
+	}
+
 	/** @param mixed $m */
 	public function looseEquality($m, ?string $s): void
 	{

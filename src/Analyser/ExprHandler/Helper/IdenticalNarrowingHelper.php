@@ -15,6 +15,7 @@ use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Type\ArrayType;
 use PHPStan\Type\BooleanType;
 use PHPStan\Type\Constant\ConstantBooleanType;
+use PHPStan\Type\Constant\ConstantIntegerType;
 use PHPStan\Type\FloatType;
 use PHPStan\Type\IntegerType;
 use PHPStan\Type\MixedType;
@@ -168,7 +169,7 @@ final class IdenticalNarrowingHelper
 			if (
 				!($unwrappedSubject->name instanceof Name)
 				|| $unwrappedSubject->isFirstClassCallable()
-				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype'], true)
+				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype', 'preg_match'], true)
 				|| !isset($unwrappedSubject->getArgs()[0])
 			) {
 				return null;
@@ -181,6 +182,19 @@ final class IdenticalNarrowingHelper
 		if (count($constantType->getFiniteTypes()) !== 1) {
 			// a class constant does not have to be single-valued
 			return null;
+		}
+
+		// preg_match(...) === 1 is the call's own truthy narrowing - the
+		// type-specifying extensions narrow the by-ref \$matches argument
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& $unwrappedSubject->name->toLowerString() === 'preg_match'
+		) {
+			if ($context->true() && (new ConstantIntegerType(1))->isSuperTypeOf($constantType)->yes()) {
+				return $subjectResult->getSpecifiedTypesForScope($evaluationScope, $context);
+			}
+
+			// other constants and contexts only pin the call below
 		}
 
 		// gettype($x) === 'string' narrows $x by the named type in either
