@@ -275,6 +275,20 @@ class Basics
 			assertType('non-empty-list<string>', $list);
 			assertType('string', $list[$key]);
 		}
+		if (array_key_first($list) === null) {
+			assertType('array{}', $list);
+		} else {
+			assertType('non-empty-list<string>', $list);
+		}
+		if (array_key_last($list) !== null) {
+			assertType('non-empty-list<string>', $list);
+		}
+		if (array_find_key($list, static fn (string $v): bool => $v !== '') !== null) {
+			assertType('non-empty-list<string>', $list);
+		} else {
+			// an empty find result does not mean an empty array
+			assertType('list<string>', $list);
+		}
 	}
 
 }

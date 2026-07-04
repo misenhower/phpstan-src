@@ -356,9 +356,38 @@ final class FuncCallHandler implements ExprHandler
 		// function call narrows the call itself - the inside-out equivalent of
 		// createForExpr's FuncCall purity gate + tail entry. An impure call narrows to
 		// nothing.
-		$createTypesCallback = fn (MutatingScope $s, Type $type, TypeSpecifierContext $createContext): SpecifiedTypes => $this->isFuncCallNarrowable($nodeScopeResolver, $s, $expr, $nameResult)
-			? $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext)
-			: new SpecifiedTypes([], []);
+		$createTypesCallback = function (MutatingScope $s, Type $type, TypeSpecifierContext $createContext) use ($nodeScopeResolver, $expr, $nameResult): SpecifiedTypes {
+			if (!$this->isFuncCallNarrowable($nodeScopeResolver, $s, $expr, $nameResult)) {
+				return new SpecifiedTypes([], []);
+			}
+
+			$types = $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext);
+
+			// array_key_first/array_key_last/array_find_key return null iff the
+			// array has no matching key - a null constraint on the call narrows
+			// the array argument (both directions for first/last, non-empty only
+			// for find_key: an empty result does not mean an empty array)
+			if (
+				$expr->name instanceof Name
+				&& !$expr->isFirstClassCallable()
+				&& isset($expr->getArgs()[0])
+				&& $type->isNull()->yes()
+			) {
+				$funcName = $expr->name->toLowerString();
+				$bothDirections = in_array($funcName, ['array_key_first', 'array_key_last'], true);
+				if ($bothDirections || $funcName === 'array_find_key') {
+					$argExpr = $expr->getArgs()[0]->value;
+					$argType = $nodeScopeResolver->readTypeOfMaybeStored($argExpr, $s);
+					if ($argType->isArray()->yes() && ($bothDirections || $createContext->falsey())) {
+						$types = $types->unionWith(
+							$this->defaultNarrowingHelper->createForSubject($argExpr, new NonEmptyArrayType(), $createContext->negate(), $s),
+						);
+					}
+				}
+			}
+
+			return $types;
+		};
 
 		// Store a preliminary result carrying the type/specify callbacks before the
 		// throw-point return type is computed: getFunctionThrowPoint() resolves the

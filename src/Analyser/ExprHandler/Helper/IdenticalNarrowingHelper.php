@@ -71,7 +71,7 @@ final class IdenticalNarrowingHelper
 			return $this->specifyAgainstScalarLiteral($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
 		}
 
-		if (!$this->isSubjectCoveredAgainstConstant($subject)) {
+		if ($constantName !== 'null' && !$this->isSubjectCoveredAgainstConstant($subject)) {
 			return null;
 		}
 
@@ -240,8 +240,10 @@ final class IdenticalNarrowingHelper
 	/**
 	 * Subjects whose comparison against a constant narrows more than the
 	 * subject expression itself stay on the old-world path for now: function
-	 * calls narrow their arguments (array_key_first($a) !== null makes $a
-	 * non-empty, count($a) === 0 empties $a), `$a::class` narrows $a.
+	 * calls narrow their arguments (count($a) === 0 empties $a), `$a::class`
+	 * narrows $a. The null comparison is fully composed (the array_key_first
+	 * family narrows its argument through the FuncCall's createTypesCallback)
+	 * and does not consult this.
 	 */
 	private function isSubjectCoveredAgainstConstant(Expr $subject): bool
 	{
