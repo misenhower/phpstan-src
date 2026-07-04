@@ -267,6 +267,20 @@ final class BinaryOpHandler implements ExprHandler
 							// the narrowing composes on the evaluation scope; only the
 							// asked flavour comes from the asking scope
 							$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+							// the comparison's own verdict, in Identical semantics
+							static function () use ($nodeScopeResolver, $expr, $scope): Type {
+								$ownType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
+								if ($expr instanceof BinaryOp\NotIdentical) {
+									if ($ownType->isTrue()->yes()) {
+										return new ConstantBooleanType(false);
+									}
+									if ($ownType->isFalse()->yes()) {
+										return new ConstantBooleanType(true);
+									}
+								}
+
+								return $ownType;
+							},
 						);
 						if ($newWorldTypes !== null) {
 							return $newWorldTypes->setRootExpr($expr);
