@@ -270,7 +270,9 @@ final class StaticCallHandler implements ExprHandler
 			);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,
-			$s,
+			// the narrowing computes on the evaluation scope; only the asked
+			// flavour comes from the asking scope
+			$s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
 			$expr,
 			$normalizedExpr,
 			$classResult,

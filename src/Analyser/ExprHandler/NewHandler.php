@@ -238,7 +238,9 @@ final class NewHandler implements ExprHandler
 			$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
 		);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
-			$s,
+			// the narrowing computes on the evaluation scope; only the asked
+			// flavour comes from the asking scope
+			$s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
 			$expr,
 			$resolvedParametersAcceptor,
 			$specifyContext,
