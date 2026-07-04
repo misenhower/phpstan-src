@@ -164,6 +164,19 @@ class Basics
 	{
 		if (get_class($o) === Foo::class) {
 			assertType('EqualityNarrowingNewWorld\Foo', $o);
+		} else {
+			assertType('object', $o);
+		}
+		if (Foo::class === get_class($o)) {
+			assertType('EqualityNarrowingNewWorld\Foo', $o);
+		}
+		if (get_debug_type($o) === Foo::class) {
+			assertType('EqualityNarrowingNewWorld\Foo', $o);
+		}
+		if (get_class($o) !== Foo::class) {
+			assertType('object', $o);
+		} else {
+			assertType('EqualityNarrowingNewWorld\Foo', $o);
 		}
 	}
 

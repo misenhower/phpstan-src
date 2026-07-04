@@ -11,8 +11,10 @@ use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\NeverType;
+use PHPStan\Type\ObjectType;
 use PHPStan\Type\NullType;
 use PHPStan\Type\Type;
 use function count;
@@ -35,6 +37,7 @@ final class IdenticalNarrowingHelper
 
 	public function __construct(
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private ReflectionProvider $reflectionProvider,
 	)
 	{
 	}
@@ -150,7 +153,19 @@ final class IdenticalNarrowingHelper
 			return null;
 		}
 
-		if (!$this->isSubjectCoveredAgainstConstant($subject)) {
+		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
+		if ($unwrappedSubject instanceof Expr\FuncCall) {
+			// get_class/get_debug_type compose below; other calls narrow their
+			// arguments in ways not ported yet (count($a) === 0 empties $a)
+			if (
+				!($unwrappedSubject->name instanceof Name)
+				|| $unwrappedSubject->isFirstClassCallable()
+				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type'], true)
+				|| !isset($unwrappedSubject->getArgs()[0])
+			) {
+				return null;
+			}
+		} elseif (!$this->isSubjectCoveredAgainstConstant($subject)) {
 			return null;
 		}
 
@@ -163,6 +178,27 @@ final class IdenticalNarrowingHelper
 		if (count($constantType->getFiniteTypes()) !== 1) {
 			// a class constant does not have to be single-valued
 			return null;
+		}
+
+		// get_class($o) === 'Foo' pins $o to a final Foo when the comparison
+		// holds; outside the true context only the call itself narrows
+		if ($unwrappedSubject instanceof Expr\FuncCall && $context->true()) {
+			$narrowedObjectType = null;
+			$constantStrings = $constantType->getConstantStrings();
+			if (count($constantStrings) === 1 && $this->reflectionProvider->hasClass($constantStrings[0]->getValue())) {
+				$narrowedObjectType = new ObjectType($constantStrings[0]->getValue(), classReflection: $this->reflectionProvider->getClass($constantStrings[0]->getValue())->asFinal());
+			} elseif ($constantType->getClassStringObjectType()->isObject()->yes()) {
+				$narrowedObjectType = $constantType->getClassStringObjectType();
+			}
+
+			if ($narrowedObjectType !== null) {
+				return $this->defaultNarrowingHelper->createForSubject(
+					$unwrappedSubject->getArgs()[0]->value,
+					$narrowedObjectType,
+					$context,
+					$evaluationScope,
+				)->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context));
+			}
 		}
 
 		$types = $this->defaultNarrowingHelper->createSubjectTypes(
