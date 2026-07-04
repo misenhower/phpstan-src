@@ -231,6 +231,39 @@ class Basics
 		}
 	}
 
+	public function flag(): bool
+	{
+		return true;
+	}
+
+	/** @param array<int>|false $arrOrFalse */
+	public function boolConstAgainstExpressions(?self $s, $arrOrFalse, ?bool $nb): void
+	{
+		if ($s?->flag() === false) {
+			assertType('EqualityNarrowingNewWorld\Basics', $s);
+		} else {
+			assertType('EqualityNarrowingNewWorld\Basics|null', $s);
+		}
+		if ($s?->flag() === true) {
+			assertType('EqualityNarrowingNewWorld\Basics', $s);
+		}
+		if ($arrOrFalse !== false) {
+			assertType('array<int>', $arrOrFalse);
+		} else {
+			assertType('false', $arrOrFalse);
+		}
+		if ($nb === true) {
+			assertType('true', $nb);
+		} else {
+			assertType('false|null', $nb);
+		}
+		if ($nb !== false) {
+			assertType('true|null', $nb);
+		} else {
+			assertType('false', $nb);
+		}
+	}
+
 	/** @param list<string> $list */
 	public function funcCallAgainstNull(array $list): void
 	{

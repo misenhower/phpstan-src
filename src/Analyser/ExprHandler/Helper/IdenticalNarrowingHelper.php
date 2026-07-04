@@ -9,7 +9,9 @@ use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
+use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\NullType;
+use function in_array;
 
 /**
  * New-world narrowing for `===` (and, via a negated context, `!==`): composed
@@ -45,31 +47,62 @@ final class IdenticalNarrowingHelper
 			return null;
 		}
 
-		// slice 1 covers comparisons against null; everything else falls back
-		if ($left instanceof Expr\ConstFetch && $left->name->toLowerString() === 'null') {
+		// slices 1+2 cover comparisons against a null/true/false literal;
+		// everything else falls back
+		if ($left instanceof Expr\ConstFetch && in_array($left->name->toLowerString(), ['null', 'true', 'false'], true)) {
+			$constantName = $left->name->toLowerString();
 			$subject = $right;
 			$subjectResult = $rightResult;
-		} elseif ($right instanceof Expr\ConstFetch && $right->name->toLowerString() === 'null') {
+		} elseif ($right instanceof Expr\ConstFetch && in_array($right->name->toLowerString(), ['null', 'true', 'false'], true)) {
+			$constantName = $right->name->toLowerString();
 			$subject = $left;
 			$subjectResult = $leftResult;
 		} else {
 			return null;
 		}
 
-		// function calls against null narrow their arguments too
-		// (array_key_first($a) !== null makes $a non-empty) - not ported yet
+		// function calls against a constant narrow their arguments too
+		// (array_key_first($a) !== null makes $a non-empty, array_search(...)
+		// !== false narrows the haystack) - not ported yet
 		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
 		if ($unwrappedSubject instanceof Expr\FuncCall) {
 			return null;
 		}
 
-		return $this->defaultNarrowingHelper->createSubjectTypes(
+		if ($constantName === 'null') {
+			return $this->defaultNarrowingHelper->createSubjectTypes(
+				$evaluationScope,
+				$subject,
+				$subjectResult,
+				new NullType(),
+				$context,
+			);
+		}
+
+		// a bool literal pins the constant through the entries and runs the
+		// subject's own narrowing in the matching bool context - identity,
+		// not truthiness: `=== false` is the false context, not falsey
+		$types = $this->defaultNarrowingHelper->createSubjectTypes(
 			$evaluationScope,
 			$subject,
 			$subjectResult,
-			new NullType(),
+			new ConstantBooleanType($constantName === 'true'),
 			$context,
 		);
+
+		// a nullsafe chain that did not produce the constant may have
+		// short-circuited instead - its own narrowing only holds when the
+		// comparison succeeded
+		if (!$context->true() && ($unwrappedSubject instanceof Expr\NullsafeMethodCall || $unwrappedSubject instanceof Expr\NullsafePropertyFetch)) {
+			return $types;
+		}
+
+		$boolContext = $constantName === 'true' ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createFalse();
+
+		return $types->unionWith($subjectResult->getSpecifiedTypesForScope(
+			$evaluationScope,
+			$context->true() ? $boolContext : $boolContext->negate(),
+		));
 	}
 
 }

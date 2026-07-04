@@ -61,7 +61,12 @@ final class AlwaysRememberedExprHandler implements ExprHandler
 			throwPoints: $innerResult->getThrowPoints(),
 			impurePoints: $innerResult->getImpurePoints(),
 			typeCallback: static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $expr->getNativeExprType() : $expr->getExprType(),
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			// Narrowing by the remembered wrapper is narrowing by the inner
+			// expression (TypeSpecifier unwrapped it and specified both keys);
+			// the wrapper node itself keeps the default truthy/falsey entry.
+			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context)->unionWith(
+				$innerResult->getSpecifiedTypesForScope($s, $context),
+			),
 			// A type constraint on the remembered wrapper constrains both the wrapper
 			// node (under its __phpstanRemembered(...) key) and the inner expression -
 			// what TypeSpecifier::create() recovered by fanning the AlwaysRememberedExpr
