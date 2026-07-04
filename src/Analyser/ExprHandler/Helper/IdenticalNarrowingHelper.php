@@ -12,9 +12,17 @@ use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
 use PHPStan\Reflection\ReflectionProvider;
+use PHPStan\Type\ArrayType;
+use PHPStan\Type\BooleanType;
 use PHPStan\Type\Constant\ConstantBooleanType;
+use PHPStan\Type\FloatType;
+use PHPStan\Type\IntegerType;
+use PHPStan\Type\MixedType;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\ObjectType;
+use PHPStan\Type\ObjectWithoutClassType;
+use PHPStan\Type\ResourceType;
+use PHPStan\Type\StringType;
 use PHPStan\Type\NullType;
 use PHPStan\Type\Type;
 use function count;
@@ -160,7 +168,7 @@ final class IdenticalNarrowingHelper
 			if (
 				!($unwrappedSubject->name instanceof Name)
 				|| $unwrappedSubject->isFirstClassCallable()
-				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type'], true)
+				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype'], true)
 				|| !isset($unwrappedSubject->getArgs()[0])
 			) {
 				return null;
@@ -169,15 +177,34 @@ final class IdenticalNarrowingHelper
 			return null;
 		}
 
-		$decidedTypes = $this->specifyDecidedComparison($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
-		if ($decidedTypes !== null) {
-			return $decidedTypes;
-		}
-
 		$constantType = $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
 		if (count($constantType->getFiniteTypes()) !== 1) {
 			// a class constant does not have to be single-valued
 			return null;
+		}
+
+		// gettype($x) === 'string' narrows $x by the named type in either
+		// direction - before the decided-comparison guard, like the old block
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& $unwrappedSubject->name->toLowerString() === 'gettype'
+		) {
+			$constantStrings = $constantType->getConstantStrings();
+			if (count($constantStrings) !== 1) {
+				return null;
+			}
+			$gettypeNarrowedType = $this->getTypeFromGettypeStringValue($constantStrings[0]->getValue());
+			if ($gettypeNarrowedType !== null) {
+				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+					$this->defaultNarrowingHelper->createForSubject($unwrappedSubject->getArgs()[0]->value, $gettypeNarrowedType, $context, $evaluationScope),
+				);
+			}
+			// an unknown type-name string only pins the call itself below
+		}
+
+		$decidedTypes = $this->specifyDecidedComparison($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+		if ($decidedTypes !== null) {
+			return $decidedTypes;
 		}
 
 		// get_class($o) === 'Foo' pins $o to a final Foo when the comparison
@@ -258,6 +285,36 @@ final class IdenticalNarrowingHelper
 		return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, $never, $contextForTypes)->unionWith(
 			$this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $never, $contextForTypes),
 		);
+	}
+
+	private function getTypeFromGettypeStringValue(string $value): ?Type
+	{
+		if ($value === 'string') {
+			return new StringType();
+		}
+		if ($value === 'array') {
+			return new ArrayType(new MixedType(), new MixedType());
+		}
+		if ($value === 'boolean') {
+			return new BooleanType();
+		}
+		if (in_array($value, ['resource', 'resource (closed)'], true)) {
+			return new ResourceType();
+		}
+		if ($value === 'integer') {
+			return new IntegerType();
+		}
+		if ($value === 'double') {
+			return new FloatType();
+		}
+		if ($value === 'NULL') {
+			return new NullType();
+		}
+		if ($value === 'object') {
+			return new ObjectWithoutClassType();
+		}
+
+		return null;
 	}
 
 	private function isScalarLiteral(Expr $expr): bool

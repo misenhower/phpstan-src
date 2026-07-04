@@ -180,6 +180,30 @@ class Basics
 		}
 	}
 
+	/**
+	 * @param int|string $is
+	 * @param mixed $m
+	 */
+	public function gettypeNarrowing($is, $m): void
+	{
+		if (gettype($is) === 'string') {
+			assertType('string', $is);
+		} else {
+			assertType('int', $is);
+		}
+		if (gettype($m) === 'NULL') {
+			assertType('null', $m);
+		}
+		if (gettype($is) !== 'integer') {
+			assertType('string', $is);
+		} else {
+			assertType('int', $is);
+		}
+		if (gettype($m) === 'double') {
+			assertType('float', $m);
+		}
+	}
+
 	/** @param mixed $m */
 	public function looseEquality($m, ?string $s): void
 	{
