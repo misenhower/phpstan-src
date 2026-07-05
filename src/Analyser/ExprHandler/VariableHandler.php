@@ -4,7 +4,6 @@ namespace PHPStan\Analyser\ExprHandler;
 
 use Closure;
 use PhpParser\Node\Expr;
-use PhpParser\Node\Expr\BinaryOp\Identical;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt;
@@ -14,6 +13,7 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\IdenticalNarrowingHelper;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\IssetabilityDescriptor;
 use PHPStan\Analyser\MutatingScope;
@@ -22,6 +22,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Reflection\InitializerExprTypeResolver;
 use PHPStan\ShouldNotHappenException;
 use PHPStan\Type\ErrorType;
 use PHPStan\Type\MixedType;
@@ -41,6 +42,8 @@ final class VariableHandler implements ExprHandler
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private IdenticalNarrowingHelper $identicalNarrowingHelper,
+		private InitializerExprTypeResolver $initializerExprTypeResolver,
 	)
 	{
 	}
@@ -51,16 +54,13 @@ final class VariableHandler implements ExprHandler
 	}
 
 	/**
-	 * Evaluates the variable as a read on the asking scope. Also used by
-	 * AssignHandler for the placeholder result it stores for an assignment
-	 * target - every stored result for a Variable node must carry a
-	 * typeCallback so it can resolve its own type from the stored result.
+	 * Evaluates the variable as a read on the asking scope.
 	 *
 	 * @return Closure(bool $nativeTypesPromoted): Type
 	 */
-	public static function createTypeCallback(Variable $expr, NodeScopeResolver $nodeScopeResolver, MutatingScope $beforeScope, ?ExpressionResult $nameResult = null): Closure
+	private function createTypeCallback(Variable $expr, NodeScopeResolver $nodeScopeResolver, MutatingScope $beforeScope, ?ExpressionResult $nameResult = null, ?ExpressionResult $nameArgResult = null): Closure
 	{
-		return static function (bool $nativeTypesPromoted) use ($expr, $nameResult, $nodeScopeResolver, $beforeScope): Type {
+		return function (bool $nativeTypesPromoted) use ($expr, $nameResult, $nameArgResult, $nodeScopeResolver, $beforeScope): Type {
 			$readScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 			if (is_string($expr->name)) {
 				if ($readScope->hasVariableType($expr->name)->no()) {
@@ -79,7 +79,34 @@ final class VariableHandler implements ExprHandler
 			if (count($nameType->getConstantStrings()) > 0) {
 				$types = [];
 				foreach ($nameType->getConstantStrings() as $constantString) {
-					$variableScope = $readScope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new Identical($expr->name, new String_($constantString->getValue())), $readScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($readScope, TypeSpecifierContext::createTruthy()));
+					// "name === 'str'" composed from the name expression's walk
+					// result - no synthetic Identical walk; the literal side is a
+					// result the scalar handler would have produced
+					$literalExpr = new String_($constantString->getValue());
+					$literalResult = $this->expressionResultFactory->create(
+						$readScope,
+						beforeScope: $readScope,
+						expr: $literalExpr,
+						hasYield: false,
+						isAlwaysTerminating: false,
+						throwPoints: [],
+						impurePoints: [],
+						typeCallback: static fn (): Type => $constantString,
+						specifyTypesCallback: static fn (): SpecifiedTypes => new SpecifiedTypes(),
+					);
+					$specifiedTypes = $this->identicalNarrowingHelper->specifyIdentical(
+						$nodeScopeResolver,
+						$expr->name,
+						$literalExpr,
+						$nameResult,
+						$literalResult,
+						TypeSpecifierContext::createTruthy(),
+						$readScope,
+						$nameArgResult,
+						null,
+						fn (): Type => $this->initializerExprTypeResolver->resolveIdenticalType($nameType, $constantString)->type,
+					);
+					$variableScope = $readScope->applySpecifiedTypes($specifiedTypes ?? new SpecifiedTypes());
 					if ($variableScope->hasVariableType($constantString->getValue())->no()) {
 						$types[] = new ErrorType();
 						continue;
@@ -125,7 +152,7 @@ final class VariableHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			issetabilityDescriptor: is_string($expr->name) ? IssetabilityDescriptor::variable($expr->name) : null,
-			typeCallback: self::createTypeCallback($expr, $nodeScopeResolver, $beforeScope, $nameResult),
+			typeCallback: $this->createTypeCallback($expr, $nodeScopeResolver, $beforeScope, $nameResult, is_string($expr->name) ? null : $this->identicalNarrowingHelper->captureFirstArgResult($expr->name, $storage)),
 			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
