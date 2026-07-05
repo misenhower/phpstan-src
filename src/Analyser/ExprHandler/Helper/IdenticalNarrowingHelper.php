@@ -12,19 +12,23 @@ use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
 use PHPStan\Reflection\ReflectionProvider;
+use PHPStan\Type\Accessory\AccessoryNonEmptyStringType;
+use PHPStan\Type\Accessory\AccessoryNonFalsyStringType;
 use PHPStan\Type\ArrayType;
 use PHPStan\Type\BooleanType;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\Constant\ConstantIntegerType;
+use PHPStan\Type\Constant\ConstantStringType;
 use PHPStan\Type\FloatType;
+use PHPStan\Type\IntegerRangeType;
 use PHPStan\Type\IntegerType;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\NeverType;
+use PHPStan\Type\NullType;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\ObjectWithoutClassType;
 use PHPStan\Type\ResourceType;
 use PHPStan\Type\StringType;
-use PHPStan\Type\NullType;
 use PHPStan\Type\Type;
 use function count;
 use function in_array;
@@ -169,7 +173,7 @@ final class IdenticalNarrowingHelper
 			if (
 				!($unwrappedSubject->name instanceof Name)
 				|| $unwrappedSubject->isFirstClassCallable()
-				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype', 'preg_match'], true)
+				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype', 'preg_match', 'strlen', 'mb_strlen'], true)
 				|| !isset($unwrappedSubject->getArgs()[0])
 			) {
 				return null;
@@ -195,6 +199,42 @@ final class IdenticalNarrowingHelper
 			}
 
 			// other constants and contexts only pin the call below
+		}
+
+		// strlen($x) === 0 empties $x; === N >= 1 makes it non-empty in the
+		// truthy direction (>= 2 non-falsy) - before the decided guard
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& in_array($unwrappedSubject->name->toLowerString(), ['strlen', 'mb_strlen'], true)
+		) {
+			if (count($unwrappedSubject->getArgs()) !== 1 || !$constantType->isInteger()->yes()) {
+				return null;
+			}
+
+			$argExpr = $unwrappedSubject->getArgs()[0]->value;
+			if ((new ConstantIntegerType(0))->isSuperTypeOf($constantType)->yes()) {
+				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+					$this->defaultNarrowingHelper->createForSubject($argExpr, new ConstantStringType(''), $context, $evaluationScope),
+				);
+			}
+
+			if ($context->truthy()) {
+				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+				if ($argResult === null) {
+					return null;
+				}
+				if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
+					$accessory = IntegerRangeType::fromInterval(2, null)->isSuperTypeOf($constantType)->yes()
+						? new AccessoryNonFalsyStringType()
+						: new AccessoryNonEmptyStringType();
+
+					return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+						$this->defaultNarrowingHelper->createForSubject($argExpr, $accessory, $context, $evaluationScope),
+					);
+				}
+			}
+
+			// a non-string argument or a falsey non-zero size only pins the call
 		}
 
 		// gettype($x) === 'string' narrows $x by the named type in either

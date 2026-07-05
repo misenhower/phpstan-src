@@ -158,6 +158,17 @@ class Basics
 		if (strlen($s) !== 0) {
 			assertType('non-empty-string', $s);
 		}
+		if (strlen($s) === 1) {
+			assertType('non-empty-string', $s);
+		}
+		if (strlen($s) === 2) {
+			assertType('non-falsy-string', $s);
+		}
+		if (mb_strlen($s) === 0) {
+			assertType("''", $s);
+		} else {
+			assertType('non-empty-string', $s);
+		}
 	}
 
 	public function getClassNarrowing(object $o): void
