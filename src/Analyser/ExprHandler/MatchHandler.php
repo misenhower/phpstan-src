@@ -407,7 +407,7 @@ final class MatchHandler implements ExprHandler
 		}
 
 		if (!$hasDefaultCond && !$hasAlwaysTrueCond && $condType->isBoolean()->yes() && $condType->isConstantScalarValue()->yes()) {
-			if ($this->isScopeConditionallyImpossible($nodeScopeResolver, $matchScope)) {
+			if ($this->isScopeConditionallyImpossible($matchScope)) {
 				$hasAlwaysTrueCond = true;
 				$matchScope = $matchScope->addTypeToExpression($expr->cond, new NeverType());
 			}
@@ -511,7 +511,7 @@ final class MatchHandler implements ExprHandler
 		);
 	}
 
-	private function isScopeConditionallyImpossible(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope): bool
+	private function isScopeConditionallyImpossible(MutatingScope $scope): bool
 	{
 		$boolVars = [];
 		foreach ($scope->getDefinedVariables() as $varName) {
@@ -530,15 +530,16 @@ final class MatchHandler implements ExprHandler
 		// Check if any boolean variable's both truth values lead to contradictions
 		foreach ($boolVars as $varName) {
 			$varExpr = new Variable($varName);
-			$varExprResult = $nodeScopeResolver->processSyntheticOnDemand($varExpr, $scope);
+			// a walked Variable's specify callback is exactly the default
+			// narrowing - no need to price the synthetic node on demand
 
-			$truthyScope = $scope->applySpecifiedTypes($varExprResult->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createTruthy()));
+			$truthyScope = $scope->applySpecifiedTypes($this->defaultNarrowingHelper->specifyDefaultTypes($varExpr, TypeSpecifierContext::createTruthy()));
 			$truthyContradiction = $this->scopeHasNeverVariable($truthyScope, $boolVars);
 			if (!$truthyContradiction) {
 				continue;
 			}
 
-			$falseyScope = $scope->applySpecifiedTypes($varExprResult->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createFalsey()));
+			$falseyScope = $scope->applySpecifiedTypes($this->defaultNarrowingHelper->specifyDefaultTypes($varExpr, TypeSpecifierContext::createFalsey()));
 			$falseyContradiction = $this->scopeHasNeverVariable($falseyScope, $boolVars);
 			if ($falseyContradiction) {
 				return true;
