@@ -4,6 +4,7 @@ namespace PHPStan\Analyser\ExprHandler\Helper;
 
 use Generator;
 use PhpParser\Node;
+use PhpParser\NodeFinder;
 use PhpParser\Node\Expr\ArrowFunction;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Expr\Yield_;
@@ -41,9 +42,13 @@ use PHPStan\Type\MixedType;
 use PHPStan\Type\NonAcceptingNeverType;
 use PHPStan\Type\NullType;
 use PHPStan\Type\Type;
+use PHPStan\Type\VerbosityLevel;
 use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\VoidType;
 use function array_key_exists;
+use function array_keys;
+use function implode;
+use function in_array;
 use function array_map;
 use function array_merge;
 use function count;
@@ -97,12 +102,28 @@ final class ClosureTypeResolver
 			);
 		}
 
+		$cachedTypes = $expr->getAttribute('phpstanCachedTypes', []);
+		$cacheKey = $this->closureContextCacheKey($scope, $expr, $callableParameters, $parameters);
+		if (array_key_exists($cacheKey, $cachedTypes)) {
+			return $this->createClosureTypeFromCache($expr, $parameters, $isVariadic, $cachedTypes[$cacheKey]);
+		}
+		if (self::$resolveClosureTypeDepth >= 2) {
+			return new ClosureType(
+				$parameters,
+				$scope->getFunctionType($expr->returnType, false, false),
+				$isVariadic,
+				isStatic: TrinaryLogic::createFromBoolean($expr->static),
+			);
+		}
+
 		if ($expr instanceof ArrowFunction) {
 			$arrowScope = $scope->enterArrowFunctionWithoutReflection($expr, $callableParameters, $nativeCallableParameters);
 
 			$arrowFunctionImpurePoints = [];
 			$invalidateExpressions = [];
-			$arrowFunctionExprResult = $this->nodeScopeResolver->processExprNode(
+			self::$resolveClosureTypeDepth++;
+			try {
+				$arrowFunctionExprResult = $this->nodeScopeResolver->processExprNode(
 				new Node\Stmt\Expression($expr->expr),
 				$expr->expr,
 				$arrowScope,
@@ -131,7 +152,10 @@ final class ClosureTypeResolver
 					$invalidateExpressions[] = new InvalidateExprNode($node->getPropertyFetch());
 				},
 				ExpressionContext::createDeep(),
-			);
+				);
+			} finally {
+				self::$resolveClosureTypeDepth--;
+			}
 			$throwPoints = array_map(static fn ($throwPoint) => $throwPoint->toPublic(), $arrowFunctionExprResult->getThrowPoints());
 			$impurePoints = array_merge($arrowFunctionImpurePoints, $arrowFunctionExprResult->getImpurePoints());
 
@@ -139,21 +163,7 @@ final class ClosureTypeResolver
 			// result rather than reading the still-unprocessed body expression
 			$returnType = $this->resolveArrowFunctionReturnType($scope, $arrowScope, $expr);
 
-			return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, []);
-		}
-
-		$cachedTypes = $expr->getAttribute('phpstanCachedTypes', []);
-		$cacheKey = $scope->getClosureScopeCacheKey();
-		if (array_key_exists($cacheKey, $cachedTypes)) {
-			return $this->createClosureTypeFromCache($expr, $parameters, $isVariadic, $cachedTypes[$cacheKey]);
-		}
-		if (self::$resolveClosureTypeDepth >= 2) {
-			return new ClosureType(
-				$parameters,
-				$scope->getFunctionType($expr->returnType, false, false),
-				$isVariadic,
-				isStatic: TrinaryLogic::createFromBoolean($expr->static),
-			);
+			return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, [], $cacheKey);
 		}
 
 		self::$resolveClosureTypeDepth++;
@@ -221,6 +231,7 @@ final class ClosureTypeResolver
 			$throwPoints,
 			$impurePoints,
 			$invalidateExpressions,
+			$cacheKey,
 		);
 	}
 
@@ -292,11 +303,11 @@ final class ClosureTypeResolver
 			return $this->getClosureType($native ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope, $expr);
 		}
 
-		[$parameters, $isVariadic] = $this->buildParametersAndAcceptors($scope, $expr);
+		[$parameters, $isVariadic, $callableParameters] = $this->buildParametersAndAcceptors($scope, $expr);
 
 		$returnType = $this->resolveArrowFunctionReturnType($scope, $arrowScope, $expr, $native);
 
-		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, []);
+		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, [], $this->closureContextCacheKey($scope, $expr, $callableParameters, $parameters));
 	}
 
 	/**
@@ -308,6 +319,95 @@ final class ClosureTypeResolver
 	 * them from the closure's passed-to callable type - so the return type read
 	 * from the gathered scopes would differ, and getClosureType() must re-walk.
 	 */
+	/**
+	 * The expression roots this closure's type can read from the enclosing
+	 * scope: '$this' and the use()d variables for closures, '$this' and
+	 * every body variable that is not a parameter for arrow functions. Null
+	 * when the body accesses variables dynamically ($$name, compact(),
+	 * get_defined_vars()) and the whole scope must key the cache.
+	 *
+	 * @return list<string>|null
+	 */
+	/**
+	 * The cache key of everything this closure's type can depend on: the
+	 * free-variable slice of the scope plus the parameter types the caller
+	 * feeds in - array_map style callers type the same closure node per
+	 * element through the callable parameters.
+	 *
+	 * @param array<\PHPStan\Reflection\ParameterReflection>|null $callableParameters
+	 * @param array<\PHPStan\Reflection\ParameterReflection> $parameters
+	 */
+	private function closureContextCacheKey(MutatingScope $scope, Node\Expr\Closure|ArrowFunction $expr, ?array $callableParameters, array $parameters): string
+	{
+		$parts = [];
+		foreach ($callableParameters ?? $parameters as $parameter) {
+			$parts[] = $parameter->getType()->describe(VerbosityLevel::cache());
+		}
+
+		return $scope->getClosureScopeCacheKey($this->freeVariableRoots($expr)) . '/' . implode('|', $parts) . ($scope->nativeTypesPromoted ? '/native' : '/phpdoc');
+	}
+
+	/**
+	 * The expression roots this closure's type can read from the enclosing
+	 * scope - null when the body accesses variables dynamically and the
+	 * whole scope must key the cache.
+	 *
+	 * @return list<string>|null
+	 */
+	private function freeVariableRoots(Node\Expr\Closure|ArrowFunction $expr): ?array
+	{
+		/** @var list<string>|null|false $cached */
+		$cached = $expr->getAttribute('phpstanFreeVariableRoots', false);
+		if ($cached !== false) {
+			return $cached;
+		}
+
+		$roots = [];
+		if (!$expr->static) {
+			$roots['$this'] = true;
+		}
+
+		if ($expr instanceof Node\Expr\Closure) {
+			foreach ($expr->uses as $use) {
+				if (!is_string($use->var->name)) {
+					$expr->setAttribute('phpstanFreeVariableRoots', null);
+					return null;
+				}
+				$roots['$' . $use->var->name] = true;
+			}
+		} else {
+			$paramNames = [];
+			foreach ($expr->params as $param) {
+				if ($param->var instanceof Node\Expr\Variable && is_string($param->var->name)) {
+					$paramNames['$' . $param->var->name] = true;
+				}
+			}
+			$finder = new NodeFinder();
+			foreach ($finder->findInstanceOf([$expr->expr], Node\Expr\Variable::class) as $variable) {
+				if (!is_string($variable->name)) {
+					$expr->setAttribute('phpstanFreeVariableRoots', null);
+					return null;
+				}
+				$name = '$' . $variable->name;
+				if (isset($paramNames[$name])) {
+					continue;
+				}
+				$roots[$name] = true;
+			}
+			foreach ($finder->findInstanceOf([$expr->expr], Node\Expr\FuncCall::class) as $call) {
+				if ($call->name instanceof Node\Name && in_array($call->name->toLowerString(), ['compact', 'extract', 'get_defined_vars'], true)) {
+					$expr->setAttribute('phpstanFreeVariableRoots', null);
+					return null;
+				}
+			}
+		}
+
+		$rootList = array_keys($roots);
+		$expr->setAttribute('phpstanFreeVariableRoots', $rootList);
+
+		return $rootList;
+	}
+
 	private function bodyWalkHasOwnParameterTypes(Node\Expr\Closure|ArrowFunction $expr): bool
 	{
 		return $expr->getAttribute(ArrayMapArgVisitor::ATTRIBUTE_NAME) !== null
@@ -334,6 +434,7 @@ final class ClosureTypeResolver
 		array $throwPoints,
 		array $impurePoints,
 		array $invalidateExpressions,
+		?string $cacheKey = null,
 	): ClosureType
 	{
 		$onlyNeverExecutionEnds = $this->deriveOnlyNeverExecutionEnds($executionEnds);
@@ -427,7 +528,7 @@ final class ClosureTypeResolver
 			break;
 		}
 
-		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, $usedVariables);
+		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, $usedVariables, $cacheKey);
 	}
 
 	private function resolveArrowFunctionReturnType(
@@ -602,7 +703,7 @@ final class ClosureTypeResolver
 	 * @param array{returnType: Type, throwPoints: SimpleThrowPoint[], impurePoints: SimpleImpurePoint[], invalidateExpressions: InvalidateExprNode[], usedVariables: string[]} $cachedClosureData
 	 */
 	private function createClosureTypeFromCache(
-		Node\Expr\Closure $expr,
+		Node\Expr\Closure|ArrowFunction $expr,
 		array $parameters,
 		bool $isVariadic,
 		array $cachedClosureData,
@@ -657,6 +758,7 @@ final class ClosureTypeResolver
 		array $impurePoints,
 		array $invalidateExpressions,
 		array $usedVariables,
+		?string $cacheKey = null,
 	): ClosureType
 	{
 		foreach ($parameters as $parameter) {
@@ -677,7 +779,8 @@ final class ClosureTypeResolver
 		$impurePointsForClosureType = array_map(static fn (ImpurePoint $impurePoint) => new SimpleImpurePoint($impurePoint->getIdentifier(), $impurePoint->getDescription(), $impurePoint->isCertain()), $impurePoints);
 
 		$cachedTypes = $expr->getAttribute('phpstanCachedTypes', []);
-		$cachedTypes[$scope->getClosureScopeCacheKey()] = [
+		$cacheKey ??= $this->closureContextCacheKey($scope, $expr, null, $parameters);
+		$cachedTypes[$cacheKey] = [
 			'returnType' => $returnType,
 			'throwPoints' => $throwPointsForClosureType,
 			'impurePoints' => $impurePointsForClosureType,
