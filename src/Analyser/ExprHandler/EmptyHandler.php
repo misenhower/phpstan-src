@@ -3,7 +3,6 @@
 namespace PHPStan\Analyser\ExprHandler;
 
 use PhpParser\Node\Expr;
-use PhpParser\Node\Expr\BinaryOp\BooleanOr;
 use PhpParser\Node\Expr\Empty_;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
@@ -11,6 +10,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\BooleanNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
@@ -34,6 +34,7 @@ final class EmptyHandler implements ExprHandler
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private BooleanNarrowingHelper $booleanNarrowingHelper,
 	)
 	{
 	}
@@ -53,6 +54,9 @@ final class EmptyHandler implements ExprHandler
 		$scope = $this->nonNullabilityHelper->revertNonNullability($scope, $nonNullabilityResult->getSpecifiedExpressions());
 		$scope = $nodeScopeResolver->lookForUnsetAllowedUndefinedExpressions($scope, $expr->expr);
 
+		$chainResults = [];
+		$this->defaultNarrowingHelper->captureChainResults($expr->expr, $storage, $chainResults);
+
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new EmptyExpressionNode($expr, $exprResult), $beforeScope, $storage, $context);
 
 		return $this->expressionResultFactory->create(
@@ -71,16 +75,84 @@ final class EmptyHandler implements ExprHandler
 
 				return new ConstantBooleanType(!$result);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $chainResults, $nodeScopeResolver): SpecifiedTypes {
 				$isset = $exprResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
 				if ($isset === false) {
 					return new SpecifiedTypes();
 				}
 
-				return $this->defaultNarrowingHelper->specifyTypesForNode($s, new BooleanOr(
-					new Expr\BooleanNot(new Expr\Isset_([$expr->expr])),
-					new Expr\BooleanNot($expr->expr),
-				), $context)->setRootExpr($expr);
+				// empty($x) narrows like !isset($x) || !$x, composed through the
+				// disjunction helper - the fabricated nodes are only printed
+				// into holder keys, never walked
+				$issetNode = new Expr\Isset_([$expr->expr]);
+				$notIssetNode = new Expr\BooleanNot($issetNode);
+				$notExprNode = new Expr\BooleanNot($expr->expr);
+
+				$leftTypes = function (MutatingScope $scope, TypeSpecifierContext $ctx) use ($nodeScopeResolver, $chainResults, $expr, $exprResult, $issetNode, $notIssetNode): SpecifiedTypes {
+					if ($ctx->null()) {
+						return $this->defaultNarrowingHelper->specifyDefaultTypes($notIssetNode, $ctx);
+					}
+					$negated = $ctx->negate();
+					$readType = $this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $scope, $nodeScopeResolver);
+					if (!$negated->true()) {
+						return $this->defaultNarrowingHelper->createIssetSingleSubjectNonTrueTypes($scope, $expr->expr, $exprResult, $readType, $negated, $issetNode);
+					}
+
+					return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($scope, $expr->expr, $readType, $issetNode, $negated);
+				};
+				$leftType = static function (MutatingScope $scope) use ($exprResult): Type {
+					$result = $exprResult->getIssetabilityResolution($scope, false)->isSet(static function (Type $type): ?bool {
+						$isNull = $type->isNull();
+						if ($isNull->maybe()) {
+							return null;
+						}
+
+						return !$isNull->yes();
+					});
+					if ($result === null) {
+						return new BooleanType();
+					}
+
+					return new ConstantBooleanType(!$result);
+				};
+				$rightTypes = function (MutatingScope $scope, TypeSpecifierContext $ctx) use ($exprResult, $notExprNode): SpecifiedTypes {
+					if ($ctx->null()) {
+						return $this->defaultNarrowingHelper->specifyDefaultTypes($notExprNode, $ctx);
+					}
+
+					return $exprResult->getSpecifiedTypesForScope($scope, $ctx->negate());
+				};
+				$rightType = static function (MutatingScope $scope) use ($exprResult): Type {
+					$bool = $exprResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)->toBoolean();
+					if ($bool->isTrue()->yes()) {
+						return new ConstantBooleanType(false);
+					}
+					if ($bool->isFalse()->yes()) {
+						return new ConstantBooleanType(true);
+					}
+
+					return new BooleanType();
+				};
+
+				$leftTruthyScope = $s->applySpecifiedTypes($leftTypes($s, TypeSpecifierContext::createTruthy()));
+				$leftFalseyScope = $s->applySpecifiedTypes($leftTypes($s, TypeSpecifierContext::createFalsey()));
+				$rightTruthyScope = $leftFalseyScope->applySpecifiedTypes($rightTypes($leftFalseyScope, TypeSpecifierContext::createTruthy()));
+
+				return $this->booleanNarrowingHelper->specifyDisjunction(
+					$nodeScopeResolver,
+					$s,
+					$context,
+					$expr,
+					$notIssetNode,
+					$leftTypes,
+					$leftType,
+					$leftTruthyScope,
+					$leftFalseyScope,
+					$notExprNode,
+					$rightTypes,
+					$rightType,
+					$rightTruthyScope,
+				)->setRootExpr($expr);
 			},
 		);
 	}
