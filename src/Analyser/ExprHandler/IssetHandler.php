@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler;
 
+use Closure;
 use ArrayAccess;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\ArrayDimFetch;
@@ -18,6 +19,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\BooleanNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
@@ -63,6 +65,7 @@ final class IssetHandler implements ExprHandler
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private BooleanNarrowingHelper $booleanNarrowingHelper,
 	)
 	{
 	}
@@ -190,140 +193,189 @@ final class IssetHandler implements ExprHandler
 						return $types->setRootExpr($expr);
 					}
 
-					// non-true contexts (only SOME subject is unset) keep the
-					// and-chained single-param rewrite
-					$issets = [];
-					foreach ($expr->vars as $var) {
-						$issets[] = new Isset_([$var], $expr->getAttributes());
+					// non-true contexts (only SOME subject is unset): fold the
+					// subjects through the conjunction narrowing; the fabricated
+					// Isset_/BooleanAnd nodes are only printed into holder keys,
+					// never walked
+					$makeSubjectTypes = function (Expr $var, ExpressionResult $varResult) use ($nodeScopeResolver, $chainResults, $expr): Closure {
+						return function (MutatingScope $scope, TypeSpecifierContext $ctx) use ($nodeScopeResolver, $chainResults, $expr, $var, $varResult): SpecifiedTypes {
+							$scopedReadType = $this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $scope, $nodeScopeResolver);
+							if ($ctx->null()) {
+								return $this->defaultNarrowingHelper->specifyDefaultTypes(new Isset_([$var], $expr->getAttributes()), $ctx);
+							}
+							if (!$ctx->true()) {
+								return $this->specifySingleSubjectNonTrue($scope, $var, $varResult, $scopedReadType, $ctx, $expr);
+							}
+
+							return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($scope, $var, $scopedReadType, $expr, $ctx);
+						};
+					};
+
+					$accExpr = new Isset_([$expr->vars[0]], $expr->getAttributes());
+					$accTypes = $makeSubjectTypes($expr->vars[0], $varResults[0]);
+					$accTruthyScope = $s->applySpecifiedTypes($accTypes($s, TypeSpecifierContext::createTruthy()));
+					$accFalseyScope = $s->applySpecifiedTypes($accTypes($s, TypeSpecifierContext::createFalsey()));
+
+					for ($i = 1, $varCount = count($expr->vars); $i < $varCount; $i++) {
+						$rightExprNode = new Isset_([$expr->vars[$i]], $expr->getAttributes());
+						$rightTypes = $makeSubjectTypes($expr->vars[$i], $varResults[$i]);
+						$rightFalseyScope = $accTruthyScope->applySpecifiedTypes($rightTypes($accTruthyScope, TypeSpecifierContext::createFalsey()));
+
+						$leftExprNode = $accExpr;
+						$leftTypes = $accTypes;
+						$leftTruthyScope = $accTruthyScope;
+						$leftFalseyScope = $accFalseyScope;
+						$accTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
+							$nodeScopeResolver,
+							$scope,
+							$ctx,
+							$expr,
+							$leftExprNode,
+							$leftTypes,
+							$leftTruthyScope,
+							$leftFalseyScope,
+							$rightExprNode,
+							$rightTypes,
+							$rightFalseyScope,
+						);
+						$accExpr = new BooleanAnd($leftExprNode, $rightExprNode);
+						$accTruthyScope = $accTruthyScope->applySpecifiedTypes($rightTypes($accTruthyScope, TypeSpecifierContext::createTruthy()));
+						$accFalseyScope = $s->applySpecifiedTypes($accTypes($s, TypeSpecifierContext::createFalsey()));
 					}
 
-					$first = array_shift($issets);
-					$andChain = null;
-					foreach ($issets as $isset) {
-						if ($andChain === null) {
-							$andChain = new BooleanAnd($first, $isset);
-							continue;
-						}
-
-						$andChain = new BooleanAnd($andChain, $isset);
-					}
-
-					if ($andChain === null) {
-						throw new ShouldNotHappenException();
-					}
-
-					return $this->defaultNarrowingHelper->specifyTypesForNode($s, $andChain, $context)->setRootExpr($expr);
+					return $accTypes($s, $context)->setRootExpr($expr);
 				}
 
 				$issetExpr = $expr->vars[0];
 
 				if (!$context->true()) {
-					$isset = $varResults[0]->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
-
-					if ($isset === false) {
-						return new SpecifiedTypes();
-					}
-
-					$type = $readType($issetExpr);
-					$isNullable = !$type->isNull()->no();
-					$exprType = $this->defaultNarrowingHelper->createForSubject(
-						$issetExpr,
-						new NullType(),
-						$context->negate(),
-						$s,
-					)->setRootExpr($expr);
-
-					if ($issetExpr instanceof Expr\Variable && is_string($issetExpr->name)) {
-						if ($isset === true) {
-							if ($isNullable) {
-								return $exprType;
-							}
-
-							// variable cannot exist in !isset()
-							return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
-								new IssetExpr($issetExpr),
-								new NullType(),
-								$context,
-								$s,
-							))->setRootExpr($expr);
-						}
-
-						if ($isNullable) {
-							// reduces variable certainty to maybe
-							return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
-								new IssetExpr($issetExpr),
-								new NullType(),
-								$context->negate(),
-								$s,
-							))->setRootExpr($expr);
-						}
-
-						// variable cannot exist in !isset()
-						return $this->defaultNarrowingHelper->createForSubject(
-							new IssetExpr($issetExpr),
-							new NullType(),
-							$context,
-							$s,
-						)->setRootExpr($expr);
-					}
-
-					if ($isNullable && $isset === true) {
-						return $exprType;
-					}
-
-					if (
-						$issetExpr instanceof ArrayDimFetch
-						&& $issetExpr->dim !== null
-					) {
-						$varType = $readType($issetExpr->var);
-						if (!$varType instanceof MixedType) {
-							$dimType = $readType($issetExpr->dim);
-
-							if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
-								$constantArrays = $varType->getConstantArrays();
-								$typesToRemove = [];
-								foreach ($constantArrays as $constantArray) {
-									$hasOffset = $constantArray->hasOffsetValueType($dimType);
-									if (!$hasOffset->yes() || !$constantArray->getOffsetValueType($dimType)->isNull()->no()) {
-										continue;
-									}
-
-									$typesToRemove[] = $constantArray;
-								}
-
-								if ($typesToRemove !== []) {
-									$typeToRemove = TypeCombinator::union(...$typesToRemove);
-
-									$result = $this->defaultNarrowingHelper->createForSubject(
-										$issetExpr->var,
-										$typeToRemove,
-										TypeSpecifierContext::createFalse(),
-										$s,
-									)->setRootExpr($expr);
-
-									if ($s->hasExpressionType($issetExpr->var)->maybe()) {
-										$result = $result->unionWith(
-											$this->defaultNarrowingHelper->createForSubject(
-												new IssetExpr($issetExpr->var),
-												new NullType(),
-												TypeSpecifierContext::createTruthy(),
-												$s,
-											)->setRootExpr($expr),
-										);
-									}
-
-									return $result;
-								}
-							}
-						}
-					}
-
-					return new SpecifiedTypes();
+					return $this->specifySingleSubjectNonTrue($s, $issetExpr, $varResults[0], $readType, $context, $expr);
 				}
 
 				return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($s, $issetExpr, $readType, $expr, $context);
 			},
 		);
 	}
+
+
+	/**
+	 * The non-true narrowing of a single isset() subject, composed from its
+	 * captured result - shared by the single-subject path and the multi-
+	 * subject conjunction fold.
+	 *
+	 * @param callable(Expr): Type $readType
+	 */
+	private function specifySingleSubjectNonTrue(
+		MutatingScope $s,
+		Expr $issetExpr,
+		ExpressionResult $varResult,
+		callable $readType,
+		TypeSpecifierContext $context,
+		Expr $rootExpr,
+	): SpecifiedTypes
+	{
+		$isset = $varResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
+
+		if ($isset === false) {
+			return new SpecifiedTypes();
+		}
+
+		$type = $readType($issetExpr);
+		$isNullable = !$type->isNull()->no();
+		$exprType = $this->defaultNarrowingHelper->createForSubject(
+			$issetExpr,
+			new NullType(),
+			$context->negate(),
+			$s,
+		)->setRootExpr($rootExpr);
+
+		if ($issetExpr instanceof Expr\Variable && is_string($issetExpr->name)) {
+			if ($isset === true) {
+				if ($isNullable) {
+					return $exprType;
+				}
+
+				// variable cannot exist in !isset()
+				return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
+					new IssetExpr($issetExpr),
+					new NullType(),
+					$context,
+					$s,
+				))->setRootExpr($rootExpr);
+			}
+
+			if ($isNullable) {
+				// reduces variable certainty to maybe
+				return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
+					new IssetExpr($issetExpr),
+					new NullType(),
+					$context->negate(),
+					$s,
+				))->setRootExpr($rootExpr);
+			}
+
+			// variable cannot exist in !isset()
+			return $this->defaultNarrowingHelper->createForSubject(
+				new IssetExpr($issetExpr),
+				new NullType(),
+				$context,
+				$s,
+			)->setRootExpr($rootExpr);
+		}
+
+		if ($isNullable && $isset === true) {
+			return $exprType;
+		}
+
+		if (
+			$issetExpr instanceof ArrayDimFetch
+			&& $issetExpr->dim !== null
+		) {
+			$varType = $readType($issetExpr->var);
+			if (!$varType instanceof MixedType) {
+				$dimType = $readType($issetExpr->dim);
+
+				if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
+					$constantArrays = $varType->getConstantArrays();
+					$typesToRemove = [];
+					foreach ($constantArrays as $constantArray) {
+						$hasOffset = $constantArray->hasOffsetValueType($dimType);
+						if (!$hasOffset->yes() || !$constantArray->getOffsetValueType($dimType)->isNull()->no()) {
+							continue;
+						}
+
+						$typesToRemove[] = $constantArray;
+					}
+
+					if ($typesToRemove !== []) {
+						$typeToRemove = TypeCombinator::union(...$typesToRemove);
+
+						$result = $this->defaultNarrowingHelper->createForSubject(
+							$issetExpr->var,
+							$typeToRemove,
+							TypeSpecifierContext::createFalse(),
+							$s,
+						)->setRootExpr($rootExpr);
+
+						if ($s->hasExpressionType($issetExpr->var)->maybe()) {
+							$result = $result->unionWith(
+								$this->defaultNarrowingHelper->createForSubject(
+									new IssetExpr($issetExpr->var),
+									new NullType(),
+									TypeSpecifierContext::createTruthy(),
+									$s,
+								)->setRootExpr($rootExpr),
+							);
+						}
+
+						return $result;
+					}
+				}
+			}
+		}
+
+		return new SpecifiedTypes();
+	}
+
 
 }
