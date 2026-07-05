@@ -383,19 +383,65 @@ final class IdenticalNarrowingHelper
 		$unwrappedLeft = $left instanceof AlwaysRememberedExpr ? $left->getExpr() : $left;
 		$unwrappedRight = $right instanceof AlwaysRememberedExpr ? $right->getExpr() : $right;
 
-		// fn1() === fn2() merges both normalized directions - not composed;
 		// ::class fetches narrow by TYPE-based constants in old-world blocks
-		if ($unwrappedLeft instanceof Expr\FuncCall && $unwrappedRight instanceof Expr\FuncCall) {
-			return null;
-		}
 		foreach ([$unwrappedLeft, $unwrappedRight] as $side) {
 			if ($side instanceof Expr\ClassConstFetch && $side->class instanceof Expr) {
 				return null;
 			}
 		}
 
-		$leftType = $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
-		$rightType = $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		$leftType = $this->literalType($unwrappedLeft) ?? $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		$rightType = $this->literalType($unwrappedRight) ?? $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+
+		// fn1() === fn2() merges both normalized directions
+		if ($unwrappedLeft instanceof Expr\FuncCall && $unwrappedRight instanceof Expr\FuncCall) {
+			// count($a) === count($b): a decided size flows across; otherwise
+			// one non-empty side makes both non-empty
+			if (
+				$context->true()
+				&& $unwrappedLeft->name instanceof Name && in_array($unwrappedLeft->name->toLowerString(), ['count', 'sizeof'], true) && !$unwrappedLeft->isFirstClassCallable() && isset($unwrappedLeft->getArgs()[0])
+				&& $unwrappedRight->name instanceof Name && in_array($unwrappedRight->name->toLowerString(), ['count', 'sizeof'], true) && !$unwrappedRight->isFirstClassCallable() && isset($unwrappedRight->getArgs()[0])
+			) {
+				if ($leftArgResult === null || $rightArgResult === null) {
+					return null;
+				}
+				$rightArgType = $rightArgResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+				$countTypes = $this->countNarrowingHelper->specifyCountSize($unwrappedRight, $rightArgType, $leftType, $context, $evaluationScope, $unwrappedRight);
+				if ($countTypes !== null) {
+					return $countTypes;
+				}
+
+				$leftArgType = $leftArgResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+				if (
+					$leftArgType->isArray()->yes()
+					&& $rightArgType->isArray()->yes()
+					&& !$rightType->isConstantScalarValue()->yes()
+					&& ($leftArgType->isIterableAtLeastOnce()->yes() || $rightArgType->isIterableAtLeastOnce()->yes())
+				) {
+					return $this->defaultNarrowingHelper->createForSubject($unwrappedLeft->getArgs()[0]->value, new NonEmptyArrayType(), $context, $evaluationScope)->unionWith(
+						$this->defaultNarrowingHelper->createForSubject($unwrappedRight->getArgs()[0]->value, new NonEmptyArrayType(), $context, $evaluationScope),
+					);
+				}
+			}
+
+			$leftDirection = $this->specifyFuncCallFamilies($left, $leftResult, $unwrappedLeft, $right, $rightType, $context, $evaluationScope, $leftArgResult);
+			$rightDirection = $this->specifyFuncCallFamilies($right, $rightResult, $unwrappedRight, $left, $leftType, $context, $evaluationScope, $rightArgResult);
+			if ($leftDirection === null || $rightDirection === null) {
+				return null;
+			}
+			$merged = null;
+			if ($leftDirection !== false) {
+				$merged = $leftDirection;
+			}
+			if ($rightDirection !== false) {
+				$merged = $merged !== null ? $merged->unionWith($rightDirection) : $rightDirection;
+			}
+			if ($merged !== null) {
+				return $merged;
+			}
+
+			// neither family matched - the generic tail below pins both sides
+		}
 
 		// a single call side runs the family compositions with the other
 		// side's TYPE as the constant - the composed form of the old
