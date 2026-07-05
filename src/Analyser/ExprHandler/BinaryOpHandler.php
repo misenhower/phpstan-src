@@ -18,6 +18,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\CountNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\EqualityTypeSpecifyingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\IdenticalNarrowingHelper;
@@ -27,7 +28,6 @@ use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\RicherScopeGetTypeHelper;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Printer\ExprPrinter;
@@ -70,8 +70,8 @@ final class BinaryOpHandler implements ExprHandler
 		private ExprPrinter $exprPrinter,
 		private EqualityTypeSpecifyingHelper $equalityTypeSpecifyingHelper,
 		private IdenticalNarrowingHelper $identicalNarrowingHelper,
+		private CountNarrowingHelper $countNarrowingHelper,
 		private ExpressionResultFactory $expressionResultFactory,
-		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
@@ -409,7 +409,7 @@ final class BinaryOpHandler implements ExprHandler
 						}
 
 						if ($sizeType !== null) {
-							$specifiedTypes = $this->typeSpecifier->specifyTypesForCountFuncCall($expr->right, $argType, $sizeType, $context, $scope, $expr);
+							$specifiedTypes = $this->countNarrowingHelper->specifyCountSize($expr->right, $argType, $sizeType, $context, $scope, $expr);
 							if ($specifiedTypes !== null) {
 								$result = $result->unionWith($specifiedTypes);
 							}
@@ -492,7 +492,7 @@ final class BinaryOpHandler implements ExprHandler
 						$subtractedType = $getType($expr->right->right);
 						if (
 							$countArgType->isList()->yes()
-							&& $this->typeSpecifier->isNormalCountCall($expr->right->left, $countArgType, $scope)->yes()
+							&& $this->countNarrowingHelper->isNormalCountCall($expr->right->left, $countArgType, $scope)->yes()
 							&& IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($subtractedType)->yes()
 						) {
 							$arrayArg = $expr->right->left->getArgs()[0]->value;

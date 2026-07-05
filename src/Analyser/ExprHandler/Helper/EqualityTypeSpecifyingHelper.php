@@ -15,7 +15,6 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifier;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
@@ -63,10 +62,10 @@ final class EqualityTypeSpecifyingHelper
 {
 
 	public function __construct(
-		private TypeSpecifier $typeSpecifier,
 		private ReflectionProvider $reflectionProvider,
 		private ExprPrinter $exprPrinter,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private CountNarrowingHelper $countNarrowingHelper,
 	)
 	{
 	}
@@ -336,7 +335,7 @@ final class EqualityTypeSpecifyingHelper
 				$argType = $getType($unwrappedRightExpr->getArgs()[0]->value);
 				$sizeType = $getType($leftExpr);
 
-				$specifiedTypes = $this->typeSpecifier->specifyTypesForCountFuncCall($unwrappedRightExpr, $argType, $sizeType, $context, $scope, $expr);
+				$specifiedTypes = $this->countNarrowingHelper->specifyCountSize($unwrappedRightExpr, $argType, $sizeType, $context, $scope->toMutatingScope(), $expr);
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes;
 				}
@@ -379,7 +378,7 @@ final class EqualityTypeSpecifyingHelper
 				);
 			}
 
-			$specifiedTypes = $this->typeSpecifier->specifyTypesForCountFuncCall($unwrappedLeftExpr, $argType, $rightType, $context, $scope, $expr);
+			$specifiedTypes = $this->countNarrowingHelper->specifyCountSize($unwrappedLeftExpr, $argType, $rightType, $context, $scope->toMutatingScope(), $expr);
 			if ($specifiedTypes !== null) {
 				if ($leftExpr !== $unwrappedLeftExpr) {
 					$funcTypes = $this->defaultNarrowingHelper->createForSubject($leftExpr, $rightType, $context, $scope, $resultFor)->setRootExpr($expr);
