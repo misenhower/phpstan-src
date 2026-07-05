@@ -12,12 +12,15 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\BooleanNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Type\BooleanType;
+use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\Type;
 use WeakMap;
@@ -37,6 +40,7 @@ final class TernaryHandler implements ExprHandler
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private BooleanNarrowingHelper $booleanNarrowingHelper,
 	)
 	{
 		$this->capturedResults = new WeakMap();
@@ -164,26 +168,125 @@ final class TernaryHandler implements ExprHandler
 					$elseType,
 				);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $nodeScopeResolver): SpecifiedTypes {
 				if ($expr->cond instanceof Ternary || $context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
-				if ($expr->if !== null) {
-					$conditionExpr = new BooleanOr(
-						new BooleanAnd($expr->cond, $expr->if),
-						new BooleanAnd(new Expr\BooleanNot($expr->cond), $expr->else),
-					);
-				} else {
-					$conditionExpr = new BooleanOr(
+				// cond ? if : else narrows like (cond && if) || (!cond && else),
+				// composed from the walk's results through the boolean helpers -
+				// the fabricated nodes are only printed into holder keys
+				$notCondNode = new Expr\BooleanNot($expr->cond);
+
+				$condTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ternaryCondResult->getSpecifiedTypesForScope($scope, $ctx);
+				$condType = static fn (MutatingScope $scope): Type => $ternaryCondResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+				$notCondTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ternaryCondResult->getSpecifiedTypesForScope($scope, $ctx->negate());
+				$notCondType = static function (MutatingScope $scope) use ($ternaryCondResult): Type {
+					$bool = $ternaryCondResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)->toBoolean();
+					if ($bool->isTrue()->yes()) {
+						return new ConstantBooleanType(false);
+					}
+					if ($bool->isFalse()->yes()) {
+						return new ConstantBooleanType(true);
+					}
+
+					return new BooleanType();
+				};
+				$andVerdict = static function (callable $left, callable $right): callable {
+					return static function (MutatingScope $scope) use ($left, $right): Type {
+						$leftBool = $left($scope)->toBoolean();
+						$rightBool = $right($scope)->toBoolean();
+						if ($leftBool->isFalse()->yes() || $rightBool->isFalse()->yes()) {
+							return new ConstantBooleanType(false);
+						}
+						if ($leftBool->isTrue()->yes() && $rightBool->isTrue()->yes()) {
+							return new ConstantBooleanType(true);
+						}
+
+						return new BooleanType();
+					};
+				};
+				$elseTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $elseResult->getSpecifiedTypesForScope($scope, $ctx);
+				$elseType = static fn (MutatingScope $scope): Type => $elseResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+
+				$condTruthyScope = $s->applySpecifiedTypes($condTypes($s, TypeSpecifierContext::createTruthy()));
+				$condFalseyScope = $s->applySpecifiedTypes($condTypes($s, TypeSpecifierContext::createFalsey()));
+
+				// right disjunct: !cond && else
+				$bNode = new BooleanAnd($notCondNode, $expr->else);
+				$elseFalseyOnCondFalseyScope = $condFalseyScope->applySpecifiedTypes($elseTypes($condFalseyScope, TypeSpecifierContext::createFalsey()));
+				$bTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
+					$nodeScopeResolver,
+					$scope,
+					$ctx,
+					$bNode,
+					$notCondNode,
+					$notCondTypes,
+					$condFalseyScope,
+					$condTruthyScope,
+					$expr->else,
+					$elseTypes,
+					$elseFalseyOnCondFalseyScope,
+				);
+				$bType = $andVerdict($notCondType, $elseType);
+				$bTruthyScope = $s->applySpecifiedTypes($bTypes($s, TypeSpecifierContext::createTruthy()));
+
+				if ($ifResult !== null && $expr->if !== null) {
+					// left disjunct: cond && if
+					$aNode = new BooleanAnd($expr->cond, $expr->if);
+					$ifTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ifResult->getSpecifiedTypesForScope($scope, $ctx);
+					$ifType = static fn (MutatingScope $scope): Type => $ifResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+					$ifFalseyOnCondTruthyScope = $condTruthyScope->applySpecifiedTypes($ifTypes($condTruthyScope, TypeSpecifierContext::createFalsey()));
+					$aTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
+						$nodeScopeResolver,
+						$scope,
+						$ctx,
+						$aNode,
 						$expr->cond,
-						new BooleanAnd(new Expr\BooleanNot($expr->cond), $expr->else),
+						$condTypes,
+						$condTruthyScope,
+						$condFalseyScope,
+						$expr->if,
+						$ifTypes,
+						$ifFalseyOnCondTruthyScope,
 					);
+					$aType = $andVerdict($condType, $ifType);
+					$aTruthyScope = $s->applySpecifiedTypes($aTypes($s, TypeSpecifierContext::createTruthy()));
+					$aFalseyScope = $s->applySpecifiedTypes($aTypes($s, TypeSpecifierContext::createFalsey()));
+
+					return $this->booleanNarrowingHelper->specifyDisjunction(
+						$nodeScopeResolver,
+						$s,
+						$context,
+						$expr,
+						$aNode,
+						$aTypes,
+						$aType,
+						$aTruthyScope,
+						$aFalseyScope,
+						$bNode,
+						$bTypes,
+						$bType,
+						$bTruthyScope,
+					)->setRootExpr($expr);
 				}
 
-				// the synthetic condition takes the on-demand bridge; its real
-				// subnodes answer from stored results
-				return $s->obtainResultForNode($conditionExpr)->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
+				// short ternary: cond || (!cond && else)
+				return $this->booleanNarrowingHelper->specifyDisjunction(
+					$nodeScopeResolver,
+					$s,
+					$context,
+					$expr,
+					$expr->cond,
+					$condTypes,
+					$condType,
+					$condTruthyScope,
+					$condFalseyScope,
+					$bNode,
+					$bTypes,
+					$bType,
+					$bTruthyScope,
+				)->setRootExpr($expr);
 			},
 		);
 	}
