@@ -112,6 +112,140 @@ final class BinaryOpHandler implements ExprHandler
 		$leftArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->left, $storage);
 		$rightArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->right, $storage);
 
+		$typeCallback = function (bool $nativeTypesPromoted) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope): Type {
+			// the comparison helpers (resolveEqualType / RicherScopeGetTypeHelper)
+			// read the operand types off the evaluation scope - native-promote it
+			// here so the native flavour is honoured.
+			$scope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+			// the operands were processed during processExpr; read their already
+			// computed results instead of re-walking via Scope::getType().
+			// Synthetic nodes the resolver builds (e.g. getDivType's Mod) are
+			// priced on demand by the same helper.
+			$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $nativeTypesPromoted, $beforeScope, $nodeScopeResolver): Type {
+				if ($e === $expr->left) {
+					return ($nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType());
+				}
+				if ($e === $expr->right) {
+					return ($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType());
+				}
+
+				return $nodeScopeResolver->readTypeOfMaybeStored($e, $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope);
+			};
+
+			if ($expr instanceof BinaryOp\Smaller) {
+				return $getType($expr->left)->isSmallerThan($getType($expr->right), $this->phpVersion)->toBooleanType();
+			}
+
+			if ($expr instanceof BinaryOp\SmallerOrEqual) {
+				return $getType($expr->left)->isSmallerThanOrEqual($getType($expr->right), $this->phpVersion)->toBooleanType();
+			}
+
+			if ($expr instanceof BinaryOp\Greater) {
+				return $getType($expr->right)->isSmallerThan($getType($expr->left), $this->phpVersion)->toBooleanType();
+			}
+
+			if ($expr instanceof BinaryOp\GreaterOrEqual) {
+				return $getType($expr->right)->isSmallerThanOrEqual($getType($expr->left), $this->phpVersion)->toBooleanType();
+			}
+
+			if ($expr instanceof BinaryOp\Equal) {
+				return $this->resolveEqualType($scope, $expr, $leftResult, $rightResult);
+			}
+
+			if ($expr instanceof BinaryOp\NotEqual) {
+				// negation of the Equal result - direct computation avoids
+				// synthesizing a BooleanNot node (which would route through
+				// on-demand re-processing once BooleanNot is migrated)
+				$equalType = $this->resolveEqualType($scope, new BinaryOp\Equal($expr->left, $expr->right), $leftResult, $rightResult)->toBoolean();
+				if ($equalType->isTrue()->yes()) {
+					return new ConstantBooleanType(false);
+				}
+				if ($equalType->isFalse()->yes()) {
+					return new ConstantBooleanType(true);
+				}
+
+				return new BooleanType();
+			}
+
+			if ($expr instanceof BinaryOp\Identical) {
+				return $this->richerScopeGetTypeHelper->getIdenticalResult($scope, $expr, $nodeScopeResolver, $getType($expr->left), $getType($expr->right))->type;
+			}
+
+			if ($expr instanceof BinaryOp\NotIdentical) {
+				return $this->richerScopeGetTypeHelper->getNotIdenticalResult($scope, $expr, $nodeScopeResolver, $getType($expr->left), $getType($expr->right))->type;
+			}
+
+			if ($expr instanceof BinaryOp\LogicalXor) {
+				$leftBooleanType = $getType($expr->left)->toBoolean();
+				$rightBooleanType = $getType($expr->right)->toBoolean();
+
+				if (
+					$leftBooleanType instanceof ConstantBooleanType
+					&& $rightBooleanType instanceof ConstantBooleanType
+				) {
+					return new ConstantBooleanType(
+						$leftBooleanType->getValue() xor $rightBooleanType->getValue(),
+					);
+				}
+
+				return new BooleanType();
+			}
+
+			if ($expr instanceof BinaryOp\Spaceship) {
+				return $this->initializerExprTypeResolver->getSpaceshipType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\Concat) {
+				return $this->initializerExprTypeResolver->getConcatType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\BitwiseAnd) {
+				return $this->initializerExprTypeResolver->getBitwiseAndType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\BitwiseOr) {
+				return $this->initializerExprTypeResolver->getBitwiseOrType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\BitwiseXor) {
+				return $this->initializerExprTypeResolver->getBitwiseXorType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\Div) {
+				return $this->initializerExprTypeResolver->getDivType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\Mod) {
+				return $this->initializerExprTypeResolver->getModType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\Plus) {
+				return $this->initializerExprTypeResolver->getPlusType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\Minus) {
+				return $this->initializerExprTypeResolver->getMinusType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\Mul) {
+				return $this->initializerExprTypeResolver->getMulType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\Pow) {
+				return $this->initializerExprTypeResolver->getPowType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\ShiftLeft) {
+				return $this->initializerExprTypeResolver->getShiftLeftType($expr->left, $expr->right, $getType);
+			}
+
+			if ($expr instanceof BinaryOp\ShiftRight) {
+				return $this->initializerExprTypeResolver->getShiftRightType($expr->left, $expr->right, $getType);
+			}
+
+			throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
+		};
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -120,140 +254,8 @@ final class BinaryOpHandler implements ExprHandler
 			isAlwaysTerminating: $leftResult->isAlwaysTerminating() || $rightResult->isAlwaysTerminating(),
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: function (bool $nativeTypesPromoted) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope): Type {
-				// the comparison helpers (resolveEqualType / RicherScopeGetTypeHelper)
-				// read the operand types off the evaluation scope - native-promote it
-				// here so the native flavour is honoured.
-				$scope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
-				// the operands were processed during processExpr; read their already
-				// computed results instead of re-walking via Scope::getType().
-				// Synthetic nodes the resolver builds (e.g. getDivType's Mod) are
-				// priced on demand by the same helper.
-				$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $nativeTypesPromoted, $beforeScope, $nodeScopeResolver): Type {
-					if ($e === $expr->left) {
-						return ($nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType());
-					}
-					if ($e === $expr->right) {
-						return ($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType());
-					}
-
-					return $nodeScopeResolver->readTypeOfMaybeStored($e, $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope);
-				};
-
-				if ($expr instanceof BinaryOp\Smaller) {
-					return $getType($expr->left)->isSmallerThan($getType($expr->right), $this->phpVersion)->toBooleanType();
-				}
-
-				if ($expr instanceof BinaryOp\SmallerOrEqual) {
-					return $getType($expr->left)->isSmallerThanOrEqual($getType($expr->right), $this->phpVersion)->toBooleanType();
-				}
-
-				if ($expr instanceof BinaryOp\Greater) {
-					return $getType($expr->right)->isSmallerThan($getType($expr->left), $this->phpVersion)->toBooleanType();
-				}
-
-				if ($expr instanceof BinaryOp\GreaterOrEqual) {
-					return $getType($expr->right)->isSmallerThanOrEqual($getType($expr->left), $this->phpVersion)->toBooleanType();
-				}
-
-				if ($expr instanceof BinaryOp\Equal) {
-					return $this->resolveEqualType($scope, $expr, $leftResult, $rightResult);
-				}
-
-				if ($expr instanceof BinaryOp\NotEqual) {
-					// negation of the Equal result - direct computation avoids
-					// synthesizing a BooleanNot node (which would route through
-					// on-demand re-processing once BooleanNot is migrated)
-					$equalType = $this->resolveEqualType($scope, new BinaryOp\Equal($expr->left, $expr->right), $leftResult, $rightResult)->toBoolean();
-					if ($equalType->isTrue()->yes()) {
-						return new ConstantBooleanType(false);
-					}
-					if ($equalType->isFalse()->yes()) {
-						return new ConstantBooleanType(true);
-					}
-
-					return new BooleanType();
-				}
-
-				if ($expr instanceof BinaryOp\Identical) {
-					return $this->richerScopeGetTypeHelper->getIdenticalResult($scope, $expr, $nodeScopeResolver)->type;
-				}
-
-				if ($expr instanceof BinaryOp\NotIdentical) {
-					return $this->richerScopeGetTypeHelper->getNotIdenticalResult($scope, $expr, $nodeScopeResolver)->type;
-				}
-
-				if ($expr instanceof BinaryOp\LogicalXor) {
-					$leftBooleanType = $getType($expr->left)->toBoolean();
-					$rightBooleanType = $getType($expr->right)->toBoolean();
-
-					if (
-						$leftBooleanType instanceof ConstantBooleanType
-						&& $rightBooleanType instanceof ConstantBooleanType
-					) {
-						return new ConstantBooleanType(
-							$leftBooleanType->getValue() xor $rightBooleanType->getValue(),
-						);
-					}
-
-					return new BooleanType();
-				}
-
-				if ($expr instanceof BinaryOp\Spaceship) {
-					return $this->initializerExprTypeResolver->getSpaceshipType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\Concat) {
-					return $this->initializerExprTypeResolver->getConcatType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\BitwiseAnd) {
-					return $this->initializerExprTypeResolver->getBitwiseAndType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\BitwiseOr) {
-					return $this->initializerExprTypeResolver->getBitwiseOrType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\BitwiseXor) {
-					return $this->initializerExprTypeResolver->getBitwiseXorType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\Div) {
-					return $this->initializerExprTypeResolver->getDivType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\Mod) {
-					return $this->initializerExprTypeResolver->getModType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\Plus) {
-					return $this->initializerExprTypeResolver->getPlusType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\Minus) {
-					return $this->initializerExprTypeResolver->getMinusType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\Mul) {
-					return $this->initializerExprTypeResolver->getMulType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\Pow) {
-					return $this->initializerExprTypeResolver->getPowType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\ShiftLeft) {
-					return $this->initializerExprTypeResolver->getShiftLeftType($expr->left, $expr->right, $getType);
-				}
-
-				if ($expr instanceof BinaryOp\ShiftRight) {
-					return $this->initializerExprTypeResolver->getShiftRightType($expr->left, $expr->right, $getType);
-				}
-
-				throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
-			},
-			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope, $leftArgResult, $rightArgResult): SpecifiedTypes {
+			typeCallback: $typeCallback,
+			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope, $leftArgResult, $rightArgResult, $typeCallback): SpecifiedTypes {
 				if ($expr instanceof BinaryOp\Identical || $expr instanceof BinaryOp\NotIdentical) {
 					// `!==` narrowing is the `===` narrowing in the negated context -
 					// no synthetic Identical node. A null context never negates.
@@ -274,8 +276,16 @@ final class BinaryOpHandler implements ExprHandler
 						$leftArgResult,
 						$rightArgResult,
 						// the comparison's own verdict, in Identical semantics
-						static function () use ($nodeScopeResolver, $expr, $scope): Type {
-							$ownType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
+						static function () use ($nodeScopeResolver, $expr, $scope, $typeCallback): Type {
+							// on storage misses (loop-convergence passes) compute the
+							// verdict from the captured operand results instead of
+							// re-walking the comparison on demand
+							$ownType = $nodeScopeResolver->findStoredResult($expr, $scope)?->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+							if ($ownType === null) {
+								$ownType = $scope->hasExpressionType($expr)->yes()
+									? $scope->getTrackedExpressionType($expr)
+									: $typeCallback($scope->nativeTypesPromoted);
+							}
 							if ($expr instanceof BinaryOp\NotIdentical) {
 								if ($ownType->isTrue()->yes()) {
 									return new ConstantBooleanType(false);

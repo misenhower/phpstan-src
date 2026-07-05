@@ -476,7 +476,14 @@ final class AssignHandler implements ExprHandler
 					$impurePoints[] = new ImpurePoint($scopeBeforeAssignEval, $var, 'superglobal', 'assign to superglobal variable', true);
 				}
 				$assignedExpr = $this->unwrapAssign($assignedExpr);
-				$type = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval);
+				// read from the storage the walk just wrote into - the scope's
+				// storage stack misses it on loop-convergence passes (the temp
+				// storage is never pushed), which fell back to a full on-demand
+				// re-walk of the assigned expression here and on the holder asks below
+				$storedAssignedExprResult = $storage->findExpressionResult($assignedExpr);
+				$type = $storedAssignedExprResult !== null
+					? $storedAssignedExprResult->getTypeOnScope($scopeBeforeAssignEval, $scopeBeforeAssignEval->nativeTypesPromoted)
+					: $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval);
 
 				$conditionalExpressions = [];
 				if ($assignedExpr instanceof Ternary) {
@@ -522,11 +529,6 @@ final class AssignHandler implements ExprHandler
 					);
 				}
 
-				// read from the storage the walk just wrote into - the scope's
-				// storage stack misses it on loop-convergence passes (the temp
-				// storage is never pushed), which made every holder ask below
-				// fall back to a full on-demand re-walk of the assigned expression
-				$storedAssignedExprResult = $storage->findExpressionResult($assignedExpr);
 				$assignedArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($assignedExpr, $storage);
 
 				$truthyType = TypeCombinator::removeFalsey($type);
@@ -734,8 +736,18 @@ final class AssignHandler implements ExprHandler
 			$isAlwaysTerminating = $isAlwaysTerminating || $result->isAlwaysTerminating();
 			$scope = $result->getScope();
 
-			$valueToWrite = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval);
-			$nativeValueToWrite = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval->doNotTreatPhpDocTypesAsCertain());
+			// read from the storage the walk just wrote into - the scope's storage
+			// stack misses it on loop-convergence passes (the temp storage is never
+			// pushed), which fell back to a full on-demand re-walk of the assigned
+			// expression for both flavours
+			$storedValueResult = $storage->findExpressionResult($assignedExpr);
+			$nativeScopeBeforeAssignEval = $scopeBeforeAssignEval->doNotTreatPhpDocTypesAsCertain();
+			$valueToWrite = $storedValueResult !== null
+				? $storedValueResult->getTypeOnScope($scopeBeforeAssignEval, $scopeBeforeAssignEval->nativeTypesPromoted)
+				: $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scopeBeforeAssignEval);
+			$nativeValueToWrite = $storedValueResult !== null
+				? $storedValueResult->getTypeOnScope($nativeScopeBeforeAssignEval, $nativeScopeBeforeAssignEval->nativeTypesPromoted)
+				: $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $nativeScopeBeforeAssignEval);
 
 			$varType = $varResult->getType();
 			$varNativeType = $varResult->getNativeType();
