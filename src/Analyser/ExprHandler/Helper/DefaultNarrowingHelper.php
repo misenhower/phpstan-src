@@ -18,6 +18,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
+use PHPStan\Node\IssetExpr;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Rules\Arrays\AllowedArrayKeysTypes;
@@ -358,5 +359,125 @@ final class DefaultNarrowingHelper
 
 		return $types;
 	}
+
+	/**
+	 * The non-true narrowing of a single isset() subject, composed from its
+	 * captured result - shared by IssetHandler's paths and empty()'s disjunction.
+	 *
+	 * @param callable(Expr): Type $readType
+	 */
+	public function createIssetSingleSubjectNonTrueTypes(
+		MutatingScope $s,
+		Expr $issetExpr,
+		ExpressionResult $varResult,
+		callable $readType,
+		TypeSpecifierContext $context,
+		Expr $rootExpr,
+	): SpecifiedTypes
+	{
+		$isset = $varResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
+
+		if ($isset === false) {
+			return new SpecifiedTypes();
+		}
+
+		$type = $readType($issetExpr);
+		$isNullable = !$type->isNull()->no();
+		$exprType = $this->createForSubject(
+			$issetExpr,
+			new NullType(),
+			$context->negate(),
+			$s,
+		)->setRootExpr($rootExpr);
+
+		if ($issetExpr instanceof Expr\Variable && is_string($issetExpr->name)) {
+			if ($isset === true) {
+				if ($isNullable) {
+					return $exprType;
+				}
+
+				// variable cannot exist in !isset()
+				return $exprType->unionWith($this->createForSubject(
+					new IssetExpr($issetExpr),
+					new NullType(),
+					$context,
+					$s,
+				))->setRootExpr($rootExpr);
+			}
+
+			if ($isNullable) {
+				// reduces variable certainty to maybe
+				return $exprType->unionWith($this->createForSubject(
+					new IssetExpr($issetExpr),
+					new NullType(),
+					$context->negate(),
+					$s,
+				))->setRootExpr($rootExpr);
+			}
+
+			// variable cannot exist in !isset()
+			return $this->createForSubject(
+				new IssetExpr($issetExpr),
+				new NullType(),
+				$context,
+				$s,
+			)->setRootExpr($rootExpr);
+		}
+
+		if ($isNullable && $isset === true) {
+			return $exprType;
+		}
+
+		if (
+			$issetExpr instanceof ArrayDimFetch
+			&& $issetExpr->dim !== null
+		) {
+			$varType = $readType($issetExpr->var);
+			if (!$varType instanceof MixedType) {
+				$dimType = $readType($issetExpr->dim);
+
+				if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
+					$constantArrays = $varType->getConstantArrays();
+					$typesToRemove = [];
+					foreach ($constantArrays as $constantArray) {
+						$hasOffset = $constantArray->hasOffsetValueType($dimType);
+						if (!$hasOffset->yes() || !$constantArray->getOffsetValueType($dimType)->isNull()->no()) {
+							continue;
+						}
+
+						$typesToRemove[] = $constantArray;
+					}
+
+					if ($typesToRemove !== []) {
+						$typeToRemove = TypeCombinator::union(...$typesToRemove);
+
+						$result = $this->createForSubject(
+							$issetExpr->var,
+							$typeToRemove,
+							TypeSpecifierContext::createFalse(),
+							$s,
+						)->setRootExpr($rootExpr);
+
+						if ($s->hasExpressionType($issetExpr->var)->maybe()) {
+							$result = $result->unionWith(
+								$this->createForSubject(
+									new IssetExpr($issetExpr->var),
+									new NullType(),
+									TypeSpecifierContext::createTruthy(),
+									$s,
+								)->setRootExpr($rootExpr),
+							);
+						}
+
+						return $result;
+					}
+				}
+			}
+		}
+
+		return new SpecifiedTypes();
+	}
+
+
 
 }

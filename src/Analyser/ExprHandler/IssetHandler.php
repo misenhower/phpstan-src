@@ -204,7 +204,7 @@ final class IssetHandler implements ExprHandler
 								return $this->defaultNarrowingHelper->specifyDefaultTypes(new Isset_([$var], $expr->getAttributes()), $ctx);
 							}
 							if (!$ctx->true()) {
-								return $this->specifySingleSubjectNonTrue($scope, $var, $varResult, $scopedReadType, $ctx, $expr);
+								return $this->defaultNarrowingHelper->createIssetSingleSubjectNonTrueTypes($scope, $var, $varResult, $scopedReadType, $ctx, $expr);
 							}
 
 							return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($scope, $var, $scopedReadType, $expr, $ctx);
@@ -249,132 +249,12 @@ final class IssetHandler implements ExprHandler
 				$issetExpr = $expr->vars[0];
 
 				if (!$context->true()) {
-					return $this->specifySingleSubjectNonTrue($s, $issetExpr, $varResults[0], $readType, $context, $expr);
+					return $this->defaultNarrowingHelper->createIssetSingleSubjectNonTrueTypes($s, $issetExpr, $varResults[0], $readType, $context, $expr);
 				}
 
 				return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($s, $issetExpr, $readType, $expr, $context);
 			},
 		);
-	}
-
-
-	/**
-	 * The non-true narrowing of a single isset() subject, composed from its
-	 * captured result - shared by the single-subject path and the multi-
-	 * subject conjunction fold.
-	 *
-	 * @param callable(Expr): Type $readType
-	 */
-	private function specifySingleSubjectNonTrue(
-		MutatingScope $s,
-		Expr $issetExpr,
-		ExpressionResult $varResult,
-		callable $readType,
-		TypeSpecifierContext $context,
-		Expr $rootExpr,
-	): SpecifiedTypes
-	{
-		$isset = $varResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
-
-		if ($isset === false) {
-			return new SpecifiedTypes();
-		}
-
-		$type = $readType($issetExpr);
-		$isNullable = !$type->isNull()->no();
-		$exprType = $this->defaultNarrowingHelper->createForSubject(
-			$issetExpr,
-			new NullType(),
-			$context->negate(),
-			$s,
-		)->setRootExpr($rootExpr);
-
-		if ($issetExpr instanceof Expr\Variable && is_string($issetExpr->name)) {
-			if ($isset === true) {
-				if ($isNullable) {
-					return $exprType;
-				}
-
-				// variable cannot exist in !isset()
-				return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
-					new IssetExpr($issetExpr),
-					new NullType(),
-					$context,
-					$s,
-				))->setRootExpr($rootExpr);
-			}
-
-			if ($isNullable) {
-				// reduces variable certainty to maybe
-				return $exprType->unionWith($this->defaultNarrowingHelper->createForSubject(
-					new IssetExpr($issetExpr),
-					new NullType(),
-					$context->negate(),
-					$s,
-				))->setRootExpr($rootExpr);
-			}
-
-			// variable cannot exist in !isset()
-			return $this->defaultNarrowingHelper->createForSubject(
-				new IssetExpr($issetExpr),
-				new NullType(),
-				$context,
-				$s,
-			)->setRootExpr($rootExpr);
-		}
-
-		if ($isNullable && $isset === true) {
-			return $exprType;
-		}
-
-		if (
-			$issetExpr instanceof ArrayDimFetch
-			&& $issetExpr->dim !== null
-		) {
-			$varType = $readType($issetExpr->var);
-			if (!$varType instanceof MixedType) {
-				$dimType = $readType($issetExpr->dim);
-
-				if ($dimType instanceof ConstantIntegerType || $dimType instanceof ConstantStringType) {
-					$constantArrays = $varType->getConstantArrays();
-					$typesToRemove = [];
-					foreach ($constantArrays as $constantArray) {
-						$hasOffset = $constantArray->hasOffsetValueType($dimType);
-						if (!$hasOffset->yes() || !$constantArray->getOffsetValueType($dimType)->isNull()->no()) {
-							continue;
-						}
-
-						$typesToRemove[] = $constantArray;
-					}
-
-					if ($typesToRemove !== []) {
-						$typeToRemove = TypeCombinator::union(...$typesToRemove);
-
-						$result = $this->defaultNarrowingHelper->createForSubject(
-							$issetExpr->var,
-							$typeToRemove,
-							TypeSpecifierContext::createFalse(),
-							$s,
-						)->setRootExpr($rootExpr);
-
-						if ($s->hasExpressionType($issetExpr->var)->maybe()) {
-							$result = $result->unionWith(
-								$this->defaultNarrowingHelper->createForSubject(
-									new IssetExpr($issetExpr->var),
-									new NullType(),
-									TypeSpecifierContext::createTruthy(),
-									$s,
-								)->setRootExpr($rootExpr),
-							);
-						}
-
-						return $result;
-					}
-				}
-			}
-		}
-
-		return new SpecifiedTypes();
 	}
 
 
