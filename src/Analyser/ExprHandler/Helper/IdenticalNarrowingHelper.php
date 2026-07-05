@@ -26,7 +26,9 @@ use PHPStan\Type\Constant\ConstantIntegerType;
 use PHPStan\Type\Constant\ConstantStringType;
 use PHPStan\Type\FloatType;
 use PHPStan\Type\IntegerRangeType;
+use PHPStan\Type\Generic\GenericClassStringType;
 use PHPStan\Type\IntegerType;
+use PHPStan\Type\IntersectionType;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\NullType;
@@ -186,6 +188,8 @@ final class IdenticalNarrowingHelper
 					'substr', 'strstr', 'stristr', 'strchr', 'strrchr', 'strtolower', 'strtoupper', 'ucfirst', 'lcfirst',
 					'mb_substr', 'mb_strstr', 'mb_stristr', 'mb_strchr', 'mb_strrchr', 'mb_strtolower', 'mb_strtoupper', 'mb_ucfirst', 'mb_lcfirst',
 					'ucwords', 'mb_convert_case', 'mb_convert_kana',
+					'trim', 'ltrim', 'rtrim', 'chop', 'mb_trim', 'mb_ltrim', 'mb_rtrim',
+					'get_parent_class',
 				], true)
 				|| !isset($unwrappedSubject->getArgs()[0])
 			) {
@@ -212,6 +216,65 @@ final class IdenticalNarrowingHelper
 			}
 
 			// other constants and contexts only pin the call below
+		}
+
+		// a trimmed string that is not '' was a non-empty string already
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& in_array($unwrappedSubject->name->toLowerString(), ['trim', 'ltrim', 'rtrim', 'chop', 'mb_trim', 'mb_ltrim', 'mb_rtrim'], true)
+		) {
+			if ($context->false()) {
+				$constantStrings = $constantType->getConstantStrings();
+				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() === '') {
+					$argExpr = $unwrappedSubject->getArgs()[0]->value;
+					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+					if ($argResult === null) {
+						return null;
+					}
+					if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
+						return $this->defaultNarrowingHelper->createForSubject(
+							$argExpr,
+							new IntersectionType([new StringType(), new AccessoryNonEmptyStringType()]),
+							$context->negate(),
+							$evaluationScope,
+						);
+					}
+				}
+			}
+
+			// other constants and contexts only pin the call
+		}
+
+		// a known parent class narrows the argument to the child side of it
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& $unwrappedSubject->name->toLowerString() === 'get_parent_class'
+		) {
+			if ($context->true()) {
+				$constantStrings = $constantType->getConstantStrings();
+				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() !== '') {
+					$argExpr = $unwrappedSubject->getArgs()[0]->value;
+					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+					if ($argResult === null) {
+						return null;
+					}
+					$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+					$objectType = new ObjectType($constantStrings[0]->getValue());
+					$classStringType = new GenericClassStringType($objectType);
+
+					if ($argType->isString()->yes()) {
+						$narrowed = $classStringType;
+					} elseif ($argType->isObject()->yes()) {
+						$narrowed = $objectType;
+					} else {
+						$narrowed = TypeCombinator::union($objectType, $classStringType);
+					}
+
+					return $this->defaultNarrowingHelper->createForSubject($argExpr, $narrowed, $context, $evaluationScope);
+				}
+			}
+
+			return null;
 		}
 
 		// a string function whose result is a non-empty literal had a

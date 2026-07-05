@@ -218,6 +218,25 @@ class Basics
 		}
 	}
 
+	/** @param mixed $m */
+	public function trimAndParentClass(string $s, object $o, $m): void
+	{
+		if (trim($s) !== '') {
+			assertType('non-empty-string', $s);
+		}
+		if (ltrim($s) === '') {
+			assertType('string', $s);
+		} else {
+			assertType('non-empty-string', $s);
+		}
+		if (get_parent_class($o) === Foo::class) {
+			assertType('EqualityNarrowingNewWorld\Foo', $o);
+		}
+		if (get_parent_class($m) === Foo::class) {
+			assertType('class-string<EqualityNarrowingNewWorld\Foo>|EqualityNarrowingNewWorld\Foo', $m);
+		}
+	}
+
 	public function getClassNarrowing(object $o): void
 	{
 		if (get_class($o) === Foo::class) {
