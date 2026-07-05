@@ -523,6 +523,7 @@ final class AssignHandler implements ExprHandler
 				}
 
 				$storedAssignedExprResult = $scope->getCurrentExpressionResultStorage()?->findExpressionResult($assignedExpr);
+				$assignedArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($assignedExpr, $storage);
 
 				$truthyType = TypeCombinator::removeFalsey($type);
 				// Value comparison, not identity: remove() happens to hand back the very same
@@ -577,14 +578,14 @@ final class AssignHandler implements ExprHandler
 						: new BooleanType();
 
 					$notIdenticalSpecifiedTypes = $storedAssignedExprResult !== null
-						? $this->identicalNarrowingHelper->specifyIdenticalAgainstType($assignedExpr, $storedAssignedExprResult, $astNode, $falseyType, TypeSpecifierContext::createFalse(), $scope, $identicalTypeCallback)
+						? $this->identicalNarrowingHelper->specifyIdenticalAgainstType($assignedExpr, $storedAssignedExprResult, $astNode, $falseyType, TypeSpecifierContext::createFalse(), $scope, $assignedArgResult, $identicalTypeCallback)
 						: null;
 					$notIdenticalSpecifiedTypes ??= $this->defaultNarrowingHelper->specifyTypesForNode($scope, new Expr\BinaryOp\NotIdentical($assignedExpr, $astNode), TypeSpecifierContext::createTrue());
 					$conditionalExpressions = $this->processSureTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $notIdenticalSpecifiedTypes, $withoutFalseyType, $impurePoints, $assignedExpr);
 					$conditionalExpressions = $this->processSureNotTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $notIdenticalSpecifiedTypes, $withoutFalseyType, $impurePoints, $assignedExpr);
 
 					$identicalSpecifiedTypes = $storedAssignedExprResult !== null
-						? $this->identicalNarrowingHelper->specifyIdenticalAgainstType($assignedExpr, $storedAssignedExprResult, $astNode, $falseyType, TypeSpecifierContext::createTrue(), $scope, $identicalTypeCallback)
+						? $this->identicalNarrowingHelper->specifyIdenticalAgainstType($assignedExpr, $storedAssignedExprResult, $astNode, $falseyType, TypeSpecifierContext::createTrue(), $scope, $assignedArgResult, $identicalTypeCallback)
 						: null;
 					$identicalSpecifiedTypes ??= $this->defaultNarrowingHelper->specifyTypesForNode($scope, new Expr\BinaryOp\Identical($assignedExpr, $astNode), TypeSpecifierContext::createTrue());
 					$conditionalExpressions = $this->processSureTypesForConditionalExpressionsAfterAssign($nodeScopeResolver, $scope, $var->name, $conditionalExpressions, $identicalSpecifiedTypes, $falseyType, $impurePoints, $assignedExpr);

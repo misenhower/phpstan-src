@@ -7,6 +7,7 @@ use PhpParser\Node\Expr;
 use PhpParser\Node\Name;
 use PhpParser\Node\Scalar;
 use PHPStan\Analyser\ExpressionResult;
+use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\RicherScopeGetTypeHelper;
@@ -83,6 +84,8 @@ final class IdenticalNarrowingHelper
 		ExpressionResult $rightResult,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
+		?ExpressionResult $leftArgResult,
+		?ExpressionResult $rightArgResult,
 		callable $identicalTypeCallback,
 	): ?SpecifiedTypes
 	{
@@ -101,12 +104,12 @@ final class IdenticalNarrowingHelper
 			$subject = $left;
 			$subjectResult = $leftResult;
 		} else {
-			$types = $this->specifyAgainstScalarLiteral($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			$types = $this->specifyAgainstScalarLiteral($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 			if ($types !== null) {
 				return $types;
 			}
 
-			return $this->specifyGeneral($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			return $this->specifyGeneral($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 		}
 
 		if ($constantName !== 'null' && !$this->isSubjectCoveredAgainstConstant($subject)) {
@@ -171,6 +174,8 @@ final class IdenticalNarrowingHelper
 		ExpressionResult $rightResult,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
+		?ExpressionResult $leftArgResult,
+		?ExpressionResult $rightArgResult,
 		callable $identicalTypeCallback,
 	): ?SpecifiedTypes
 	{
@@ -190,7 +195,7 @@ final class IdenticalNarrowingHelper
 
 		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
 		if ($unwrappedSubject instanceof Expr\FuncCall) {
-			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $this->literalType($constantExpr) ?? $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted), $context, $evaluationScope);
+			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $this->literalType($constantExpr) ?? $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted), $context, $evaluationScope, $subject === $left ? $leftArgResult : $rightArgResult);
 			if ($familyTypes === null) {
 				return null;
 			}
@@ -347,6 +352,8 @@ final class IdenticalNarrowingHelper
 		ExpressionResult $rightResult,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
+		?ExpressionResult $leftArgResult,
+		?ExpressionResult $rightArgResult,
 		callable $identicalTypeCallback,
 	): ?SpecifiedTypes
 	{
@@ -380,9 +387,9 @@ final class IdenticalNarrowingHelper
 		// normalization that moved the call to the left
 		if ($unwrappedLeft instanceof Expr\FuncCall || $unwrappedRight instanceof Expr\FuncCall) {
 			if ($unwrappedLeft instanceof Expr\FuncCall) {
-				$familyTypes = $this->specifyFuncCallFamilies($left, $leftResult, $unwrappedLeft, $right, $rightType, $context, $evaluationScope);
+				$familyTypes = $this->specifyFuncCallFamilies($left, $leftResult, $unwrappedLeft, $right, $rightType, $context, $evaluationScope, $leftArgResult);
 			} else {
-				$familyTypes = $this->specifyFuncCallFamilies($right, $rightResult, $unwrappedRight, $left, $leftType, $context, $evaluationScope);
+				$familyTypes = $this->specifyFuncCallFamilies($right, $rightResult, $unwrappedRight, $left, $leftType, $context, $evaluationScope, $rightArgResult);
 			}
 			if ($familyTypes === null) {
 				return null;
@@ -460,6 +467,8 @@ final class IdenticalNarrowingHelper
 		ExpressionResult $rightResult,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
+		?ExpressionResult $leftArgResult,
+		?ExpressionResult $rightArgResult,
 	): ?SpecifiedTypes
 	{
 		if ($context->null()) {
@@ -476,12 +485,12 @@ final class IdenticalNarrowingHelper
 		$leftScalarValues = $leftType->getConstantScalarValues();
 		$rightScalarValues = $rightType->getConstantScalarValues();
 		if (count($leftScalarValues) === 1 && !$unwrappedRight instanceof Expr\ConstFetch) {
-			$constantSideTypes = $this->specifyEqualAgainstConstantSide($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $right, $rightResult, $leftScalarValues[0], $leftType, $rightType, $context, $evaluationScope, $identicalTypeCallback);
+			$constantSideTypes = $this->specifyEqualAgainstConstantSide($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $right, $rightResult, $leftScalarValues[0], $leftType, $rightType, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 			if ($constantSideTypes !== false) {
 				return $constantSideTypes;
 			}
 		} elseif (count($rightScalarValues) === 1 && !$unwrappedLeft instanceof Expr\ConstFetch) {
-			$constantSideTypes = $this->specifyEqualAgainstConstantSide($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $left, $leftResult, $rightScalarValues[0], $rightType, $leftType, $context, $evaluationScope, $identicalTypeCallback);
+			$constantSideTypes = $this->specifyEqualAgainstConstantSide($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $left, $leftResult, $rightScalarValues[0], $rightType, $leftType, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 			if ($constantSideTypes !== false) {
 				return $constantSideTypes;
 			}
@@ -492,11 +501,11 @@ final class IdenticalNarrowingHelper
 		$leftBool = $leftType->toBoolean();
 		if (($leftBool->isTrue()->yes() || $leftBool->isFalse()->yes()) && $rightType->isBoolean()->yes()) {
 			// the literal side of the delegation needs no result; the subject side is the right operand
-			return $this->specifyIdentical($nodeScopeResolver, new Expr\ConstFetch(new Name($leftBool->isTrue()->yes() ? 'true' : 'false')), $right, $rightResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			return $this->specifyIdentical($nodeScopeResolver, new Expr\ConstFetch(new Name($leftBool->isTrue()->yes() ? 'true' : 'false')), $right, $rightResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 		}
 		$rightBool = $rightType->toBoolean();
 		if (($rightBool->isTrue()->yes() || $rightBool->isFalse()->yes()) && $leftType->isBoolean()->yes()) {
-			return $this->specifyIdentical($nodeScopeResolver, $left, new Expr\ConstFetch(new Name($rightBool->isTrue()->yes() ? 'true' : 'false')), $leftResult, $leftResult, $context, $evaluationScope, $identicalTypeCallback);
+			return $this->specifyIdentical($nodeScopeResolver, $left, new Expr\ConstFetch(new Name($rightBool->isTrue()->yes() ? 'true' : 'false')), $leftResult, $leftResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 		}
 
 		// an empty constant array equals only empty countables
@@ -514,7 +523,7 @@ final class IdenticalNarrowingHelper
 			|| ($leftType->isFloat()->yes() && $rightType->isFloat()->yes())
 			|| ($leftType->isEnum()->yes() && $rightType->isEnum()->yes())
 		) {
-			return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 		}
 
 		$leftExprString = $this->exprPrinter->printExpr($left);
@@ -550,6 +559,7 @@ final class IdenticalNarrowingHelper
 		Type $constantType,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
+		?ExpressionResult $subjectArgResult,
 		callable $identicalTypeCallback,
 	): ?SpecifiedTypes
 	{
@@ -580,7 +590,7 @@ final class IdenticalNarrowingHelper
 		}
 
 		if ($unwrappedSubject instanceof Expr\FuncCall) {
-			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $constantType, $context, $evaluationScope);
+			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $constantType, $context, $evaluationScope, $subjectArgResult);
 			if ($familyTypes === null) {
 				return null;
 			}
@@ -635,6 +645,8 @@ final class IdenticalNarrowingHelper
 		Type $otherType,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
+		?ExpressionResult $leftArgResult,
+		?ExpressionResult $rightArgResult,
 		callable $identicalTypeCallback,
 	): SpecifiedTypes|false|null
 	{
@@ -692,10 +704,10 @@ final class IdenticalNarrowingHelper
 		) {
 			$funcName = $unwrappedSubject->name->toLowerString();
 			if (in_array($funcName, ['gettype', 'get_class', 'get_debug_type'], true) && $constantType->isString()->yes()) {
-				return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+				return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 			}
 			if ($context->true() && $funcName === 'preg_match' && (new ConstantIntegerType(1))->isSuperTypeOf($constantType)->yes()) {
-				return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+				return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 			}
 		}
 		if (
@@ -704,7 +716,7 @@ final class IdenticalNarrowingHelper
 			&& $unwrappedSubject->name->toLowerString() === 'class'
 			&& $constantType->isString()->yes()
 		) {
-			return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 		}
 
 		return false;
@@ -726,6 +738,7 @@ final class IdenticalNarrowingHelper
 		Type $constantType,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
+		?ExpressionResult $argResult,
 	): SpecifiedTypes|false|null
 	{
 		if (!($call->name instanceof Name) || $call->isFirstClassCallable() || !isset($call->getArgs()[0])) {
@@ -752,8 +765,7 @@ final class IdenticalNarrowingHelper
 				$constantStrings = $constantType->getConstantStrings();
 				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() === '') {
 					$argExpr = $call->getArgs()[0]->value;
-					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-					if ($argResult === null) {
+										if ($argResult === null) {
 						return null;
 					}
 					if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
@@ -778,8 +790,7 @@ final class IdenticalNarrowingHelper
 				$constantStrings = $constantType->getConstantStrings();
 				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() !== '') {
 					$argExpr = $call->getArgs()[0]->value;
-					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-					if ($argResult === null) {
+										if ($argResult === null) {
 						return null;
 					}
 					$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
@@ -813,8 +824,7 @@ final class IdenticalNarrowingHelper
 		) {
 			if ($context->truthy() && $constantType->isNonEmptyString()->yes()) {
 				$argExpr = $call->getArgs()[0]->value;
-				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-				if ($argResult === null) {
+								if ($argResult === null) {
 					return null;
 				}
 				$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
@@ -859,8 +869,7 @@ final class IdenticalNarrowingHelper
 				return $this->defaultNarrowingHelper->createForSubject($argExpr, new NeverType(), $context, $evaluationScope);
 			}
 
-			$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-			if ($argResult === null) {
+						if ($argResult === null) {
 				return null;
 			}
 			$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
@@ -921,8 +930,7 @@ final class IdenticalNarrowingHelper
 			}
 
 			if ($context->truthy() && IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($constantType)->yes()) {
-				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-				if ($argResult === null) {
+								if ($argResult === null) {
 					return null;
 				}
 				if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
@@ -980,6 +988,24 @@ final class IdenticalNarrowingHelper
 
 
 		return false;
+	}
+
+	/**
+	 * The first argument's stored result of a (possibly remembered) call
+	 * operand, captured by the seams at create time - the composed function
+	 * families read it instead of the asking scope's storage stack (ask-time
+	 * state that differs between main-pass and post-walk asks and would
+	 * break memoizing the narrowing per context). Capturing the result, not
+	 * the storage, keeps retention bounded.
+	 */
+	public function captureFirstArgResult(Expr $side, ExpressionResultStorage $storage): ?ExpressionResult
+	{
+		$unwrapped = $side instanceof AlwaysRememberedExpr ? $side->getExpr() : $side;
+		if (!$unwrapped instanceof Expr\FuncCall || $unwrapped->isFirstClassCallable() || !isset($unwrapped->getArgs()[0])) {
+			return null;
+		}
+
+		return $storage->findExpressionResult($unwrapped->getArgs()[0]->value);
 	}
 
 	/** The static type of a literal node - no result or scope needed. */

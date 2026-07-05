@@ -55,6 +55,8 @@ final class CastHandler implements ExprHandler
 		$exprResult = $nodeScopeResolver->processExprNode($stmt, $expr->expr, $scope, $storage, $nodeCallback, $context->enterDeep());
 		$scope = $exprResult->getScope();
 
+		$subjectArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->expr, $storage);
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -76,7 +78,7 @@ final class CastHandler implements ExprHandler
 					throw new ShouldNotHappenException();
 				});
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $nodeScopeResolver, $beforeScope): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $nodeScopeResolver, $beforeScope, $subjectArgResult): SpecifiedTypes {
 				// a cast's truthiness is a loose comparison of the inner
 				// expression - composed from its result; the fabricated
 				// literal is only printed into entries, never walked
@@ -94,7 +96,7 @@ final class CastHandler implements ExprHandler
 					}
 
 					// the literal side never reads its stand-in result
-					$types = $this->identicalNarrowingHelper->specifyEqual($nodeScopeResolver, $expr->expr, $literal, $exprResult, $exprResult, $equalContext, $evaluationScope);
+					$types = $this->identicalNarrowingHelper->specifyEqual($nodeScopeResolver, $expr->expr, $literal, $exprResult, $exprResult, $equalContext, $evaluationScope, $subjectArgResult, null);
 					if ($types !== null) {
 						return $types->setRootExpr($expr);
 					}

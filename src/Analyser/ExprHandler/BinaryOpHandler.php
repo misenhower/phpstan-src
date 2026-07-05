@@ -111,6 +111,9 @@ final class BinaryOpHandler implements ExprHandler
 		}
 		$scope = $rightResult->getScope();
 
+		$leftArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->left, $storage);
+		$rightArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->right, $storage);
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -252,7 +255,7 @@ final class BinaryOpHandler implements ExprHandler
 
 				throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
 			},
-			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope, $leftArgResult, $rightArgResult): SpecifiedTypes {
 				$resultFor = static fn (Expr $e): ?ExpressionResult => $e === $expr->left ? $leftResult : ($e === $expr->right ? $rightResult : null);
 				if ($expr instanceof BinaryOp\Identical || $expr instanceof BinaryOp\NotIdentical) {
 					// `!==` narrowing is the `===` narrowing in the negated context -
@@ -268,6 +271,8 @@ final class BinaryOpHandler implements ExprHandler
 							// the narrowing composes on the evaluation scope; only the
 							// asked flavour comes from the asking scope
 							$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+							$leftArgResult,
+							$rightArgResult,
 							// the comparison's own verdict, in Identical semantics
 							static function () use ($nodeScopeResolver, $expr, $scope): Type {
 								$ownType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
@@ -316,6 +321,8 @@ final class BinaryOpHandler implements ExprHandler
 							$rightResult,
 							$expr instanceof BinaryOp\NotEqual ? $context->negate() : $context,
 							$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+							$leftArgResult,
+							$rightArgResult,
 						);
 						if ($newWorldTypes !== null) {
 							return $newWorldTypes->setRootExpr($expr);
