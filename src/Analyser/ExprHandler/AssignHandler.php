@@ -522,7 +522,11 @@ final class AssignHandler implements ExprHandler
 					);
 				}
 
-				$storedAssignedExprResult = $scope->getCurrentExpressionResultStorage()?->findExpressionResult($assignedExpr);
+				// read from the storage the walk just wrote into - the scope's
+				// storage stack misses it on loop-convergence passes (the temp
+				// storage is never pushed), which made every holder ask below
+				// fall back to a full on-demand re-walk of the assigned expression
+				$storedAssignedExprResult = $storage->findExpressionResult($assignedExpr);
 				$assignedArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($assignedExpr, $storage);
 
 				$truthyType = TypeCombinator::removeFalsey($type);
