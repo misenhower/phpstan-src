@@ -324,6 +324,31 @@ class Basics
 		}
 	}
 
+	/**
+	 * @param int<2, 3> $smallSize
+	 * @param 0 $zero
+	 * @param 'string' $stringName
+	 * @param list<string> $list
+	 * @param mixed $m
+	 */
+	public function typeBasedConstantSides(array $list, string $s, int $smallSize, int $zero, string $stringName, $m): void
+	{
+		if (count($list) === $smallSize) {
+			assertType('array{0: string, 1: string, 2?: string}', $list);
+		}
+		if (count($list) === $zero) {
+			assertType('array{}', $list);
+		}
+		if (strlen($s) === $smallSize) {
+			assertType('non-falsy-string', $s);
+		}
+		if (gettype($m) === $stringName) {
+			assertType('string', $m);
+		} else {
+			assertType('mixed~string', $m);
+		}
+	}
+
 	public function classConstFetchNarrowing(object $o): void
 	{
 		if ($o::class === Foo::class) {

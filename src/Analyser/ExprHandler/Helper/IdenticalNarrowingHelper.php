@@ -187,22 +187,12 @@ final class IdenticalNarrowingHelper
 
 		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
 		if ($unwrappedSubject instanceof Expr\FuncCall) {
-			// get_class/get_debug_type compose below; other calls narrow their
-			// arguments in ways not ported yet (count($a) === 0 empties $a)
-			if (
-				!($unwrappedSubject->name instanceof Name)
-				|| $unwrappedSubject->isFirstClassCallable()
-				|| !in_array($unwrappedSubject->name->toLowerString(), [
-					'get_class', 'get_debug_type', 'gettype', 'preg_match', 'strlen', 'mb_strlen', 'count', 'sizeof',
-					'substr', 'strstr', 'stristr', 'strchr', 'strrchr', 'strtolower', 'strtoupper', 'ucfirst', 'lcfirst',
-					'mb_substr', 'mb_strstr', 'mb_stristr', 'mb_strchr', 'mb_strrchr', 'mb_strtolower', 'mb_strtoupper', 'mb_ucfirst', 'mb_lcfirst',
-					'ucwords', 'mb_convert_case', 'mb_convert_kana',
-					'trim', 'ltrim', 'rtrim', 'chop', 'mb_trim', 'mb_ltrim', 'mb_rtrim',
-					'get_parent_class',
-				], true)
-				|| !isset($unwrappedSubject->getArgs()[0])
-			) {
+			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $constantResult, $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted), $context, $evaluationScope);
+			if ($familyTypes === null) {
 				return null;
+			}
+			if ($familyTypes !== false) {
+				return $familyTypes;
 			}
 		} elseif ($unwrappedSubject instanceof Expr\ClassConstFetch && $unwrappedSubject->class instanceof Expr) {
 			// only ::class composes; a constant fetched off an object falls back
@@ -217,19 +207,6 @@ final class IdenticalNarrowingHelper
 		if (count($constantType->getFiniteTypes()) !== 1) {
 			// a class constant does not have to be single-valued
 			return null;
-		}
-
-		// preg_match(...) === 1 is the call's own truthy narrowing - the
-		// type-specifying extensions narrow the by-ref \$matches argument
-		if (
-			$unwrappedSubject instanceof Expr\FuncCall
-			&& $unwrappedSubject->name->toLowerString() === 'preg_match'
-		) {
-			if ($context->true() && (new ConstantIntegerType(1))->isSuperTypeOf($constantType)->yes()) {
-				return $subjectResult->getSpecifiedTypesForScope($evaluationScope, $context);
-			}
-
-			// other constants and contexts only pin the call below
 		}
 
 		// $a::class === Foo::class narrows $a to a final Foo when true;
@@ -256,241 +233,9 @@ final class IdenticalNarrowingHelper
 			}
 		}
 
-		// a trimmed string that is not '' was a non-empty string already
-		if (
-			$unwrappedSubject instanceof Expr\FuncCall
-			&& in_array($unwrappedSubject->name->toLowerString(), ['trim', 'ltrim', 'rtrim', 'chop', 'mb_trim', 'mb_ltrim', 'mb_rtrim'], true)
-		) {
-			if ($context->false()) {
-				$constantStrings = $constantType->getConstantStrings();
-				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() === '') {
-					$argExpr = $unwrappedSubject->getArgs()[0]->value;
-					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-					if ($argResult === null) {
-						return null;
-					}
-					if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
-						return $this->defaultNarrowingHelper->createForSubject(
-							$argExpr,
-							new IntersectionType([new StringType(), new AccessoryNonEmptyStringType()]),
-							$context->negate(),
-							$evaluationScope,
-						);
-					}
-				}
-			}
-
-			// other constants and contexts only pin the call
-		}
-
-		// a known parent class narrows the argument to the child side of it
-		if (
-			$unwrappedSubject instanceof Expr\FuncCall
-			&& $unwrappedSubject->name->toLowerString() === 'get_parent_class'
-		) {
-			if ($context->true()) {
-				$constantStrings = $constantType->getConstantStrings();
-				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() !== '') {
-					$argExpr = $unwrappedSubject->getArgs()[0]->value;
-					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-					if ($argResult === null) {
-						return null;
-					}
-					$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
-					$objectType = new ObjectType($constantStrings[0]->getValue());
-					$classStringType = new GenericClassStringType($objectType);
-
-					if ($argType->isString()->yes()) {
-						$narrowed = $classStringType;
-					} elseif ($argType->isObject()->yes()) {
-						$narrowed = $objectType;
-					} else {
-						$narrowed = TypeCombinator::union($objectType, $classStringType);
-					}
-
-					return $this->defaultNarrowingHelper->createForSubject($argExpr, $narrowed, $context, $evaluationScope);
-				}
-			}
-
-			return null;
-		}
-
-		// a string function whose result is a non-empty literal had a
-		// non-empty (non-falsy for a non-falsy literal) string argument;
-		// case-mapping functions pin the case accessory on the literal side
-		if (
-			$unwrappedSubject instanceof Expr\FuncCall
-			&& in_array($unwrappedSubject->name->toLowerString(), [
-				'substr', 'strstr', 'stristr', 'strchr', 'strrchr', 'strtolower', 'strtoupper', 'ucfirst', 'lcfirst',
-				'mb_substr', 'mb_strstr', 'mb_stristr', 'mb_strchr', 'mb_strrchr', 'mb_strtolower', 'mb_strtoupper', 'mb_ucfirst', 'mb_lcfirst',
-				'ucwords', 'mb_convert_case', 'mb_convert_kana',
-			], true)
-		) {
-			if ($context->truthy() && $constantType->isNonEmptyString()->yes()) {
-				$argExpr = $unwrappedSubject->getArgs()[0]->value;
-				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-				if ($argResult === null) {
-					return null;
-				}
-				$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
-
-				if ($argType->isString()->yes()) {
-					$types = new SpecifiedTypes();
-					$funcName = $unwrappedSubject->name->toLowerString();
-					if (in_array($funcName, ['strtolower', 'mb_strtolower'], true)) {
-						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryLowercaseStringType()), $context);
-					} elseif (in_array($funcName, ['strtoupper', 'mb_strtoupper'], true)) {
-						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryUppercaseStringType()), $context);
-					}
-
-					$accessory = $constantType->isNonFalsyString()->yes()
-						? new AccessoryNonFalsyStringType()
-						: new AccessoryNonEmptyStringType();
-
-					return $types->unionWith($this->defaultNarrowingHelper->createForSubject(
-						$argExpr,
-						TypeCombinator::intersect($argType, $accessory),
-						$context,
-						$evaluationScope,
-					));
-				}
-			}
-
-			// a non-string argument, an empty literal or a non-truthy
-			// context only pins the call
-		}
-
-		// count($x) === N reconstructs the array shape by its size - before
-		// the decided guard so exhaustive size switches keep collapsing
-		if (
-			$unwrappedSubject instanceof Expr\FuncCall
-			&& in_array($unwrappedSubject->name->toLowerString(), ['count', 'sizeof'], true)
-		) {
-			if (!$constantType->isInteger()->yes()) {
-				return null;
-			}
-
-			$argExpr = $unwrappedSubject->getArgs()[0]->value;
-			$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-			if ($argResult === null) {
-				return null;
-			}
-			$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
-
-			if ((new ConstantIntegerType(0))->isSuperTypeOf($constantType)->yes()) {
-				$newArgType = $context->truthy() && !$argType->isArray()->yes()
-					? new UnionType([new ObjectType(Countable::class), new ConstantArrayType([], [])])
-					: new ConstantArrayType([], []);
-
-				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
-					$this->defaultNarrowingHelper->createForSubject($argExpr, $newArgType, $context, $evaluationScope),
-				);
-			}
-
-			$countTypes = $this->countNarrowingHelper->specifyCountSize($unwrappedSubject, $argType, $constantType, $context, $evaluationScope, $unwrappedSubject);
-			if ($countTypes !== null) {
-				// the old path pinned the call only through the remembered
-				// wrapper; the composed pin covers wrapper and call alike
-				if ($subject !== $unwrappedSubject) {
-					return $countTypes->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context));
-				}
-
-				return $countTypes;
-			}
-
-			if ($context->truthy() && $argType->isArray()->yes()) {
-				$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context);
-				if (IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($constantType)->yes()) {
-					return $types->unionWith(
-						$this->defaultNarrowingHelper->createForSubject($argExpr, new NonEmptyArrayType(), $context, $evaluationScope),
-					);
-				}
-
-				return $types;
-			}
-
-			// a non-array argument in a non-truthy context only pins the call
-		}
-
-		// strlen($x) === 0 empties $x; === N >= 1 makes it non-empty in the
-		// truthy direction (>= 2 non-falsy) - before the decided guard
-		if (
-			$unwrappedSubject instanceof Expr\FuncCall
-			&& in_array($unwrappedSubject->name->toLowerString(), ['strlen', 'mb_strlen'], true)
-		) {
-			if (count($unwrappedSubject->getArgs()) !== 1 || !$constantType->isInteger()->yes()) {
-				return null;
-			}
-
-			$argExpr = $unwrappedSubject->getArgs()[0]->value;
-			if ((new ConstantIntegerType(0))->isSuperTypeOf($constantType)->yes()) {
-				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
-					$this->defaultNarrowingHelper->createForSubject($argExpr, new ConstantStringType(''), $context, $evaluationScope),
-				);
-			}
-
-			if ($context->truthy()) {
-				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
-				if ($argResult === null) {
-					return null;
-				}
-				if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
-					$accessory = IntegerRangeType::fromInterval(2, null)->isSuperTypeOf($constantType)->yes()
-						? new AccessoryNonFalsyStringType()
-						: new AccessoryNonEmptyStringType();
-
-					return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
-						$this->defaultNarrowingHelper->createForSubject($argExpr, $accessory, $context, $evaluationScope),
-					);
-				}
-			}
-
-			// a non-string argument or a falsey non-zero size only pins the call
-		}
-
-		// gettype($x) === 'string' narrows $x by the named type in either
-		// direction - before the decided-comparison guard, like the old block
-		if (
-			$unwrappedSubject instanceof Expr\FuncCall
-			&& $unwrappedSubject->name->toLowerString() === 'gettype'
-		) {
-			$constantStrings = $constantType->getConstantStrings();
-			if (count($constantStrings) !== 1) {
-				return null;
-			}
-			$gettypeNarrowedType = $this->getTypeFromGettypeStringValue($constantStrings[0]->getValue());
-			if ($gettypeNarrowedType !== null) {
-				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
-					$this->defaultNarrowingHelper->createForSubject($unwrappedSubject->getArgs()[0]->value, $gettypeNarrowedType, $context, $evaluationScope),
-				);
-			}
-			// an unknown type-name string only pins the call itself below
-		}
-
 		$decidedTypes = $this->specifyDecidedComparison($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
 		if ($decidedTypes !== null) {
 			return $decidedTypes;
-		}
-
-		// get_class($o) === 'Foo' pins $o to a final Foo when the comparison
-		// holds; outside the true context only the call itself narrows
-		if ($unwrappedSubject instanceof Expr\FuncCall && $context->true()) {
-			$narrowedObjectType = null;
-			$constantStrings = $constantType->getConstantStrings();
-			if (count($constantStrings) === 1 && $this->reflectionProvider->hasClass($constantStrings[0]->getValue())) {
-				$narrowedObjectType = new ObjectType($constantStrings[0]->getValue(), classReflection: $this->reflectionProvider->getClass($constantStrings[0]->getValue())->asFinal());
-			} elseif ($constantType->getClassStringObjectType()->isObject()->yes()) {
-				$narrowedObjectType = $constantType->getClassStringObjectType();
-			}
-
-			if ($narrowedObjectType !== null) {
-				return $this->defaultNarrowingHelper->createForSubject(
-					$unwrappedSubject->getArgs()[0]->value,
-					$narrowedObjectType,
-					$context,
-					$evaluationScope,
-				)->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context));
-			}
 		}
 
 		$types = $this->defaultNarrowingHelper->createSubjectTypes(
@@ -605,12 +350,12 @@ final class IdenticalNarrowingHelper
 		$unwrappedLeft = $left instanceof AlwaysRememberedExpr ? $left->getExpr() : $left;
 		$unwrappedRight = $right instanceof AlwaysRememberedExpr ? $right->getExpr() : $right;
 
-		// calls narrow their arguments and ::class fetches their class by
-		// TYPE-based constants too - those old-world blocks are not composed
+		// fn1() === fn2() merges both normalized directions - not composed;
+		// ::class fetches narrow by TYPE-based constants in old-world blocks
+		if ($unwrappedLeft instanceof Expr\FuncCall && $unwrappedRight instanceof Expr\FuncCall) {
+			return null;
+		}
 		foreach ([$unwrappedLeft, $unwrappedRight] as $side) {
-			if ($side instanceof Expr\FuncCall) {
-				return null;
-			}
 			if ($side instanceof Expr\ClassConstFetch && $side->class instanceof Expr) {
 				return null;
 			}
@@ -624,6 +369,23 @@ final class IdenticalNarrowingHelper
 		foreach ([$leftType, $rightType] as $sideType) {
 			if ($sideType->isTrue()->yes() || $sideType->isFalse()->yes()) {
 				return null;
+			}
+		}
+
+		// a single call side runs the family compositions with the other
+		// side's TYPE as the constant - the composed form of the old
+		// normalization that moved the call to the left
+		if ($unwrappedLeft instanceof Expr\FuncCall || $unwrappedRight instanceof Expr\FuncCall) {
+			if ($unwrappedLeft instanceof Expr\FuncCall) {
+				$familyTypes = $this->specifyFuncCallFamilies($left, $leftResult, $unwrappedLeft, $right, $rightResult, $rightType, $context, $evaluationScope);
+			} else {
+				$familyTypes = $this->specifyFuncCallFamilies($right, $rightResult, $unwrappedRight, $left, $leftResult, $leftType, $context, $evaluationScope);
+			}
+			if ($familyTypes === null) {
+				return null;
+			}
+			if ($familyTypes !== false) {
+				return $familyTypes;
 			}
 		}
 
@@ -678,6 +440,279 @@ final class IdenticalNarrowingHelper
 		}
 
 		return new SpecifiedTypes([], []);
+	}
+
+	/**
+	 * The function-family compositions, shared by the literal and the
+	 * TYPE-based constant sides: a family answer, null to fall back to the
+	 * old-world path, or false when no family matched and the caller narrows
+	 * generically.
+	 *
+	 * @return SpecifiedTypes|false|null
+	 */
+	private function specifyFuncCallFamilies(
+		Expr $subject,
+		ExpressionResult $subjectResult,
+		Expr\FuncCall $call,
+		Expr $constantExpr,
+		ExpressionResult $constantResult,
+		Type $constantType,
+		TypeSpecifierContext $context,
+		MutatingScope $evaluationScope,
+	): SpecifiedTypes|false|null
+	{
+		if (!($call->name instanceof Name) || $call->isFirstClassCallable() || !isset($call->getArgs()[0])) {
+			return false;
+		}
+
+		// preg_match(...) === 1 is the call's own truthy narrowing - the
+		// type-specifying extensions narrow the by-ref \$matches argument
+		if (
+			$call->name->toLowerString() === 'preg_match'
+		) {
+			if ($context->true() && (new ConstantIntegerType(1))->isSuperTypeOf($constantType)->yes()) {
+				return $subjectResult->getSpecifiedTypesForScope($evaluationScope, $context);
+			}
+
+			// other constants and contexts only pin the call below
+		}
+
+		// a trimmed string that is not '' was a non-empty string already
+		if (
+			in_array($call->name->toLowerString(), ['trim', 'ltrim', 'rtrim', 'chop', 'mb_trim', 'mb_ltrim', 'mb_rtrim'], true)
+		) {
+			if ($context->false()) {
+				$constantStrings = $constantType->getConstantStrings();
+				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() === '') {
+					$argExpr = $call->getArgs()[0]->value;
+					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+					if ($argResult === null) {
+						return null;
+					}
+					if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
+						return $this->defaultNarrowingHelper->createForSubject(
+							$argExpr,
+							new IntersectionType([new StringType(), new AccessoryNonEmptyStringType()]),
+							$context->negate(),
+							$evaluationScope,
+						);
+					}
+				}
+			}
+
+			// other constants and contexts only pin the call
+		}
+
+		// a known parent class narrows the argument to the child side of it
+		if (
+			$call->name->toLowerString() === 'get_parent_class'
+		) {
+			if ($context->true()) {
+				$constantStrings = $constantType->getConstantStrings();
+				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() !== '') {
+					$argExpr = $call->getArgs()[0]->value;
+					$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+					if ($argResult === null) {
+						return null;
+					}
+					$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+					$objectType = new ObjectType($constantStrings[0]->getValue());
+					$classStringType = new GenericClassStringType($objectType);
+
+					if ($argType->isString()->yes()) {
+						$narrowed = $classStringType;
+					} elseif ($argType->isObject()->yes()) {
+						$narrowed = $objectType;
+					} else {
+						$narrowed = TypeCombinator::union($objectType, $classStringType);
+					}
+
+					return $this->defaultNarrowingHelper->createForSubject($argExpr, $narrowed, $context, $evaluationScope);
+				}
+			}
+
+			return null;
+		}
+
+		// a string function whose result is a non-empty literal had a
+		// non-empty (non-falsy for a non-falsy literal) string argument;
+		// case-mapping functions pin the case accessory on the literal side
+		if (
+			in_array($call->name->toLowerString(), [
+				'substr', 'strstr', 'stristr', 'strchr', 'strrchr', 'strtolower', 'strtoupper', 'ucfirst', 'lcfirst',
+				'mb_substr', 'mb_strstr', 'mb_stristr', 'mb_strchr', 'mb_strrchr', 'mb_strtolower', 'mb_strtoupper', 'mb_ucfirst', 'mb_lcfirst',
+				'ucwords', 'mb_convert_case', 'mb_convert_kana',
+			], true)
+		) {
+			if ($context->truthy() && $constantType->isNonEmptyString()->yes()) {
+				$argExpr = $call->getArgs()[0]->value;
+				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+				if ($argResult === null) {
+					return null;
+				}
+				$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+
+				if ($argType->isString()->yes()) {
+					$types = new SpecifiedTypes();
+					$funcName = $call->name->toLowerString();
+					if (in_array($funcName, ['strtolower', 'mb_strtolower'], true)) {
+						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryLowercaseStringType()), $context);
+					} elseif (in_array($funcName, ['strtoupper', 'mb_strtoupper'], true)) {
+						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryUppercaseStringType()), $context);
+					}
+
+					$accessory = $constantType->isNonFalsyString()->yes()
+						? new AccessoryNonFalsyStringType()
+						: new AccessoryNonEmptyStringType();
+
+					return $types->unionWith($this->defaultNarrowingHelper->createForSubject(
+						$argExpr,
+						TypeCombinator::intersect($argType, $accessory),
+						$context,
+						$evaluationScope,
+					));
+				}
+			}
+
+			// a non-string argument, an empty literal or a non-truthy
+			// context only pins the call
+		}
+
+		// count($x) === N reconstructs the array shape by its size - before
+		// the decided guard so exhaustive size switches keep collapsing
+		if (
+			in_array($call->name->toLowerString(), ['count', 'sizeof'], true)
+		) {
+			if (!$constantType->isInteger()->yes()) {
+				return null;
+			}
+
+			$argExpr = $call->getArgs()[0]->value;
+			if (IntegerRangeType::fromInterval(null, -1)->isSuperTypeOf($constantType)->yes()) {
+				return $this->defaultNarrowingHelper->createForSubject($argExpr, new NeverType(), $context, $evaluationScope);
+			}
+
+			$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+			if ($argResult === null) {
+				return null;
+			}
+			$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+
+			if ((new ConstantIntegerType(0))->isSuperTypeOf($constantType)->yes()) {
+				$newArgType = $context->truthy() && !$argType->isArray()->yes()
+					? new UnionType([new ObjectType(Countable::class), new ConstantArrayType([], [])])
+					: new ConstantArrayType([], []);
+
+				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+					$this->defaultNarrowingHelper->createForSubject($argExpr, $newArgType, $context, $evaluationScope),
+				);
+			}
+
+			$countTypes = $this->countNarrowingHelper->specifyCountSize($call, $argType, $constantType, $context, $evaluationScope, $call);
+			if ($countTypes !== null) {
+				// the old path pinned the call only through the remembered
+				// wrapper; the composed pin covers wrapper and call alike
+				if ($subject !== $call) {
+					return $countTypes->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context));
+				}
+
+				return $countTypes;
+			}
+
+			if ($context->truthy() && $argType->isArray()->yes()) {
+				$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context);
+				if (IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($constantType)->yes()) {
+					return $types->unionWith(
+						$this->defaultNarrowingHelper->createForSubject($argExpr, new NonEmptyArrayType(), $context, $evaluationScope),
+					);
+				}
+
+				return $types;
+			}
+
+			// a non-array argument in a non-truthy context only pins the call
+		}
+
+		// strlen($x) === 0 empties $x; === N >= 1 makes it non-empty in the
+		// truthy direction (>= 2 non-falsy) - before the decided guard
+		if (
+			in_array($call->name->toLowerString(), ['strlen', 'mb_strlen'], true)
+		) {
+			if (count($call->getArgs()) !== 1 || !$constantType->isInteger()->yes()) {
+				return null;
+			}
+
+			$argExpr = $call->getArgs()[0]->value;
+			if (IntegerRangeType::fromInterval(null, -1)->isSuperTypeOf($constantType)->yes()) {
+				return $this->defaultNarrowingHelper->createForSubject($argExpr, new NeverType(), $context, $evaluationScope);
+			}
+
+			if ((new ConstantIntegerType(0))->isSuperTypeOf($constantType)->yes()) {
+				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+					$this->defaultNarrowingHelper->createForSubject($argExpr, new ConstantStringType(''), $context, $evaluationScope),
+				);
+			}
+
+			if ($context->truthy() && IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($constantType)->yes()) {
+				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+				if ($argResult === null) {
+					return null;
+				}
+				if ($argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->isString()->yes()) {
+					$accessory = IntegerRangeType::fromInterval(2, null)->isSuperTypeOf($constantType)->yes()
+						? new AccessoryNonFalsyStringType()
+						: new AccessoryNonEmptyStringType();
+
+					return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+						$this->defaultNarrowingHelper->createForSubject($argExpr, $accessory, $context, $evaluationScope),
+					);
+				}
+			}
+
+			// a non-string argument or a falsey non-zero size only pins the call
+		}
+
+		// gettype($x) === 'string' narrows $x by the named type in either
+		// direction - before the decided-comparison guard, like the old block
+		if (
+			$call->name->toLowerString() === 'gettype'
+		) {
+			$constantStrings = $constantType->getConstantStrings();
+			if (count($constantStrings) !== 1) {
+				return null;
+			}
+			$gettypeNarrowedType = $this->getTypeFromGettypeStringValue($constantStrings[0]->getValue());
+			if ($gettypeNarrowedType !== null) {
+				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+					$this->defaultNarrowingHelper->createForSubject($call->getArgs()[0]->value, $gettypeNarrowedType, $context, $evaluationScope),
+				);
+			}
+			// an unknown type-name string only pins the call itself below
+		}
+
+		// get_class($o) === 'Foo' pins $o to a final Foo when the comparison
+		// holds; outside the true context only the call itself narrows
+		if (in_array($call->name->toLowerString(), ['get_class', 'get_debug_type'], true) && $context->true()) {
+			$narrowedObjectType = null;
+			$constantStrings = $constantType->getConstantStrings();
+			if (count($constantStrings) === 1 && $this->reflectionProvider->hasClass($constantStrings[0]->getValue())) {
+				$narrowedObjectType = new ObjectType($constantStrings[0]->getValue(), classReflection: $this->reflectionProvider->getClass($constantStrings[0]->getValue())->asFinal());
+			} elseif ($constantType->getClassStringObjectType()->isObject()->yes()) {
+				$narrowedObjectType = $constantType->getClassStringObjectType();
+			}
+
+			if ($narrowedObjectType !== null) {
+				return $this->defaultNarrowingHelper->createForSubject(
+					$call->getArgs()[0]->value,
+					$narrowedObjectType,
+					$context,
+					$evaluationScope,
+				)->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context));
+			}
+		}
+
+
+		return false;
 	}
 
 	private function isScalarLiteral(Expr $expr): bool
