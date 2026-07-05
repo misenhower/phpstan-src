@@ -97,6 +97,7 @@ final class AssignHandler implements ExprHandler
 		private PhpVersion $phpVersion,
 		private ExprPrinter $exprPrinter,
 		private MatchHandler $matchHandler,
+		private TernaryHandler $ternaryHandler,
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 		private IdenticalNarrowingHelper $identicalNarrowingHelper,
@@ -479,17 +480,29 @@ final class AssignHandler implements ExprHandler
 
 				$conditionalExpressions = [];
 				if ($assignedExpr instanceof Ternary) {
-					$if = $assignedExpr->if;
-					if ($if === null) {
-						$if = $assignedExpr->cond;
+					// the walk already evaluated the arms on the cond-filtered
+					// scopes - read the captured results instead of re-walking
+					$capturedTernary = $this->ternaryHandler->getCapturedResults($assignedExpr);
+					if ($capturedTernary !== null) {
+						[$ternaryCondResult, $ternaryIfResult, $ternaryElseResult] = $capturedTernary;
+						$condScope = $ternaryCondResult->getScope();
+						$truthySpecifiedTypes = $ternaryCondResult->getSpecifiedTypesForScope($condScope, TypeSpecifierContext::createTruthy());
+						$falseySpecifiedTypes = $ternaryCondResult->getSpecifiedTypesForScope($condScope, TypeSpecifierContext::createFalsey());
+						$truthyType = $ternaryIfResult->getType();
+						$falseyType = $ternaryElseResult->getType();
+					} else {
+						$if = $assignedExpr->if;
+						if ($if === null) {
+							$if = $assignedExpr->cond;
+						}
+						$condScope = $nodeScopeResolver->processExprNode($stmt, $assignedExpr->cond, $scope, $storage->duplicate(), new NoopNodeCallback(), ExpressionContext::createDeep())->getScope();
+						$truthySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($condScope, $assignedExpr->cond, TypeSpecifierContext::createTruthy());
+						$falseySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($condScope, $assignedExpr->cond, TypeSpecifierContext::createFalsey());
+						$truthyScope = $condScope->applySpecifiedTypes($truthySpecifiedTypes);
+						$falsyScope = $condScope->applySpecifiedTypes($falseySpecifiedTypes);
+						$truthyType = $nodeScopeResolver->readTypeOfMaybeStored($if, $truthyScope);
+						$falseyType = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr->else, $falsyScope);
 					}
-					$condScope = $nodeScopeResolver->processExprNode($stmt, $assignedExpr->cond, $scope, $storage->duplicate(), new NoopNodeCallback(), ExpressionContext::createDeep())->getScope();
-					$truthySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($condScope, $assignedExpr->cond, TypeSpecifierContext::createTruthy());
-					$falseySpecifiedTypes = $this->defaultNarrowingHelper->specifyTypesForNode($condScope, $assignedExpr->cond, TypeSpecifierContext::createFalsey());
-					$truthyScope = $condScope->applySpecifiedTypes($truthySpecifiedTypes);
-					$falsyScope = $condScope->applySpecifiedTypes($falseySpecifiedTypes);
-					$truthyType = $nodeScopeResolver->readTypeOfMaybeStored($if, $truthyScope);
-					$falseyType = $nodeScopeResolver->readTypeOfMaybeStored($assignedExpr->else, $falsyScope);
 
 					if (
 						$truthyType->isSuperTypeOf($falseyType)->no()

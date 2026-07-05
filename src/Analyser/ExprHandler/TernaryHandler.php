@@ -20,6 +20,7 @@ use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\Type;
+use WeakMap;
 use PHPStan\Type\TypeCombinator;
 use function array_merge;
 
@@ -30,16 +31,31 @@ use function array_merge;
 final class TernaryHandler implements ExprHandler
 {
 
+	/** @var WeakMap<Ternary, array{ExpressionResult, ExpressionResult, ExpressionResult}> */
+	private WeakMap $capturedResults;
+
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
+		$this->capturedResults = new WeakMap();
 	}
 
 	public function supports(Expr $expr): bool
 	{
 		return $expr instanceof Ternary;
+	}
+
+	/**
+	 * The cond/if/else results captured during the walk, for the assign-time
+	 * conditional holders - null for short ternaries and unwalked nodes.
+	 *
+	 * @return array{ExpressionResult, ExpressionResult, ExpressionResult}|null
+	 */
+	public function getCapturedResults(Ternary $expr): ?array
+	{
+		return $this->capturedResults[$expr] ?? null;
 	}
 
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
@@ -74,6 +90,10 @@ final class TernaryHandler implements ExprHandler
 			$impurePoints = array_merge($impurePoints, $elseResult->getImpurePoints());
 			$hasYield = $hasYield || $elseResult->hasYield();
 			$ifFalseScope = $elseResult->getScope();
+		}
+
+		if ($ifResult !== null) {
+			$this->capturedResults[$expr] = [$ternaryCondResult, $ifResult, $elseResult];
 		}
 
 		$condType = $ternaryCondResult->getType();
