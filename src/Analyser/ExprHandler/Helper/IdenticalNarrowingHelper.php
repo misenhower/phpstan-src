@@ -190,7 +190,7 @@ final class IdenticalNarrowingHelper
 
 		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
 		if ($unwrappedSubject instanceof Expr\FuncCall) {
-			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $constantResult, $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted), $context, $evaluationScope);
+			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted), $context, $evaluationScope);
 			if ($familyTypes === null) {
 				return null;
 			}
@@ -380,9 +380,9 @@ final class IdenticalNarrowingHelper
 		// normalization that moved the call to the left
 		if ($unwrappedLeft instanceof Expr\FuncCall || $unwrappedRight instanceof Expr\FuncCall) {
 			if ($unwrappedLeft instanceof Expr\FuncCall) {
-				$familyTypes = $this->specifyFuncCallFamilies($left, $leftResult, $unwrappedLeft, $right, $rightResult, $rightType, $context, $evaluationScope);
+				$familyTypes = $this->specifyFuncCallFamilies($left, $leftResult, $unwrappedLeft, $right, $rightType, $context, $evaluationScope);
 			} else {
-				$familyTypes = $this->specifyFuncCallFamilies($right, $rightResult, $unwrappedRight, $left, $leftResult, $leftType, $context, $evaluationScope);
+				$familyTypes = $this->specifyFuncCallFamilies($right, $rightResult, $unwrappedRight, $left, $leftType, $context, $evaluationScope);
 			}
 			if ($familyTypes === null) {
 				return null;
@@ -534,6 +534,87 @@ final class IdenticalNarrowingHelper
 	}
 
 	/**
+	 * Identity narrowing of a subject against a known constant type - the
+	 * entry point for callers that hold no comparison node at all (the
+	 * assign-time conditional holders compare the assigned expression with
+	 * falsy sentinels). $constantExpr is only printed into reverse entries,
+	 * never walked. Null means the shape is not composed and the caller
+	 * keeps its old-world path.
+	 *
+	 * @param callable(): Type $identicalTypeCallback
+	 */
+	public function specifyIdenticalAgainstType(
+		Expr $subject,
+		ExpressionResult $subjectResult,
+		Expr $constantExpr,
+		Type $constantType,
+		TypeSpecifierContext $context,
+		MutatingScope $evaluationScope,
+		callable $identicalTypeCallback,
+	): ?SpecifiedTypes
+	{
+		if ($context->null()) {
+			return null;
+		}
+
+		if ($constantType->isNull()->yes()) {
+			// unguarded like the null-literal slice - the subtraction entry
+			// must keep firing conditional holders
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, new NullType(), $context);
+		}
+
+		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
+
+		if ($constantType->isTrue()->yes() || $constantType->isFalse()->yes()) {
+			$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, new ConstantBooleanType($constantType->isTrue()->yes()), $context);
+			if (!$context->true() && ($unwrappedSubject instanceof Expr\NullsafeMethodCall || $unwrappedSubject instanceof Expr\NullsafePropertyFetch)) {
+				return $types;
+			}
+
+			$boolContext = $constantType->isTrue()->yes() ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createFalse();
+
+			return $types->unionWith($subjectResult->getSpecifiedTypesForScope(
+				$evaluationScope,
+				$context->true() ? $boolContext : $boolContext->negate(),
+			));
+		}
+
+		if ($unwrappedSubject instanceof Expr\FuncCall) {
+			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $constantType, $context, $evaluationScope);
+			if ($familyTypes === null) {
+				return null;
+			}
+			if ($familyTypes !== false) {
+				return $familyTypes;
+			}
+		} elseif ($unwrappedSubject instanceof Expr\ClassConstFetch && $unwrappedSubject->class instanceof Expr) {
+			return null;
+		}
+
+		if ($context->false()) {
+			$identicalType = $identicalTypeCallback();
+			$isTrue = $identicalType->isTrue()->yes();
+			if ($isTrue || $identicalType->isFalse()->yes()) {
+				$never = new NeverType();
+				$contextForTypes = $isTrue ? $context->negate() : $context;
+
+				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $never, $contextForTypes)->unionWith(
+					$this->defaultNarrowingHelper->createForSubject($constantExpr, $never, $contextForTypes, $evaluationScope),
+				);
+			}
+		}
+
+		$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context);
+
+		$subjectType = $subjectResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		if (count($subjectType->getFiniteTypes()) === 1) {
+			$types = $types->unionWith($this->defaultNarrowingHelper->createForSubject($constantExpr, $subjectType, $context, $evaluationScope));
+		}
+
+		return $types;
+	}
+
+	/**
 	 * The == narrowing against a single-valued side: a family answer, null
 	 * to fall back to the old-world path, or false when nothing matched and
 	 * the caller continues with the coercion branches.
@@ -642,7 +723,6 @@ final class IdenticalNarrowingHelper
 		ExpressionResult $subjectResult,
 		Expr\FuncCall $call,
 		Expr $constantExpr,
-		ExpressionResult $constantResult,
 		Type $constantType,
 		TypeSpecifierContext $context,
 		MutatingScope $evaluationScope,
@@ -743,9 +823,9 @@ final class IdenticalNarrowingHelper
 					$types = new SpecifiedTypes();
 					$funcName = $call->name->toLowerString();
 					if (in_array($funcName, ['strtolower', 'mb_strtolower'], true)) {
-						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryLowercaseStringType()), $context);
+						$types = $this->defaultNarrowingHelper->createForSubject($constantExpr, TypeCombinator::intersect($constantType, new AccessoryLowercaseStringType()), $context, $evaluationScope);
 					} elseif (in_array($funcName, ['strtoupper', 'mb_strtoupper'], true)) {
-						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryUppercaseStringType()), $context);
+						$types = $this->defaultNarrowingHelper->createForSubject($constantExpr, TypeCombinator::intersect($constantType, new AccessoryUppercaseStringType()), $context, $evaluationScope);
 					}
 
 					$accessory = $constantType->isNonFalsyString()->yes()
