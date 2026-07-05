@@ -383,10 +383,32 @@ final class IdenticalNarrowingHelper
 		$unwrappedLeft = $left instanceof AlwaysRememberedExpr ? $left->getExpr() : $left;
 		$unwrappedRight = $right instanceof AlwaysRememberedExpr ? $right->getExpr() : $right;
 
-		// ::class fetches narrow by TYPE-based constants in old-world blocks
-		foreach ([$unwrappedLeft, $unwrappedRight] as $side) {
-			if ($side instanceof Expr\ClassConstFetch && $side->class instanceof Expr) {
-				return null;
+		// a `$a::class` side falls back only where the old instanceof-style
+		// blocks would fire: a true context with a single class-name string
+		// on the other side; everything else narrows generically
+		if ($context->true()) {
+			foreach ([
+				[$unwrappedLeft, $left, $leftResult, $rightResult],
+				[$unwrappedRight, $right, $rightResult, $leftResult],
+			] as [$sideUnwrapped, $side, $sideResult, $otherResult]) {
+				if (!($sideUnwrapped instanceof Expr\ClassConstFetch) || !($sideUnwrapped->class instanceof Expr)) {
+					continue;
+				}
+				$otherStrings = $otherResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted)->getConstantStrings();
+				if (count($otherStrings) !== 1 || $otherStrings[0]->getValue() === '') {
+					continue;
+				}
+				if (!$this->reflectionProvider->hasClass($otherStrings[0]->getValue())) {
+					// an unknown class narrows like instanceof - not composed
+					return null;
+				}
+
+				return $this->defaultNarrowingHelper->createForSubject(
+					$sideUnwrapped->class,
+					new ObjectType($otherStrings[0]->getValue(), classReflection: $this->reflectionProvider->getClass($otherStrings[0]->getValue())->asFinal()),
+					$context,
+					$evaluationScope,
+				)->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $side, $sideResult, $otherStrings[0], $context));
 			}
 		}
 
@@ -844,9 +866,7 @@ final class IdenticalNarrowingHelper
 		}
 
 		// a known parent class narrows the argument to the child side of it
-		if (
-			$call->name->toLowerString() === 'get_parent_class'
-		) {
+		if ($call->name->toLowerString() === 'get_parent_class') {
 			if ($context->true()) {
 				$constantStrings = $constantType->getConstantStrings();
 				if (count($constantStrings) === 1 && $constantStrings[0]->getValue() !== '') {
@@ -870,7 +890,7 @@ final class IdenticalNarrowingHelper
 				}
 			}
 
-			return null;
+			// other contexts and non-single class names only pin the call
 		}
 
 		// a string function whose result is a non-empty literal had a
@@ -1014,16 +1034,37 @@ final class IdenticalNarrowingHelper
 			$call->name->toLowerString() === 'gettype'
 		) {
 			$constantStrings = $constantType->getConstantStrings();
-			if (count($constantStrings) !== 1) {
-				return null;
+			if (count($constantStrings) > 1) {
+				// a union of type names narrows by the intersection of the
+				// per-name narrowings
+				$intersectedTypes = null;
+				foreach ($constantStrings as $constantString) {
+					$mapped = $this->getTypeFromGettypeStringValue($constantString->getValue());
+					if ($mapped === null) {
+						continue;
+					}
+					$one = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantString, $context)->unionWith(
+						$this->defaultNarrowingHelper->createForSubject($call->getArgs()[0]->value, $mapped, $context, $evaluationScope),
+					);
+					$intersectedTypes = $intersectedTypes === null ? $one : $intersectedTypes->intersectWith($one);
+				}
+				if ($intersectedTypes !== null) {
+					return $intersectedTypes;
+				}
+
+				// no known type names - only pin the call
 			}
-			$gettypeNarrowedType = $this->getTypeFromGettypeStringValue($constantStrings[0]->getValue());
-			if ($gettypeNarrowedType !== null) {
-				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
-					$this->defaultNarrowingHelper->createForSubject($call->getArgs()[0]->value, $gettypeNarrowedType, $context, $evaluationScope),
-				);
+			if (count($constantStrings) === 1) {
+					$gettypeNarrowedType = $this->getTypeFromGettypeStringValue($constantStrings[0]->getValue());
+				if ($gettypeNarrowedType !== null) {
+					return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+						$this->defaultNarrowingHelper->createForSubject($call->getArgs()[0]->value, $gettypeNarrowedType, $context, $evaluationScope),
+					);
+				}
+				// an unknown type-name string only pins the call itself below
 			}
-			// an unknown type-name string only pins the call itself below
+
+			// a non-constant string side only pins the call
 		}
 
 		// get_class($o) === 'Foo' pins $o to a final Foo when the comparison
