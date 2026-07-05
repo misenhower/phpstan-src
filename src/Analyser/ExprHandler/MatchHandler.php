@@ -20,9 +20,11 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\IdenticalNarrowingHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\RicherScopeGetTypeHelper;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
@@ -63,6 +65,8 @@ final class MatchHandler implements ExprHandler
 		private bool $treatPhpDocTypesAsCertain,
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private IdenticalNarrowingHelper $identicalNarrowingHelper,
+		private RicherScopeGetTypeHelper $richerScopeGetTypeHelper,
 	)
 	{
 		$this->capturedArmResults = new WeakMap();
@@ -335,17 +339,31 @@ final class MatchHandler implements ExprHandler
 				$impurePoints = array_merge($impurePoints, $armCondResult->getImpurePoints());
 				$armCondExpr = new BinaryOp\Identical($expr->cond, $armCond);
 				$armCondResultScope = $armCondResult->getScope();
-				// the `subject === cond` comparison is synthetic - process it on
-				// demand once and consume its type and both narrowing contexts.
-				$armCondSyntheticResult = $nodeScopeResolver->processSyntheticOnDemand($armCondExpr, $armCondResultScope);
+				// the `subject === cond` verdict and both narrowing contexts,
+				// composed from the subject's and the condition's walk results -
+				// no synthetic Identical walk (mirrors BinaryOpHandler's seam)
 				$armCondType = $this->treatPhpDocTypesAsCertain
-					? $armCondSyntheticResult->getTypeOnScope($armCondResultScope, false)
-					: $nodeScopeResolver->processSyntheticOnDemand($armCondExpr, $armCondResultScope->doNotTreatPhpDocTypesAsCertain())->getTypeOnScope($armCondResultScope, true);
+					? $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope, $armCondExpr, $nodeScopeResolver, $condResult->getType(), $armCondResult->getType())->type
+					: $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope->doNotTreatPhpDocTypesAsCertain(), $armCondExpr, $nodeScopeResolver, $condResult->getNativeType(), $armCondResult->getNativeType())->type;
 				if ($armCondType->isTrue()->yes()) {
 					$hasAlwaysTrueCond = true;
 				}
-				$armCondScope = $armCondResultScope->applySpecifiedTypes($armCondSyntheticResult->getSpecifiedTypesForScope($armCondResultScope, TypeSpecifierContext::createFalsey()));
-				$armCondTruthyScope = $armCondResultScope->applySpecifiedTypes($armCondSyntheticResult->getSpecifiedTypesForScope($armCondResultScope, TypeSpecifierContext::createTruthy()));
+				$condArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->cond, $storage);
+				$armCondArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($armCond, $storage);
+				$specifyArmCond = fn (TypeSpecifierContext $specifyContext): SpecifiedTypes => ($this->identicalNarrowingHelper->specifyIdentical(
+					$nodeScopeResolver,
+					$expr->cond,
+					$armCond,
+					$condResult,
+					$armCondResult,
+					$specifyContext,
+					$armCondResultScope,
+					$condArgResult,
+					$armCondArgResult,
+					fn (): Type => $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope, $armCondExpr, $nodeScopeResolver, $condResult->getType(), $armCondResult->getType())->type,
+				) ?? $this->defaultNarrowingHelper->specifyDefaultTypes($armCondExpr, $specifyContext))->setRootExpr($armCondExpr);
+				$armCondScope = $armCondResultScope->applySpecifiedTypes($specifyArmCond(TypeSpecifierContext::createFalsey()));
+				$armCondTruthyScope = $armCondResultScope->applySpecifiedTypes($specifyArmCond(TypeSpecifierContext::createTruthy()));
 				if ($bodyScope === null) {
 					$bodyScope = $armCondTruthyScope;
 				} else {
