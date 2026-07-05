@@ -53,10 +53,9 @@ use function in_array;
  * The evaluation scope is a create-time constant of the calling handler (it
  * carries the flavour and feeds entry composition), never the asking scope.
  *
- * Covers the identity comparisons incrementally; specifyIdentical() returns
- * null for a shape it does not handle yet and the caller falls back to the
- * old-world EqualityTypeSpecifyingHelper. The fallback dies with the last
- * uncovered shape.
+ * Null from the entry points means the shape carries no specific narrowing
+ * (unknown-class ::class sides, null-context asks) and the caller applies
+ * the default truthy/falsey narrowing.
  */
 #[AutowiredService]
 final class IdenticalNarrowingHelper

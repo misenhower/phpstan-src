@@ -20,7 +20,6 @@ use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\CountNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
-use PHPStan\Analyser\ExprHandler\Helper\EqualityTypeSpecifyingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\IdenticalNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\InternalThrowPoint;
@@ -68,7 +67,6 @@ final class BinaryOpHandler implements ExprHandler
 		private PhpVersion $phpVersion,
 		private ImplicitToStringCallHelper $implicitToStringCallHelper,
 		private ExprPrinter $exprPrinter,
-		private EqualityTypeSpecifyingHelper $equalityTypeSpecifyingHelper,
 		private IdenticalNarrowingHelper $identicalNarrowingHelper,
 		private CountNarrowingHelper $countNarrowingHelper,
 		private ExpressionResultFactory $expressionResultFactory,
@@ -256,95 +254,65 @@ final class BinaryOpHandler implements ExprHandler
 				throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
 			},
 			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope, $leftArgResult, $rightArgResult): SpecifiedTypes {
-				$resultFor = static fn (Expr $e): ?ExpressionResult => $e === $expr->left ? $leftResult : ($e === $expr->right ? $rightResult : null);
 				if ($expr instanceof BinaryOp\Identical || $expr instanceof BinaryOp\NotIdentical) {
 					// `!==` narrowing is the `===` narrowing in the negated context -
 					// no synthetic Identical node. A null context never negates.
-					if (!($context->null() && $expr instanceof BinaryOp\NotIdentical)) {
-						$newWorldTypes = $this->identicalNarrowingHelper->specifyIdentical(
-							$nodeScopeResolver,
-							$expr->left,
-							$expr->right,
-							$leftResult,
-							$rightResult,
-							$expr instanceof BinaryOp\NotIdentical ? $context->negate() : $context,
-							// the narrowing composes on the evaluation scope; only the
-							// asked flavour comes from the asking scope
-							$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
-							$leftArgResult,
-							$rightArgResult,
-							// the comparison's own verdict, in Identical semantics
-							static function () use ($nodeScopeResolver, $expr, $scope): Type {
-								$ownType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
-								if ($expr instanceof BinaryOp\NotIdentical) {
-									if ($ownType->isTrue()->yes()) {
-										return new ConstantBooleanType(false);
-									}
-									if ($ownType->isFalse()->yes()) {
-										return new ConstantBooleanType(true);
-									}
-								}
-
-								return $ownType;
-							},
-						);
-						if ($newWorldTypes !== null) {
-							return $newWorldTypes->setRootExpr($expr);
-						}
-					}
-				}
-
-				if ($expr instanceof BinaryOp\Identical) {
-					return $this->equalityTypeSpecifyingHelper->specifyTypesForIdentical($nodeScopeResolver, $expr, $scope, $context, $resultFor);
-				}
-
-				if ($expr instanceof BinaryOp\NotIdentical) {
-					if ($context->null()) {
+					if ($context->null() && $expr instanceof BinaryOp\NotIdentical) {
 						return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 					}
 
-					return $this->defaultNarrowingHelper->specifyTypesForNode(
-						$scope,
-						new BinaryOp\Identical($expr->left, $expr->right),
-						$context->negate(),
-					)->setRootExpr($expr);
+					$newWorldTypes = $this->identicalNarrowingHelper->specifyIdentical(
+						$nodeScopeResolver,
+						$expr->left,
+						$expr->right,
+						$leftResult,
+						$rightResult,
+						$expr instanceof BinaryOp\NotIdentical ? $context->negate() : $context,
+						// the narrowing composes on the evaluation scope; only the
+						// asked flavour comes from the asking scope
+						$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+						$leftArgResult,
+						$rightArgResult,
+						// the comparison's own verdict, in Identical semantics
+						static function () use ($nodeScopeResolver, $expr, $scope): Type {
+							$ownType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
+							if ($expr instanceof BinaryOp\NotIdentical) {
+								if ($ownType->isTrue()->yes()) {
+									return new ConstantBooleanType(false);
+								}
+								if ($ownType->isFalse()->yes()) {
+									return new ConstantBooleanType(true);
+								}
+							}
+
+							return $ownType;
+						},
+					);
+
+					// null = no shape-specific narrowing (unknown-class ::class,
+					// null-context asks) - the default is all that remains
+					return ($newWorldTypes ?? $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context))->setRootExpr($expr);
 				}
 
 				if ($expr instanceof BinaryOp\Equal || $expr instanceof BinaryOp\NotEqual) {
 					// `!=` narrowing is the `==` narrowing in the negated context
-					if (!($context->null() && $expr instanceof BinaryOp\NotEqual)) {
-						$newWorldTypes = $this->identicalNarrowingHelper->specifyEqual(
-							$nodeScopeResolver,
-							$expr->left,
-							$expr->right,
-							$leftResult,
-							$rightResult,
-							$expr instanceof BinaryOp\NotEqual ? $context->negate() : $context,
-							$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
-							$leftArgResult,
-							$rightArgResult,
-						);
-						if ($newWorldTypes !== null) {
-							return $newWorldTypes->setRootExpr($expr);
-						}
-					}
-				}
-
-				if ($expr instanceof BinaryOp\Equal) {
-					return $this->equalityTypeSpecifyingHelper->specifyTypesForEqual($nodeScopeResolver, $expr, $scope, $context, $resultFor);
-				}
-
-				if ($expr instanceof BinaryOp\NotEqual) {
-					// see NotIdentical above
-					if ($context->null()) {
+					if ($context->null() && $expr instanceof BinaryOp\NotEqual) {
 						return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 					}
 
-					return $this->defaultNarrowingHelper->specifyTypesForNode(
-						$scope,
-						new BinaryOp\Equal($expr->left, $expr->right),
-						$context->negate(),
-					)->setRootExpr($expr);
+					$newWorldTypes = $this->identicalNarrowingHelper->specifyEqual(
+						$nodeScopeResolver,
+						$expr->left,
+						$expr->right,
+						$leftResult,
+						$rightResult,
+						$expr instanceof BinaryOp\NotEqual ? $context->negate() : $context,
+						$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+						$leftArgResult,
+						$rightArgResult,
+					);
+
+					return ($newWorldTypes ?? $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context))->setRootExpr($expr);
 				}
 
 				if ($expr instanceof BinaryOp\Smaller || $expr instanceof BinaryOp\SmallerOrEqual) {
