@@ -390,6 +390,51 @@ class Basics
 	}
 
 	/**
+	 * @param int|string $is
+	 * @param array<int> $arr
+	 * @param 'a'|'b' $ab
+	 */
+	public function moreLooseEquality(?bool $nb, $is, string $s, array $arr, string $ab, Suit $suit, Suit $otherSuit): void
+	{
+		if ($nb == true) {
+			assertType('true', $nb);
+		} else {
+			assertType('false|null', $nb);
+		}
+		if ($is == 0) {
+			assertType('0|string', $is);
+		} else {
+			assertType('int<min, -1>|int<1, max>|string', $is);
+		}
+		if ($is == '') {
+			assertType("0|''", $is);
+		} else {
+			assertType('int|non-empty-string', $is);
+		}
+		if ($s == 'foo') {
+			assertType("'foo'", $s);
+		}
+		if ($ab == 'a') {
+			assertType("'a'", $ab);
+		} else {
+			assertType("'b'", $ab);
+		}
+		if ($arr == []) {
+			assertType('array{}', $arr);
+		} else {
+			assertType('non-empty-array<int>', $arr);
+		}
+		if (gettype($is) == 'string') {
+			assertType('string', $is);
+		} else {
+			assertType('int', $is);
+		}
+		if ($suit == $otherSuit) {
+			assertType('EqualityNarrowingNewWorld\\Suit', $suit);
+		}
+	}
+
+	/**
 	 * @param int|string $a
 	 */
 	public function narrowAgainstExpression($a, int $b): void

@@ -9,6 +9,7 @@ use PhpParser\Node\Scalar;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\RicherScopeGetTypeHelper;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -24,6 +25,7 @@ use PHPStan\Type\Accessory\AccessoryUppercaseStringType;
 use PHPStan\Type\Accessory\NonEmptyArrayType;
 use PHPStan\Type\Constant\ConstantArrayType;
 use PHPStan\Type\Constant\ConstantBooleanType;
+use PHPStan\Type\Constant\ConstantFloatType;
 use PHPStan\Type\Constant\ConstantIntegerType;
 use PHPStan\Type\Constant\ConstantStringType;
 use PHPStan\Type\FloatType;
@@ -64,6 +66,7 @@ final class IdenticalNarrowingHelper
 		private ReflectionProvider $reflectionProvider,
 		private CountNarrowingHelper $countNarrowingHelper,
 		private ExprPrinter $exprPrinter,
+		private RicherScopeGetTypeHelper $richerScopeGetTypeHelper,
 	)
 	{
 	}
@@ -440,6 +443,190 @@ final class IdenticalNarrowingHelper
 		}
 
 		return new SpecifiedTypes([], []);
+	}
+
+	/**
+	 * New-world narrowing for `==` (and, via a negated context, `!=`):
+	 * loose comparisons reduce to falsy-set pins, truthiness delegation, or
+	 * the identical narrowing when coercion cannot differ - all composed
+	 * from the operand results, no synthetic nodes. Uncovered shapes return
+	 * null and fall back to the old-world Equal path.
+	 */
+	public function specifyEqual(
+		NodeScopeResolver $nodeScopeResolver,
+		Expr $left,
+		Expr $right,
+		ExpressionResult $leftResult,
+		ExpressionResult $rightResult,
+		TypeSpecifierContext $context,
+		MutatingScope $evaluationScope,
+	): ?SpecifiedTypes
+	{
+		if ($context->null()) {
+			return null;
+		}
+
+		$identicalTypeCallback = fn (): Type => $this->richerScopeGetTypeHelper->getIdenticalResult($evaluationScope, new Expr\BinaryOp\Identical($left, $right), $nodeScopeResolver)->type;
+
+		$unwrappedLeft = $left instanceof AlwaysRememberedExpr ? $left->getExpr() : $left;
+		$unwrappedRight = $right instanceof AlwaysRememberedExpr ? $right->getExpr() : $right;
+		$leftType = $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		$rightType = $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+
+		$leftScalarValues = $leftType->getConstantScalarValues();
+		$rightScalarValues = $rightType->getConstantScalarValues();
+		if (count($leftScalarValues) === 1 && !$unwrappedRight instanceof Expr\ConstFetch) {
+			$constantSideTypes = $this->specifyEqualAgainstConstantSide($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $right, $rightResult, $leftScalarValues[0], $leftType, $rightType, $context, $evaluationScope, $identicalTypeCallback);
+			if ($constantSideTypes !== false) {
+				return $constantSideTypes;
+			}
+		} elseif (count($rightScalarValues) === 1 && !$unwrappedLeft instanceof Expr\ConstFetch) {
+			$constantSideTypes = $this->specifyEqualAgainstConstantSide($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $left, $leftResult, $rightScalarValues[0], $rightType, $leftType, $context, $evaluationScope, $identicalTypeCallback);
+			if ($constantSideTypes !== false) {
+				return $constantSideTypes;
+			}
+		}
+
+		// a side that coerces to a known bool compares the other side's
+		// truthiness - the literal-bool identical narrowing composes it
+		$leftBool = $leftType->toBoolean();
+		if (($leftBool->isTrue()->yes() || $leftBool->isFalse()->yes()) && $rightType->isBoolean()->yes()) {
+			// the literal side of the delegation needs no result; the subject side is the right operand
+			return $this->specifyIdentical($nodeScopeResolver, new Expr\ConstFetch(new Name($leftBool->isTrue()->yes() ? 'true' : 'false')), $right, $rightResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+		}
+		$rightBool = $rightType->toBoolean();
+		if (($rightBool->isTrue()->yes() || $rightBool->isFalse()->yes()) && $leftType->isBoolean()->yes()) {
+			return $this->specifyIdentical($nodeScopeResolver, $left, new Expr\ConstFetch(new Name($rightBool->isTrue()->yes() ? 'true' : 'false')), $leftResult, $leftResult, $context, $evaluationScope, $identicalTypeCallback);
+		}
+
+		// an empty constant array equals only empty countables
+		if ($rightType->isArray()->yes() && $leftType->isConstantArray()->yes() && $leftType->isIterableAtLeastOnce()->no()) {
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, new NonEmptyArrayType(), $context->negate());
+		}
+		if ($leftType->isArray()->yes() && $rightType->isConstantArray()->yes() && $rightType->isIterableAtLeastOnce()->no()) {
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, new NonEmptyArrayType(), $context->negate());
+		}
+
+		// same-type sides cannot coerce - loose equals strict
+		if (
+			($leftType->isString()->yes() && $rightType->isString()->yes())
+			|| ($leftType->isInteger()->yes() && $rightType->isInteger()->yes())
+			|| ($leftType->isFloat()->yes() && $rightType->isFloat()->yes())
+			|| ($leftType->isEnum()->yes() && $rightType->isEnum()->yes())
+		) {
+			return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+		}
+
+		$leftExprString = $this->exprPrinter->printExpr($left);
+		$rightExprString = $this->exprPrinter->printExpr($right);
+		if ($leftExprString === $rightExprString) {
+			if (!$left instanceof Expr\Variable || !$right instanceof Expr\Variable) {
+				return new SpecifiedTypes([], []);
+			}
+		}
+
+		$leftTypes = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, $leftType, $context);
+		$rightTypes = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $rightType, $context);
+
+		return $context->true()
+			? $leftTypes->unionWith($rightTypes)
+			: $leftTypes->normalize($evaluationScope, $nodeScopeResolver)->intersectWith($rightTypes->normalize($evaluationScope, $nodeScopeResolver));
+	}
+
+	/**
+	 * The == narrowing against a single-valued side: a family answer, null
+	 * to fall back to the old-world path, or false when nothing matched and
+	 * the caller continues with the coercion branches.
+	 *
+	 * @param callable(): Type $identicalTypeCallback
+	 * @return SpecifiedTypes|false|null
+	 */
+	private function specifyEqualAgainstConstantSide(
+		NodeScopeResolver $nodeScopeResolver,
+		Expr $left,
+		Expr $right,
+		ExpressionResult $leftResult,
+		ExpressionResult $rightResult,
+		Expr $subject,
+		ExpressionResult $subjectResult,
+		mixed $value,
+		Type $constantType,
+		Type $otherType,
+		TypeSpecifierContext $context,
+		MutatingScope $evaluationScope,
+		callable $identicalTypeCallback,
+	): SpecifiedTypes|false|null
+	{
+		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
+
+		if ($value === null) {
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, new UnionType([
+				new NullType(),
+				new ConstantBooleanType(false),
+				new ConstantIntegerType(0),
+				new ConstantFloatType(0.0),
+				new ConstantStringType(''),
+				new ConstantArrayType([], []),
+			]), $context);
+		}
+
+		// a bool constant compares by the subject's truthiness
+		if ($value === false) {
+			return $subjectResult->getSpecifiedTypesForScope(
+				$evaluationScope,
+				$context->true() ? TypeSpecifierContext::createFalsey() : TypeSpecifierContext::createFalsey()->negate(),
+			);
+		}
+		if ($value === true) {
+			return $subjectResult->getSpecifiedTypesForScope(
+				$evaluationScope,
+				$context->true() ? TypeSpecifierContext::createTruthy() : TypeSpecifierContext::createTruthy()->negate(),
+			);
+		}
+
+		/* There is a difference between php 7.x and 8.x on the equality
+		 * behavior between zero and the empty string, so to be conservative
+		 * we leave it untouched regardless of the language version */
+		if ($value === 0 && !$otherType->isInteger()->yes() && !$otherType->isBoolean()->yes()) {
+			$trueTypes = $context->true()
+				? [new NullType(), new ConstantBooleanType(false), new ConstantIntegerType(0), new ConstantFloatType(0.0), new StringType()]
+				: [new NullType(), new ConstantBooleanType(false), new ConstantIntegerType(0), new ConstantFloatType(0.0), new ConstantStringType('0')];
+
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, new UnionType($trueTypes), $context);
+		}
+		if ($value === '') {
+			$trueTypes = $context->true()
+				? [new NullType(), new ConstantBooleanType(false), new ConstantIntegerType(0), new ConstantFloatType(0.0), new ConstantStringType('')]
+				: [new NullType(), new ConstantBooleanType(false), new ConstantStringType('')];
+
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, new UnionType($trueTypes), $context);
+		}
+
+		// loose equals strict for these call results and class names
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& $unwrappedSubject->name instanceof Name
+			&& !$unwrappedSubject->isFirstClassCallable()
+			&& isset($unwrappedSubject->getArgs()[0])
+		) {
+			$funcName = $unwrappedSubject->name->toLowerString();
+			if (in_array($funcName, ['gettype', 'get_class', 'get_debug_type'], true) && $constantType->isString()->yes()) {
+				return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			}
+			if ($context->true() && $funcName === 'preg_match' && (new ConstantIntegerType(1))->isSuperTypeOf($constantType)->yes()) {
+				return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			}
+		}
+		if (
+			$unwrappedSubject instanceof Expr\ClassConstFetch
+			&& !($unwrappedSubject->name instanceof Expr)
+			&& $unwrappedSubject->name->toLowerString() === 'class'
+			&& $constantType->isString()->yes()
+		) {
+			return $this->specifyIdentical($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+		}
+
+		return false;
 	}
 
 	/**

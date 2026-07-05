@@ -305,6 +305,24 @@ final class BinaryOpHandler implements ExprHandler
 					)->setRootExpr($expr);
 				}
 
+				if ($expr instanceof BinaryOp\Equal || $expr instanceof BinaryOp\NotEqual) {
+					// `!=` narrowing is the `==` narrowing in the negated context
+					if (!($context->null() && $expr instanceof BinaryOp\NotEqual)) {
+						$newWorldTypes = $this->identicalNarrowingHelper->specifyEqual(
+							$nodeScopeResolver,
+							$expr->left,
+							$expr->right,
+							$leftResult,
+							$rightResult,
+							$expr instanceof BinaryOp\NotEqual ? $context->negate() : $context,
+							$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+						);
+						if ($newWorldTypes !== null) {
+							return $newWorldTypes->setRootExpr($expr);
+						}
+					}
+				}
+
 				if ($expr instanceof BinaryOp\Equal) {
 					return $this->equalityTypeSpecifyingHelper->specifyTypesForEqual($nodeScopeResolver, $expr, $scope, $context, $resultFor);
 				}
