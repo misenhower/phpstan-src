@@ -294,6 +294,26 @@ class Basics
 		}
 	}
 
+	public function classConstFetchNarrowing(object $o): void
+	{
+		if ($o::class === Foo::class) {
+			assertType('EqualityNarrowingNewWorld\\Foo', $o);
+		} else {
+			assertType('object', $o);
+		}
+		if (Foo::class === $o::class) {
+			assertType('EqualityNarrowingNewWorld\\Foo', $o);
+		}
+		if ($o::class !== Foo::class) {
+			assertType('object', $o);
+		} else {
+			assertType('EqualityNarrowingNewWorld\\Foo', $o);
+		}
+		if ($o::class === 'EqualityNarrowingNewWorld\\Foo') {
+			assertType('object', $o);
+		}
+	}
+
 	/** @param mixed $m */
 	public function looseEquality($m, ?string $s): void
 	{

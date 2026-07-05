@@ -195,6 +195,11 @@ final class IdenticalNarrowingHelper
 			) {
 				return null;
 			}
+		} elseif ($unwrappedSubject instanceof Expr\ClassConstFetch && $unwrappedSubject->class instanceof Expr) {
+			// only ::class composes; a constant fetched off an object falls back
+			if ($unwrappedSubject->name instanceof Expr || $unwrappedSubject->name->toLowerString() !== 'class') {
+				return null;
+			}
 		} elseif (!$this->isSubjectCoveredAgainstConstant($subject)) {
 			return null;
 		}
@@ -216,6 +221,30 @@ final class IdenticalNarrowingHelper
 			}
 
 			// other constants and contexts only pin the call below
+		}
+
+		// $a::class === Foo::class narrows $a to a final Foo when true;
+		// other contexts and plain-string sides only pin the fetch
+		if (
+			$unwrappedSubject instanceof Expr\ClassConstFetch
+			&& $unwrappedSubject->class instanceof Expr
+			&& $context->true()
+			&& $constantExpr instanceof Expr\ClassConstFetch
+		) {
+			$constantStrings = $constantType->getConstantStrings();
+			if (count($constantStrings) === 1 && $constantStrings[0]->getValue() !== '') {
+				if (!$this->reflectionProvider->hasClass($constantStrings[0]->getValue())) {
+					// an unknown class name narrows like instanceof - not composed yet
+					return null;
+				}
+
+				return $this->defaultNarrowingHelper->createForSubject(
+					$unwrappedSubject->class,
+					new ObjectType($constantStrings[0]->getValue(), classReflection: $this->reflectionProvider->getClass($constantStrings[0]->getValue())->asFinal()),
+					$context,
+					$evaluationScope,
+				)->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context));
+			}
 		}
 
 		// a trimmed string that is not '' was a non-empty string already
