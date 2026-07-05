@@ -200,6 +200,24 @@ class Basics
 		}
 	}
 
+	public function substrFamilyNarrowing(string $s): void
+	{
+		if (substr($s, 0, 3) === 'foo') {
+			assertType('non-falsy-string', $s);
+		}
+		if (strtolower($s) === 'abc') {
+			assertType('non-falsy-string', $s);
+		}
+		if (strtoupper($s) === '0') {
+			assertType('non-empty-string', $s);
+		}
+		if (ucfirst($s) === 'Foo') {
+			assertType('non-falsy-string', $s);
+		} else {
+			assertType('string', $s);
+		}
+	}
+
 	public function getClassNarrowing(object $o): void
 	{
 		if (get_class($o) === Foo::class) {

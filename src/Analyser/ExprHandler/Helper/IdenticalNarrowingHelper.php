@@ -13,10 +13,12 @@ use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
 use PHPStan\Reflection\ReflectionProvider;
+use PHPStan\Type\Accessory\AccessoryLowercaseStringType;
 use PHPStan\Type\Accessory\AccessoryNonEmptyStringType;
 use PHPStan\Type\Accessory\AccessoryNonFalsyStringType;
 use PHPStan\Type\ArrayType;
 use PHPStan\Type\BooleanType;
+use PHPStan\Type\Accessory\AccessoryUppercaseStringType;
 use PHPStan\Type\Accessory\NonEmptyArrayType;
 use PHPStan\Type\Constant\ConstantArrayType;
 use PHPStan\Type\Constant\ConstantBooleanType;
@@ -33,6 +35,7 @@ use PHPStan\Type\ObjectWithoutClassType;
 use PHPStan\Type\ResourceType;
 use PHPStan\Type\StringType;
 use PHPStan\Type\Type;
+use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\UnionType;
 use function count;
 use function in_array;
@@ -178,7 +181,12 @@ final class IdenticalNarrowingHelper
 			if (
 				!($unwrappedSubject->name instanceof Name)
 				|| $unwrappedSubject->isFirstClassCallable()
-				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype', 'preg_match', 'strlen', 'mb_strlen', 'count', 'sizeof'], true)
+				|| !in_array($unwrappedSubject->name->toLowerString(), [
+					'get_class', 'get_debug_type', 'gettype', 'preg_match', 'strlen', 'mb_strlen', 'count', 'sizeof',
+					'substr', 'strstr', 'stristr', 'strchr', 'strrchr', 'strtolower', 'strtoupper', 'ucfirst', 'lcfirst',
+					'mb_substr', 'mb_strstr', 'mb_stristr', 'mb_strchr', 'mb_strrchr', 'mb_strtolower', 'mb_strtoupper', 'mb_ucfirst', 'mb_lcfirst',
+					'ucwords', 'mb_convert_case', 'mb_convert_kana',
+				], true)
 				|| !isset($unwrappedSubject->getArgs()[0])
 			) {
 				return null;
@@ -204,6 +212,51 @@ final class IdenticalNarrowingHelper
 			}
 
 			// other constants and contexts only pin the call below
+		}
+
+		// a string function whose result is a non-empty literal had a
+		// non-empty (non-falsy for a non-falsy literal) string argument;
+		// case-mapping functions pin the case accessory on the literal side
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& in_array($unwrappedSubject->name->toLowerString(), [
+				'substr', 'strstr', 'stristr', 'strchr', 'strrchr', 'strtolower', 'strtoupper', 'ucfirst', 'lcfirst',
+				'mb_substr', 'mb_strstr', 'mb_stristr', 'mb_strchr', 'mb_strrchr', 'mb_strtolower', 'mb_strtoupper', 'mb_ucfirst', 'mb_lcfirst',
+				'ucwords', 'mb_convert_case', 'mb_convert_kana',
+			], true)
+		) {
+			if ($context->truthy() && $constantType->isNonEmptyString()->yes()) {
+				$argExpr = $unwrappedSubject->getArgs()[0]->value;
+				$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+				if ($argResult === null) {
+					return null;
+				}
+				$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+
+				if ($argType->isString()->yes()) {
+					$types = new SpecifiedTypes();
+					$funcName = $unwrappedSubject->name->toLowerString();
+					if (in_array($funcName, ['strtolower', 'mb_strtolower'], true)) {
+						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryLowercaseStringType()), $context);
+					} elseif (in_array($funcName, ['strtoupper', 'mb_strtoupper'], true)) {
+						$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $constantExpr, $constantResult, TypeCombinator::intersect($constantType, new AccessoryUppercaseStringType()), $context);
+					}
+
+					$accessory = $constantType->isNonFalsyString()->yes()
+						? new AccessoryNonFalsyStringType()
+						: new AccessoryNonEmptyStringType();
+
+					return $types->unionWith($this->defaultNarrowingHelper->createForSubject(
+						$argExpr,
+						TypeCombinator::intersect($argType, $accessory),
+						$context,
+						$evaluationScope,
+					));
+				}
+			}
+
+			// a non-string argument, an empty literal or a non-truthy
+			// context only pins the call
 		}
 
 		// count($x) === N reconstructs the array shape by its size - before
