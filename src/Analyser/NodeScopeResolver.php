@@ -1708,8 +1708,10 @@ class NodeScopeResolver
 				foreach ($scopesWithIterableValueType as $scopeWithIterableValueType) {
 					if ($keyVarExpr !== null) {
 						$arrayExprDimFetch = new ArrayDimFetch($stmt->expr, $keyVarExpr);
-						$dimFetchType = $this->processSyntheticOnDemand($arrayExprDimFetch, $scopeWithIterableValueType)->getTypeOnScope($scopeWithIterableValueType, false);
-						$dimFetchNativeType = $this->processSyntheticOnDemand($arrayExprDimFetch, $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain())->getTypeOnScope($scopeWithIterableValueType, true);
+						// enterForeach tracks this exact dim fetch - the tracked-holder
+						// fast path answers without pricing the synthetic node
+						$dimFetchType = $this->readTypeOfMaybeStored($arrayExprDimFetch, $scopeWithIterableValueType);
+						$dimFetchNativeType = $this->readTypeOfMaybeStored($arrayExprDimFetch, $scopeWithIterableValueType->doNotTreatPhpDocTypesAsCertain());
 						// Condition-based narrowings like `is_string($type)` apply to the value
 						// variable but not automatically to the array dim fetch, even though the
 						// two describe the same element for a given iteration. If the value var
@@ -4838,7 +4840,8 @@ class NodeScopeResolver
 				$scope = $scope->assignVariable(
 					$name,
 					$varTag->getType(),
-					$this->processSyntheticOnDemand($variableNode, $scope->doNotTreatPhpDocTypesAsCertain())->getTypeOnScope($scope, true),
+					// a plain variable read is scope state - no synthetic pricing
+					$this->readTypeOfMaybeStored($variableNode, $scope->doNotTreatPhpDocTypesAsCertain()),
 					$certainty,
 				);
 			}
