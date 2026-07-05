@@ -190,7 +190,7 @@ final class IdenticalNarrowingHelper
 
 		$unwrappedSubject = $subject instanceof AlwaysRememberedExpr ? $subject->getExpr() : $subject;
 		if ($unwrappedSubject instanceof Expr\FuncCall) {
-			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted), $context, $evaluationScope);
+			$familyTypes = $this->specifyFuncCallFamilies($subject, $subjectResult, $unwrappedSubject, $constantExpr, $this->literalType($constantExpr) ?? $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted), $context, $evaluationScope);
 			if ($familyTypes === null) {
 				return null;
 			}
@@ -206,7 +206,7 @@ final class IdenticalNarrowingHelper
 			return null;
 		}
 
-		$constantType = $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		$constantType = $this->literalType($constantExpr) ?? $constantResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
 		if (count($constantType->getFiniteTypes()) !== 1) {
 			// a class constant does not have to be single-valued
 			return null;
@@ -470,8 +470,8 @@ final class IdenticalNarrowingHelper
 
 		$unwrappedLeft = $left instanceof AlwaysRememberedExpr ? $left->getExpr() : $left;
 		$unwrappedRight = $right instanceof AlwaysRememberedExpr ? $right->getExpr() : $right;
-		$leftType = $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
-		$rightType = $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		$leftType = $this->literalType($unwrappedLeft) ?? $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		$rightType = $this->literalType($unwrappedRight) ?? $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
 
 		$leftScalarValues = $leftType->getConstantScalarValues();
 		$rightScalarValues = $rightType->getConstantScalarValues();
@@ -980,6 +980,34 @@ final class IdenticalNarrowingHelper
 
 
 		return false;
+	}
+
+	/** The static type of a literal node - no result or scope needed. */
+	private function literalType(Expr $expr): ?Type
+	{
+		if ($expr instanceof Scalar\Int_) {
+			return new ConstantIntegerType($expr->value);
+		}
+		if ($expr instanceof Scalar\Float_) {
+			return new ConstantFloatType($expr->value);
+		}
+		if ($expr instanceof Scalar\String_) {
+			return new ConstantStringType($expr->value);
+		}
+		if ($expr instanceof Expr\ConstFetch) {
+			$name = $expr->name->toLowerString();
+			if ($name === 'true') {
+				return new ConstantBooleanType(true);
+			}
+			if ($name === 'false') {
+				return new ConstantBooleanType(false);
+			}
+			if ($name === 'null') {
+				return new NullType();
+			}
+		}
+
+		return null;
 	}
 
 	private function isScalarLiteral(Expr $expr): bool
