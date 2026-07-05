@@ -1541,8 +1541,11 @@ final class AssignHandler implements ExprHandler
 
 			$refVarName = $arrayItem->value->name;
 			$dimFetchExpr = new ArrayDimFetch($parentExpr, $dimExpr);
-			$refType = $nodeScopeResolver->processSyntheticOnDemand(new Variable($refVarName), $scope)->getTypeOnScope($scope, false);
-			$refNativeType = $nodeScopeResolver->processSyntheticOnDemand(new Variable($refVarName), $scope)->getTypeOnScope($scope, true);
+			// a plain variable read is scope state - no need to price a synthetic
+			// Variable node on demand (mirrors VariableHandler's typeCallback)
+			$nativeScope = $scope->doNotTreatPhpDocTypesAsCertain();
+			$refType = $scope->hasVariableType($refVarName)->no() ? new ErrorType() : $scope->getVariableType($refVarName);
+			$refNativeType = $nativeScope->hasVariableType($refVarName)->no() ? new ErrorType() : $nativeScope->getVariableType($refVarName);
 
 			// When $rootVarName's array key changes, update $refVarName
 			$scope = $scope->assignExpression(
