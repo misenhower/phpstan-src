@@ -259,6 +259,7 @@ final class BinaryOpHandler implements ExprHandler
 					// no synthetic Identical node. A null context never negates.
 					if (!($context->null() && $expr instanceof BinaryOp\NotIdentical)) {
 						$newWorldTypes = $this->identicalNarrowingHelper->specifyIdentical(
+							$nodeScopeResolver,
 							$expr->left,
 							$expr->right,
 							$leftResult,

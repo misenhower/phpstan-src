@@ -294,6 +294,36 @@ class Basics
 		}
 	}
 
+	/**
+	 * @param 5 $five
+	 * @param int|string $is
+	 * @param Suit $suit
+	 * @param Suit $otherSuit
+	 * @param array{a: int}|null $arrOrNull
+	 * @param array{a: int}|false $arrOrFalse
+	 */
+	public function generalExprVsExpr($five, $is, Suit $suit, Suit $otherSuit, $arrOrNull, $arrOrFalse, ?int $ni): void
+	{
+		if ($is === $five) {
+			assertType('5', $is);
+		} else {
+			assertType('int<min, 4>|int<6, max>|string', $is);
+		}
+		if ($suit === $otherSuit) {
+			assertType('EqualityNarrowingNewWorld\\Suit', $suit);
+		} else {
+			assertType('EqualityNarrowingNewWorld\\Suit', $suit);
+		}
+		if ($arrOrNull === $ni) {
+			assertType('null', $arrOrNull);
+			assertType('null', $ni);
+		}
+		if ($arrOrFalse === $arrOrNull) {
+			assertType('array{a: int}', $arrOrFalse);
+			assertType('array{a: int}', $arrOrNull);
+		}
+	}
+
 	public function classConstFetchNarrowing(object $o): void
 	{
 		if ($o::class === Foo::class) {

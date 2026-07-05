@@ -8,10 +8,12 @@ use PhpParser\Node\Name;
 use PhpParser\Node\Scalar;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\AlwaysRememberedExpr;
+use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Type\Accessory\AccessoryLowercaseStringType;
 use PHPStan\Type\Accessory\AccessoryNonEmptyStringType;
@@ -61,6 +63,7 @@ final class IdenticalNarrowingHelper
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 		private ReflectionProvider $reflectionProvider,
 		private CountNarrowingHelper $countNarrowingHelper,
+		private ExprPrinter $exprPrinter,
 	)
 	{
 	}
@@ -70,6 +73,7 @@ final class IdenticalNarrowingHelper
 	 *        in Identical semantics (the caller flips a NotIdentical verdict)
 	 */
 	public function specifyIdentical(
+		NodeScopeResolver $nodeScopeResolver,
 		Expr $left,
 		Expr $right,
 		ExpressionResult $leftResult,
@@ -94,7 +98,12 @@ final class IdenticalNarrowingHelper
 			$subject = $left;
 			$subjectResult = $leftResult;
 		} else {
-			return $this->specifyAgainstScalarLiteral($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			$types = $this->specifyAgainstScalarLiteral($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+			if ($types !== null) {
+				return $types;
+			}
+
+			return $this->specifyGeneral($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
 		}
 
 		if ($constantName !== 'null' && !$this->isSubjectCoveredAgainstConstant($subject)) {
@@ -571,6 +580,104 @@ final class IdenticalNarrowingHelper
 		}
 
 		return null;
+	}
+
+	/**
+	 * The general expr-vs-expr tail of the identical narrowing: a
+	 * single-valued side pins its value onto the other, otherwise both sides
+	 * pin each other's types in the true context and cross-exclude in the
+	 * false one. Runs only for operand shapes whose specialized narrowing is
+	 * already composed - calls and ::class fetches still fall back.
+	 *
+	 * @param callable(): Type $identicalTypeCallback
+	 */
+	private function specifyGeneral(
+		NodeScopeResolver $nodeScopeResolver,
+		Expr $left,
+		Expr $right,
+		ExpressionResult $leftResult,
+		ExpressionResult $rightResult,
+		TypeSpecifierContext $context,
+		MutatingScope $evaluationScope,
+		callable $identicalTypeCallback,
+	): ?SpecifiedTypes
+	{
+		$unwrappedLeft = $left instanceof AlwaysRememberedExpr ? $left->getExpr() : $left;
+		$unwrappedRight = $right instanceof AlwaysRememberedExpr ? $right->getExpr() : $right;
+
+		// calls narrow their arguments and ::class fetches their class by
+		// TYPE-based constants too - those old-world blocks are not composed
+		foreach ([$unwrappedLeft, $unwrappedRight] as $side) {
+			if ($side instanceof Expr\FuncCall) {
+				return null;
+			}
+			if ($side instanceof Expr\ClassConstFetch && $side->class instanceof Expr) {
+				return null;
+			}
+		}
+
+		$leftType = $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+		$rightType = $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+
+		// a side whose TYPE is a constant bool delegates into the subject's
+		// own bool-context narrowing - only the literal form is composed
+		foreach ([$leftType, $rightType] as $sideType) {
+			if ($sideType->isTrue()->yes() || $sideType->isFalse()->yes()) {
+				return null;
+			}
+		}
+
+		$decidedTypes = $this->specifyDecidedComparison($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $identicalTypeCallback);
+		if ($decidedTypes !== null) {
+			return $decidedTypes;
+		}
+
+		$types = null;
+		if (
+			count($leftType->getFiniteTypes()) === 1
+			|| (
+				$context->true()
+				&& $leftType->isConstantValue()->yes()
+				&& !$rightType->equals($leftType)
+				&& $rightType->isSuperTypeOf($leftType)->yes())
+		) {
+			$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $leftType, $context);
+		}
+		if (
+			count($rightType->getFiniteTypes()) === 1
+			|| (
+				$context->true()
+				&& $rightType->isConstantValue()->yes()
+				&& !$leftType->equals($rightType)
+				&& $leftType->isSuperTypeOf($rightType)->yes()
+			)
+		) {
+			$leftTypes = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, $rightType, $context);
+			$types = $types !== null ? $types->unionWith($leftTypes) : $leftTypes;
+		}
+
+		if ($types !== null) {
+			return $types;
+		}
+
+		$leftExprString = $this->exprPrinter->printExpr($unwrappedLeft);
+		$rightExprString = $this->exprPrinter->printExpr($unwrappedRight);
+		if ($leftExprString === $rightExprString) {
+			if (!$unwrappedLeft instanceof Expr\Variable || !$unwrappedRight instanceof Expr\Variable) {
+				return new SpecifiedTypes([], []);
+			}
+		}
+
+		if ($context->true()) {
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, $rightType, $context)->unionWith(
+				$this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $leftType, $context),
+			);
+		} elseif ($context->false()) {
+			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, $leftType, $context)->normalize($evaluationScope, $nodeScopeResolver)
+				->intersectWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $rightType, $context)->normalize($evaluationScope, $nodeScopeResolver));
+		}
+
+		return new SpecifiedTypes([], []);
 	}
 
 	private function isScalarLiteral(Expr $expr): bool
