@@ -104,16 +104,26 @@ final class IdenticalNarrowingHelper
 			$subject = $left;
 			$subjectResult = $leftResult;
 		} else {
+			// a side whose TYPE is a constant bool (match (true) arms, bool
+			// class constants) compares like the literal - the old
+			// constant-binary handling, composed
+			$unwrappedLeft = $left instanceof AlwaysRememberedExpr ? $left->getExpr() : $left;
+			$unwrappedRight = $right instanceof AlwaysRememberedExpr ? $right->getExpr() : $right;
+			$leftType = $this->literalType($unwrappedLeft) ?? $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+			if (($leftType->isTrue()->yes() || $leftType->isFalse()->yes()) && !$unwrappedRight instanceof Expr\ConstFetch) {
+				return $this->specifyAgainstBool($right, $rightResult, $leftType->isTrue()->yes(), $context, $evaluationScope);
+			}
+			$rightType = $this->literalType($unwrappedRight) ?? $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+			if (($rightType->isTrue()->yes() || $rightType->isFalse()->yes()) && !$unwrappedLeft instanceof Expr\ConstFetch) {
+				return $this->specifyAgainstBool($left, $leftResult, $rightType->isTrue()->yes(), $context, $evaluationScope);
+			}
+
 			$types = $this->specifyAgainstScalarLiteral($left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
 			if ($types !== null) {
 				return $types;
 			}
 
 			return $this->specifyGeneral($nodeScopeResolver, $left, $right, $leftResult, $rightResult, $context, $evaluationScope, $leftArgResult, $rightArgResult, $identicalTypeCallback);
-		}
-
-		if ($constantName !== 'null' && !$this->isSubjectCoveredAgainstConstant($subject)) {
-			return null;
 		}
 
 		if ($constantName === 'null') {
@@ -131,14 +141,27 @@ final class IdenticalNarrowingHelper
 			);
 		}
 
-		// a bool literal pins the constant through the entries and runs the
-		// subject's own narrowing in the matching bool context - identity,
-		// not truthiness: `=== false` is the false context, not falsey
+		return $this->specifyAgainstBool($subject, $subjectResult, $constantName === 'true', $context, $evaluationScope);
+	}
+
+	/**
+	 * A bool constant pins itself through the entries and runs the subject's
+	 * own narrowing in the matching bool context - identity, not truthiness:
+	 * `=== false` is the false context, not falsey.
+	 */
+	private function specifyAgainstBool(
+		Expr $subject,
+		ExpressionResult $subjectResult,
+		bool $value,
+		TypeSpecifierContext $context,
+		MutatingScope $evaluationScope,
+	): SpecifiedTypes
+	{
 		$types = $this->defaultNarrowingHelper->createSubjectTypes(
 			$evaluationScope,
 			$subject,
 			$subjectResult,
-			new ConstantBooleanType($constantName === 'true'),
+			new ConstantBooleanType($value),
 			$context,
 		);
 
@@ -150,7 +173,7 @@ final class IdenticalNarrowingHelper
 			return $types;
 		}
 
-		$boolContext = $constantName === 'true' ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createFalse();
+		$boolContext = $value ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createFalse();
 
 		return $types->unionWith($subjectResult->getSpecifiedTypesForScope(
 			$evaluationScope,
@@ -373,14 +396,6 @@ final class IdenticalNarrowingHelper
 
 		$leftType = $leftResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
 		$rightType = $rightResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
-
-		// a side whose TYPE is a constant bool delegates into the subject's
-		// own bool-context narrowing - only the literal form is composed
-		foreach ([$leftType, $rightType] as $sideType) {
-			if ($sideType->isTrue()->yes() || $sideType->isFalse()->yes()) {
-				return null;
-			}
-		}
 
 		// a single call side runs the family compositions with the other
 		// side's TYPE as the constant - the composed form of the old
