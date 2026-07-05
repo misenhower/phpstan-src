@@ -148,6 +148,35 @@ class Basics
 		}
 	}
 
+	/**
+	 * @param list<string> $list
+	 * @param array{a: int, b?: string} $shape
+	 * @param array<int> $ints
+	 */
+	public function countNarrowingShapes(array $list, array $shape, array $ints): void
+	{
+		if (count($list) === 2) {
+			assertType('array{string, string}', $list);
+		} else {
+			assertType('list<string>', $list);
+		}
+		if (count($list) !== 1) {
+			assertType('list<string>', $list);
+		} else {
+			assertType('array{string}', $list);
+		}
+		if (count($shape) === 1) {
+			assertType('array{a: int, b?: string}', $shape);
+		}
+		if (sizeof($ints) === 0) {
+			assertType('array{}', $ints);
+		}
+		if (count($list, COUNT_RECURSIVE) === 2) {
+			// non-nested list: recursive count equals normal count
+			assertType('array{string, string}', $list);
+		}
+	}
+
 	public function strlenNarrowing(string $s): void
 	{
 		if (strlen($s) === 0) {

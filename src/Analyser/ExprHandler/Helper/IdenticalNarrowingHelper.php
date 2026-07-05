@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser\ExprHandler\Helper;
 
+use Countable;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Name;
 use PhpParser\Node\Scalar;
@@ -16,6 +17,8 @@ use PHPStan\Type\Accessory\AccessoryNonEmptyStringType;
 use PHPStan\Type\Accessory\AccessoryNonFalsyStringType;
 use PHPStan\Type\ArrayType;
 use PHPStan\Type\BooleanType;
+use PHPStan\Type\Accessory\NonEmptyArrayType;
+use PHPStan\Type\Constant\ConstantArrayType;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\Constant\ConstantIntegerType;
 use PHPStan\Type\Constant\ConstantStringType;
@@ -30,6 +33,7 @@ use PHPStan\Type\ObjectWithoutClassType;
 use PHPStan\Type\ResourceType;
 use PHPStan\Type\StringType;
 use PHPStan\Type\Type;
+use PHPStan\Type\UnionType;
 use function count;
 use function in_array;
 
@@ -51,6 +55,7 @@ final class IdenticalNarrowingHelper
 	public function __construct(
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 		private ReflectionProvider $reflectionProvider,
+		private CountNarrowingHelper $countNarrowingHelper,
 	)
 	{
 	}
@@ -173,7 +178,7 @@ final class IdenticalNarrowingHelper
 			if (
 				!($unwrappedSubject->name instanceof Name)
 				|| $unwrappedSubject->isFirstClassCallable()
-				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype', 'preg_match', 'strlen', 'mb_strlen'], true)
+				|| !in_array($unwrappedSubject->name->toLowerString(), ['get_class', 'get_debug_type', 'gettype', 'preg_match', 'strlen', 'mb_strlen', 'count', 'sizeof'], true)
 				|| !isset($unwrappedSubject->getArgs()[0])
 			) {
 				return null;
@@ -199,6 +204,58 @@ final class IdenticalNarrowingHelper
 			}
 
 			// other constants and contexts only pin the call below
+		}
+
+		// count($x) === N reconstructs the array shape by its size - before
+		// the decided guard so exhaustive size switches keep collapsing
+		if (
+			$unwrappedSubject instanceof Expr\FuncCall
+			&& in_array($unwrappedSubject->name->toLowerString(), ['count', 'sizeof'], true)
+		) {
+			if (!$constantType->isInteger()->yes()) {
+				return null;
+			}
+
+			$argExpr = $unwrappedSubject->getArgs()[0]->value;
+			$argResult = $evaluationScope->getCurrentExpressionResultStorage()?->findExpressionResult($argExpr);
+			if ($argResult === null) {
+				return null;
+			}
+			$argType = $argResult->getTypeOnScope($evaluationScope, $evaluationScope->nativeTypesPromoted);
+
+			if ((new ConstantIntegerType(0))->isSuperTypeOf($constantType)->yes()) {
+				$newArgType = $context->truthy() && !$argType->isArray()->yes()
+					? new UnionType([new ObjectType(Countable::class), new ConstantArrayType([], [])])
+					: new ConstantArrayType([], []);
+
+				return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context)->unionWith(
+					$this->defaultNarrowingHelper->createForSubject($argExpr, $newArgType, $context, $evaluationScope),
+				);
+			}
+
+			$countTypes = $this->countNarrowingHelper->specifyCountSize($unwrappedSubject, $argType, $constantType, $context, $evaluationScope, $unwrappedSubject);
+			if ($countTypes !== null) {
+				// the old path pinned the call only through the remembered
+				// wrapper; the composed pin covers wrapper and call alike
+				if ($subject !== $unwrappedSubject) {
+					return $countTypes->unionWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context));
+				}
+
+				return $countTypes;
+			}
+
+			if ($context->truthy() && $argType->isArray()->yes()) {
+				$types = $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $subject, $subjectResult, $constantType, $context);
+				if (IntegerRangeType::fromInterval(1, null)->isSuperTypeOf($constantType)->yes()) {
+					return $types->unionWith(
+						$this->defaultNarrowingHelper->createForSubject($argExpr, new NonEmptyArrayType(), $context, $evaluationScope),
+					);
+				}
+
+				return $types;
+			}
+
+			// a non-array argument in a non-truthy context only pins the call
 		}
 
 		// strlen($x) === 0 empties $x; === N >= 1 makes it non-empty in the
