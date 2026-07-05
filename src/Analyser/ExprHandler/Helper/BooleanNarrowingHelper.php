@@ -7,6 +7,8 @@ use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
+use PHPStan\Type\TypeCombinator;
+use PHPStan\Type\Type;
 use PHPStan\DependencyInjection\AutowiredService;
 use function is_string;
 
@@ -22,6 +24,7 @@ final class BooleanNarrowingHelper
 
 	public function __construct(
 		private ConditionalExpressionHolderHelper $conditionalExpressionHolderHelper,
+		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -107,6 +110,147 @@ final class BooleanNarrowingHelper
 			}
 
 			return $types;
+	}
+
+	/**
+	 * The disjunction narrowing - BooleanOr's specify semantics - composed
+	 * from per-operand narrowing/type closures and branch scopes instead of
+	 * the operands' ExpressionResults, so disjunctions without an AST node
+	 * (the non-null narrowing of empty()) reuse it without synthesizing
+	 * BooleanOr chains.
+	 *
+	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $leftTypesCallback
+	 * @param callable(MutatingScope): Type $leftTypeCallback
+	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $rightTypesCallback
+	 * @param callable(MutatingScope): Type $rightTypeCallback
+	 */
+	public function specifyDisjunction(
+		NodeScopeResolver $nodeScopeResolver,
+		MutatingScope $s,
+		TypeSpecifierContext $context,
+		Expr $rootExpr,
+		Expr $leftExpr,
+		callable $leftTypesCallback,
+		callable $leftTypeCallback,
+		MutatingScope $leftTruthyScope,
+		MutatingScope $leftFalseyScope,
+		Expr $rightExpr,
+		callable $rightTypesCallback,
+		callable $rightTypeCallback,
+		MutatingScope $rightTruthyScope,
+	): SpecifiedTypes
+	{
+			$leftTypes = $leftTypesCallback($s, $context)->setRootExpr($rootExpr);
+			$rightScope = $leftFalseyScope;
+			$rightTypes = $rightTypesCallback($rightScope, $context)->setRootExpr($rootExpr);
+
+			if ($context->true()) {
+				if (
+					$leftTypeCallback($s)->toBoolean()->isFalse()->yes()
+				) {
+					$types = $rightTypes->normalize($rightScope, $nodeScopeResolver);
+				} elseif (
+					$leftTypeCallback($s)->toBoolean()->isTrue()->yes()
+					|| $rightTypeCallback($s)->toBoolean()->isFalse()->yes()
+				) {
+					$types = $leftTypes->normalize($s, $nodeScopeResolver);
+				} else {
+					$leftNormalized = $leftTypes->normalize($s, $nodeScopeResolver);
+					$rightNormalized = $rightTypes->normalize($rightScope, $nodeScopeResolver);
+					$types = $leftNormalized->intersectWith($rightNormalized);
+					$types = $this->augmentDisjunctionTruthyWithConditionalHolders(
+						$nodeScopeResolver,
+						$s,
+						$leftTruthyScope,
+						$rightScope,
+						$rightTruthyScope,
+						$rootExpr,
+						$types);
+					$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftNormalized, $rightNormalized, $leftTruthyScope, $rightTruthyScope, $types);
+				}
+			} else {
+				$types = $leftTypes->unionWith($rightTypes);
+			}
+
+			if ($context->true()) {
+				$result = new SpecifiedTypes(
+					$types->getSureTypes(),
+					$types->getSureNotTypes(),
+				);
+				if ($types->shouldOverwrite()) {
+					$result = $result->setAlwaysOverwriteTypes();
+				}
+				return $result->setNewConditionalExpressionHolders($this->conditionalExpressionHolderHelper->mergeConditionalHolders([
+					$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, false, false, $rightScope, $rightExpr),
+					$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $rightTypes, $leftTypes, false, false, $s, $leftExpr),
+					$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, true, false, $rightScope, $rightExpr),
+					$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $rightTypes, $leftTypes, true, false, $s, $leftExpr),
+				]))->setRootExpr($rootExpr);
+			}
+
+			return $types;
+	}
+
+	private function augmentDisjunctionTruthyWithConditionalHolders(
+		NodeScopeResolver $nodeScopeResolver,
+		MutatingScope $scope,
+		MutatingScope $leftTruthyScope,
+		MutatingScope $rightScope,
+		MutatingScope $rightTruthyScope,
+		Expr $rootExpr,
+		SpecifiedTypes $types,
+	): SpecifiedTypes
+	{
+		$seen = [];
+		foreach ([$scope, $rightScope] as $sourceScope) {
+			foreach ($sourceScope->getConditionalExpressions() as $rootExprString => $holders) {
+				if (isset($seen[$rootExprString])) {
+					continue;
+				}
+				if ($holders === []) {
+					continue;
+				}
+				$seen[$rootExprString] = true;
+				$targetExpr = $holders[array_key_first($holders)]->getTypeHolder()->getExpr();
+
+				// Only project when the target stays Yes-defined in the original
+				// scope and in both filtered branches. A sure type implicitly
+				// raises certainty to Yes, which would wrongly upgrade Maybe-defined
+				// variables — `if (empty($a['bar']))` for instance leaves `$a`
+				// Maybe-defined because `empty()` tolerates undefined offsets.
+				if (!$scope->hasExpressionType($targetExpr)->yes()) {
+					continue;
+				}
+				if (!$leftTruthyScope->hasExpressionType($targetExpr)->yes()) {
+					continue;
+				}
+				if (!$rightTruthyScope->hasExpressionType($targetExpr)->yes()) {
+					continue;
+				}
+
+				$origType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
+				$leftType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftTruthyScope);
+				$rightType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightTruthyScope);
+
+				$leftNarrowed = !$leftType->equals($origType) && $origType->isSuperTypeOf($leftType)->yes();
+				$rightNarrowed = !$rightType->equals($origType) && $origType->isSuperTypeOf($rightType)->yes();
+
+				if (!$leftNarrowed || !$rightNarrowed) {
+					continue;
+				}
+
+				$unionType = TypeCombinator::union($leftType, $rightType);
+				if ($unionType->equals($origType)) {
+					continue;
+				}
+
+				$types = $types->unionWith(
+					$this->defaultNarrowingHelper->createSubjectTypes($scope, $targetExpr, null, $unionType, TypeSpecifierContext::createTrue()),
+				);
+			}
+		}
+
+		return $types;
 	}
 
 	private function allExpressionsTrackable(SpecifiedTypes $types): bool

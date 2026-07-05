@@ -11,8 +11,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
-use PHPStan\Analyser\ExprHandler\Helper\ConditionalExpressionHolderHelper;
-use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\BooleanNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
@@ -36,9 +35,8 @@ final class BooleanOrHandler implements ExprHandler
 {
 
 	public function __construct(
-		private ConditionalExpressionHolderHelper $conditionalExpressionHolderHelper,
+		private BooleanNarrowingHelper $booleanNarrowingHelper,
 		private ExpressionResultFactory $expressionResultFactory,
-		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
 	}
@@ -66,68 +64,6 @@ final class BooleanOrHandler implements ExprHandler
 	 * skipped: in the OR-truthy scope the arm that didn't narrow could still be
 	 * the truthy one, so the sound result is the original (unnarrowed) type.
 	 */
-	private function augmentBooleanOrTruthyWithConditionalHolders(
-		NodeScopeResolver $nodeScopeResolver,
-		MutatingScope $scope,
-		MutatingScope $leftTruthyScope,
-		MutatingScope $rightScope,
-		MutatingScope $rightTruthyScope,
-		BooleanOr|LogicalOr $expr,
-		SpecifiedTypes $types,
-	): SpecifiedTypes
-	{
-		$seen = [];
-		foreach ([$scope, $rightScope] as $sourceScope) {
-			foreach ($sourceScope->getConditionalExpressions() as $exprString => $holders) {
-				if (isset($seen[$exprString])) {
-					continue;
-				}
-				if ($holders === []) {
-					continue;
-				}
-				$seen[$exprString] = true;
-				$targetExpr = $holders[array_key_first($holders)]->getTypeHolder()->getExpr();
-
-				// Only project when the target stays Yes-defined in the original
-				// scope and in both filtered branches. A sure type implicitly
-				// raises certainty to Yes, which would wrongly upgrade Maybe-defined
-				// variables — `if (empty($a['bar']))` for instance leaves `$a`
-				// Maybe-defined because `empty()` tolerates undefined offsets.
-				if (!$scope->hasExpressionType($targetExpr)->yes()) {
-					continue;
-				}
-				if (!$leftTruthyScope->hasExpressionType($targetExpr)->yes()) {
-					continue;
-				}
-				if (!$rightTruthyScope->hasExpressionType($targetExpr)->yes()) {
-					continue;
-				}
-
-				$origType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
-				$leftType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftTruthyScope);
-				$rightType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightTruthyScope);
-
-				$leftNarrowed = !$leftType->equals($origType) && $origType->isSuperTypeOf($leftType)->yes();
-				$rightNarrowed = !$rightType->equals($origType) && $origType->isSuperTypeOf($rightType)->yes();
-
-				if (!$leftNarrowed || !$rightNarrowed) {
-					continue;
-				}
-
-				$unionType = TypeCombinator::union($leftType, $rightType);
-				if ($unionType->equals($origType)) {
-					continue;
-				}
-
-				$types = $types->unionWith(
-					$this->defaultNarrowingHelper->createSubjectTypes($scope, $targetExpr, null, $unionType, TypeSpecifierContext::createTrue()),
-				);
-			}
-		}
-
-		return $types;
-	}
-
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		$leftResult = $nodeScopeResolver->processExprNode($stmt, $expr->left, $scope, $storage, $nodeCallback, $context->enterDeep());
@@ -181,55 +117,21 @@ final class BooleanOrHandler implements ExprHandler
 				return new BooleanType();
 			},
 			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): SpecifiedTypes {
-				$leftTypes = $leftResult->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
-				$rightScope = $leftResult->getFalseyScope();
-				$rightTypes = $rightResult->getSpecifiedTypesForScope($rightScope, $context)->setRootExpr($expr);
-
-				if ($context->true()) {
-					if (
-						$leftResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean()->isFalse()->yes()
-					) {
-						$types = $rightTypes->normalize($rightScope, $nodeScopeResolver);
-					} elseif (
-						$leftResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean()->isTrue()->yes()
-						|| $rightResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean()->isFalse()->yes()
-					) {
-						$types = $leftTypes->normalize($s, $nodeScopeResolver);
-					} else {
-						$leftNormalized = $leftTypes->normalize($s, $nodeScopeResolver);
-						$rightNormalized = $rightTypes->normalize($rightScope, $nodeScopeResolver);
-						$types = $leftNormalized->intersectWith($rightNormalized);
-						$types = $this->augmentBooleanOrTruthyWithConditionalHolders(
-							$nodeScopeResolver,
-							$s,
-							$leftResult->getTruthyScope(),
-							$rightScope,
-							$rightResult->getTruthyScope(),
-							$expr,
-							$types);
-						$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftNormalized, $rightNormalized, $leftResult->getTruthyScope(), $rightResult->getTruthyScope(), $types);
-					}
-				} else {
-					$types = $leftTypes->unionWith($rightTypes);
-				}
-
-				if ($context->true()) {
-					$result = new SpecifiedTypes(
-						$types->getSureTypes(),
-						$types->getSureNotTypes(),
-					);
-					if ($types->shouldOverwrite()) {
-						$result = $result->setAlwaysOverwriteTypes();
-					}
-					return $result->setNewConditionalExpressionHolders($this->conditionalExpressionHolderHelper->mergeConditionalHolders([
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, false, false, $rightScope, $expr->right),
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $rightTypes, $leftTypes, false, false, $s, $expr->left),
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, true, false, $rightScope, $expr->right),
-						$this->conditionalExpressionHolderHelper->processBooleanConditionalTypes($nodeScopeResolver, $s, $rightTypes, $leftTypes, true, false, $s, $expr->left),
-					]))->setRootExpr($expr);
-				}
-
-				return $types;
+				return $this->booleanNarrowingHelper->specifyDisjunction(
+					$nodeScopeResolver,
+					$s,
+					$context,
+					$expr,
+					$expr->left,
+					static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $leftResult->getSpecifiedTypesForScope($scope, $ctx),
+					static fn (MutatingScope $scope): Type => $leftResult->getTypeOnScope($scope, $scope->nativeTypesPromoted),
+					$leftResult->getTruthyScope(),
+					$leftResult->getFalseyScope(),
+					$expr->right,
+					static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $rightResult->getSpecifiedTypesForScope($scope, $ctx),
+					static fn (MutatingScope $scope): Type => $rightResult->getTypeOnScope($scope, $scope->nativeTypesPromoted),
+					$rightResult->getTruthyScope(),
+				);
 			},
 		);
 	}
