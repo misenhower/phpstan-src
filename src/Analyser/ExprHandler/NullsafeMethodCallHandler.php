@@ -91,11 +91,13 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			$scope = $scope->mergeWith($scopeBeforeNullsafe);
 		}
 
+		$varResult = $nodeScopeResolver->readStoredResult($expr->var, $storage);
+
 		// The `?->`'s own type on the asking scope. $receiverType is the receiver's
 		// real type, captured before it was ensured non-null; reading its stored
 		// result here would see the non-null device type and drop the
 		// short-circuit's null.
-		$nullsafeTypeCallback = static function (bool $nativeTypesPromoted) use ($expr, $exprResult, $nodeScopeResolver, $receiverType, $beforeScope): Type {
+		$nullsafeTypeCallback = function (bool $nativeTypesPromoted) use ($expr, $exprResult, $nodeScopeResolver, $receiverType, $beforeScope, $varResult): Type {
 			if ($receiverType->isNull()->yes()) {
 				return new NullType();
 			}
@@ -103,10 +105,12 @@ final class NullsafeMethodCallHandler implements ExprHandler
 				return $nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
 			}
 
-			// the plain method call on the null-removed scope is synthetic; the
-			// null-removal narrowing is applied to beforeScope (the evaluation point),
-			// not the asking scope.
-			$truthyScope = $beforeScope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new NotIdentical($expr->var, new ConstFetch(new Name('null'))), $beforeScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($beforeScope, TypeSpecifierContext::createTruthy()));
+			// "receiver !== null" composed from the receiver's stored result -
+			// the identical-narrowing null slice, without synthesizing a
+			// NotIdentical node and re-walking the receiver on demand; the
+			// null-removal narrowing is applied to beforeScope (the evaluation
+			// point), not the asking scope.
+			$truthyScope = $beforeScope->applySpecifiedTypes($this->defaultNarrowingHelper->createSubjectTypes($beforeScope, $expr->var, $varResult, new NullType(), TypeSpecifierContext::createFalsey()));
 			$methodCall = new MethodCall($expr->var, $expr->name, $expr->args);
 
 			return TypeCombinator::union(
