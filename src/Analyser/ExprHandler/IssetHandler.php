@@ -132,6 +132,9 @@ final class IssetHandler implements ExprHandler
 
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new IssetExpressionNode($expr, $varResults), $beforeScope, $storage, $context);
 
+		// lazily memoized multi-subject conjunction fold (ask-independent)
+		$foldAccTypes = null;
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -168,7 +171,7 @@ final class IssetHandler implements ExprHandler
 
 				return new ConstantBooleanType($issetResult);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $varResults, $chainResults, $nodeScopeResolver): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $varResults, $chainResults, $nodeScopeResolver, $beforeScope, &$foldAccTypes): SpecifiedTypes {
 				// type of an already-processed chain link, read from its captured
 				// result (re-evaluated on the asking scope, honouring narrowing) -
 				// never re-walked through the scope
@@ -211,10 +214,17 @@ final class IssetHandler implements ExprHandler
 						};
 					};
 
+					// the fold's branch scopes derive from the evaluation point,
+					// not the asking scope - the accumulated conjunction closure
+					// is ask-independent and built once, reused across asks
+					if ($foldAccTypes !== null) {
+						return $foldAccTypes($s, $context)->setRootExpr($expr);
+					}
+
 					$accExpr = new Isset_([$expr->vars[0]], $expr->getAttributes());
 					$accTypes = $makeSubjectTypes($expr->vars[0], $varResults[0]);
-					$accTruthyScope = $s->applySpecifiedTypes($accTypes($s, TypeSpecifierContext::createTruthy()));
-					$accFalseyScope = $s->applySpecifiedTypes($accTypes($s, TypeSpecifierContext::createFalsey()));
+					$accTruthyScope = $beforeScope->applySpecifiedTypes($accTypes($beforeScope, TypeSpecifierContext::createTruthy()));
+					$accFalseyScope = $beforeScope->applySpecifiedTypes($accTypes($beforeScope, TypeSpecifierContext::createFalsey()));
 
 					for ($i = 1, $varCount = count($expr->vars); $i < $varCount; $i++) {
 						$rightExprNode = new Isset_([$expr->vars[$i]], $expr->getAttributes());
@@ -240,8 +250,10 @@ final class IssetHandler implements ExprHandler
 						);
 						$accExpr = new BooleanAnd($leftExprNode, $rightExprNode);
 						$accTruthyScope = $accTruthyScope->applySpecifiedTypes($rightTypes($accTruthyScope, TypeSpecifierContext::createTruthy()));
-						$accFalseyScope = $s->applySpecifiedTypes($accTypes($s, TypeSpecifierContext::createFalsey()));
+						$accFalseyScope = $beforeScope->applySpecifiedTypes($accTypes($beforeScope, TypeSpecifierContext::createFalsey()));
 					}
+
+					$foldAccTypes = $accTypes;
 
 					return $accTypes($s, $context)->setRootExpr($expr);
 				}

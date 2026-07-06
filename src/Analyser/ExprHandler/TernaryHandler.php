@@ -119,6 +119,9 @@ final class TernaryHandler implements ExprHandler
 			}
 		}
 
+		// lazily memoized merged-falsey scope of the (cond && if) disjunct
+		$aFalseyScope = null;
+
 		return $this->expressionResultFactory->create(
 			$finalScope,
 			beforeScope: $scope,
@@ -168,7 +171,7 @@ final class TernaryHandler implements ExprHandler
 					$elseType,
 				);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $nodeScopeResolver): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $nodeScopeResolver, $scope, &$aFalseyScope): SpecifiedTypes {
 				if ($expr->cond instanceof Ternary || $context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
@@ -209,12 +212,14 @@ final class TernaryHandler implements ExprHandler
 				$elseTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $elseResult->getSpecifiedTypesForScope($scope, $ctx);
 				$elseType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $elseResult->getNativeType() : $elseResult->getType();
 
-				$condTruthyScope = $s->applySpecifiedTypes($condTypes($s, TypeSpecifierContext::createTruthy()));
-				$condFalseyScope = $s->applySpecifiedTypes($condTypes($s, TypeSpecifierContext::createFalsey()));
+				// the decomposition's branch scopes are the operand walks' own
+				// memoized branch scopes (the evaluation points), not ask-derived
+				$condTruthyScope = $ternaryCondResult->getTruthyScope();
+				$condFalseyScope = $ternaryCondResult->getFalseyScope();
 
 				// right disjunct: !cond && else
 				$bNode = new BooleanAnd($notCondNode, $expr->else);
-				$elseFalseyOnCondFalseyScope = $condFalseyScope->applySpecifiedTypes($elseTypes($condFalseyScope, TypeSpecifierContext::createFalsey()));
+				$elseFalseyOnCondFalseyScope = $elseResult->getFalseyScope();
 				$bTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
 					$nodeScopeResolver,
 					$scope,
@@ -229,14 +234,14 @@ final class TernaryHandler implements ExprHandler
 					$elseFalseyOnCondFalseyScope,
 				);
 				$bType = $andVerdict($notCondType, $elseType);
-				$bTruthyScope = $s->applySpecifiedTypes($bTypes($s, TypeSpecifierContext::createTruthy()));
+				$bTruthyScope = $elseResult->getTruthyScope();
 
 				if ($ifResult !== null && $expr->if !== null) {
 					// left disjunct: cond && if
 					$aNode = new BooleanAnd($expr->cond, $expr->if);
 					$ifTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ifResult->getSpecifiedTypesForScope($scope, $ctx);
 					$ifType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $ifResult->getNativeType() : $ifResult->getType();
-					$ifFalseyOnCondTruthyScope = $condTruthyScope->applySpecifiedTypes($ifTypes($condTruthyScope, TypeSpecifierContext::createFalsey()));
+					$ifFalseyOnCondTruthyScope = $ifResult->getFalseyScope();
 					$aTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
 						$nodeScopeResolver,
 						$scope,
@@ -251,8 +256,10 @@ final class TernaryHandler implements ExprHandler
 						$ifFalseyOnCondTruthyScope,
 					);
 					$aType = $andVerdict($condType, $ifType);
-					$aTruthyScope = $s->applySpecifiedTypes($aTypes($s, TypeSpecifierContext::createTruthy()));
-					$aFalseyScope = $s->applySpecifiedTypes($aTypes($s, TypeSpecifierContext::createFalsey()));
+					$aTruthyScope = $ifResult->getTruthyScope();
+					// the merged falsey of (cond && if) has no single walk scope -
+					// derived from the evaluation point once, reused across asks
+					$aFalseyScope ??= $scope->applySpecifiedTypes($aTypes($scope, TypeSpecifierContext::createFalsey()));
 
 					return $this->booleanNarrowingHelper->specifyDisjunction(
 						$nodeScopeResolver,

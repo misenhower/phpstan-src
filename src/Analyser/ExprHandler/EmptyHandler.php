@@ -59,6 +59,10 @@ final class EmptyHandler implements ExprHandler
 
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new EmptyExpressionNode($expr, $exprResult), $beforeScope, $storage, $context);
 
+		// lazily memoized branch scopes of the !isset($x) || !$x decomposition
+		/** @var array{MutatingScope, MutatingScope, MutatingScope}|null $foldScopes */
+		$foldScopes = null;
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -75,7 +79,7 @@ final class EmptyHandler implements ExprHandler
 
 				return new ConstantBooleanType(!$result);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $chainResults, $nodeScopeResolver, $beforeScope): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $chainResults, $nodeScopeResolver, $beforeScope, &$foldScopes): SpecifiedTypes {
 				$isset = $exprResult->getIssetabilityResolution($s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope, false)->isSet(static fn (): bool => true);
 				if ($isset === false) {
 					return new SpecifiedTypes();
@@ -135,9 +139,18 @@ final class EmptyHandler implements ExprHandler
 					return new BooleanType();
 				};
 
-				$leftTruthyScope = $s->applySpecifiedTypes($leftTypes($s, TypeSpecifierContext::createTruthy()));
-				$leftFalseyScope = $s->applySpecifiedTypes($leftTypes($s, TypeSpecifierContext::createFalsey()));
-				$rightTruthyScope = $leftFalseyScope->applySpecifiedTypes($rightTypes($leftFalseyScope, TypeSpecifierContext::createTruthy()));
+				// the disjuncts' branch scopes derive from the evaluation point,
+				// not the asking scope - computed once, reused across asks
+				if ($foldScopes === null) {
+					$leftTruthyScope = $beforeScope->applySpecifiedTypes($leftTypes($beforeScope, TypeSpecifierContext::createTruthy()));
+					$leftFalseyScope = $beforeScope->applySpecifiedTypes($leftTypes($beforeScope, TypeSpecifierContext::createFalsey()));
+					$foldScopes = [
+						$leftTruthyScope,
+						$leftFalseyScope,
+						$leftFalseyScope->applySpecifiedTypes($rightTypes($leftFalseyScope, TypeSpecifierContext::createTruthy())),
+					];
+				}
+				[$leftTruthyScope, $leftFalseyScope, $rightTruthyScope] = $foldScopes;
 
 				return $this->booleanNarrowingHelper->specifyDisjunction(
 					$nodeScopeResolver,
