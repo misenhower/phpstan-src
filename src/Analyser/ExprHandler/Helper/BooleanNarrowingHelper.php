@@ -125,10 +125,14 @@ final class BooleanNarrowingHelper
 	 * (the non-null narrowing of empty()) reuse it without synthesizing
 	 * BooleanOr chains.
 	 *
+	 * The operand verdict callbacks take only the asked flavour: the decided
+	 * checks read the operands' walk-position types (the results' own
+	 * evaluation points), never the asking scope.
+	 *
 	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $leftTypesCallback
-	 * @param callable(MutatingScope): Type $leftTypeCallback
+	 * @param callable(bool): Type $leftTypeCallback
 	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $rightTypesCallback
-	 * @param callable(MutatingScope): Type $rightTypeCallback
+	 * @param callable(bool): Type $rightTypeCallback
 	 */
 	public function specifyDisjunction(
 		NodeScopeResolver $nodeScopeResolver,
@@ -153,12 +157,12 @@ final class BooleanNarrowingHelper
 
 			if ($context->true()) {
 				if (
-					$leftTypeCallback($s)->toBoolean()->isFalse()->yes()
+					$leftTypeCallback($s->nativeTypesPromoted)->toBoolean()->isFalse()->yes()
 				) {
 					$types = $rightTypes;
 				} elseif (
-					$leftTypeCallback($s)->toBoolean()->isTrue()->yes()
-					|| $rightTypeCallback($s)->toBoolean()->isFalse()->yes()
+					$leftTypeCallback($s->nativeTypesPromoted)->toBoolean()->isTrue()->yes()
+					|| $rightTypeCallback($s->nativeTypesPromoted)->toBoolean()->isFalse()->yes()
 				) {
 					$types = $leftTypes;
 				} else {

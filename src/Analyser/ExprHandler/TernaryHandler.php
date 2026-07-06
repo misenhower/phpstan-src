@@ -179,10 +179,10 @@ final class TernaryHandler implements ExprHandler
 				$notCondNode = new Expr\BooleanNot($expr->cond);
 
 				$condTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ternaryCondResult->getSpecifiedTypesForScope($scope, $ctx);
-				$condType = static fn (MutatingScope $scope): Type => $ternaryCondResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+				$condType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $ternaryCondResult->getNativeType() : $ternaryCondResult->getType();
 				$notCondTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ternaryCondResult->getSpecifiedTypesForScope($scope, $ctx->negate());
-				$notCondType = static function (MutatingScope $scope) use ($ternaryCondResult): Type {
-					$bool = $ternaryCondResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)->toBoolean();
+				$notCondType = static function (bool $nativeTypesPromoted) use ($ternaryCondResult): Type {
+					$bool = ($nativeTypesPromoted ? $ternaryCondResult->getNativeType() : $ternaryCondResult->getType())->toBoolean();
 					if ($bool->isTrue()->yes()) {
 						return new ConstantBooleanType(false);
 					}
@@ -193,9 +193,9 @@ final class TernaryHandler implements ExprHandler
 					return new BooleanType();
 				};
 				$andVerdict = static function (callable $left, callable $right): callable {
-					return static function (MutatingScope $scope) use ($left, $right): Type {
-						$leftBool = $left($scope)->toBoolean();
-						$rightBool = $right($scope)->toBoolean();
+					return static function (bool $nativeTypesPromoted) use ($left, $right): Type {
+						$leftBool = $left($nativeTypesPromoted)->toBoolean();
+						$rightBool = $right($nativeTypesPromoted)->toBoolean();
 						if ($leftBool->isFalse()->yes() || $rightBool->isFalse()->yes()) {
 							return new ConstantBooleanType(false);
 						}
@@ -207,7 +207,7 @@ final class TernaryHandler implements ExprHandler
 					};
 				};
 				$elseTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $elseResult->getSpecifiedTypesForScope($scope, $ctx);
-				$elseType = static fn (MutatingScope $scope): Type => $elseResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+				$elseType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $elseResult->getNativeType() : $elseResult->getType();
 
 				$condTruthyScope = $s->applySpecifiedTypes($condTypes($s, TypeSpecifierContext::createTruthy()));
 				$condFalseyScope = $s->applySpecifiedTypes($condTypes($s, TypeSpecifierContext::createFalsey()));
@@ -235,7 +235,7 @@ final class TernaryHandler implements ExprHandler
 					// left disjunct: cond && if
 					$aNode = new BooleanAnd($expr->cond, $expr->if);
 					$ifTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ifResult->getSpecifiedTypesForScope($scope, $ctx);
-					$ifType = static fn (MutatingScope $scope): Type => $ifResult->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+					$ifType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $ifResult->getNativeType() : $ifResult->getType();
 					$ifFalseyOnCondTruthyScope = $condTruthyScope->applySpecifiedTypes($ifTypes($condTruthyScope, TypeSpecifierContext::createFalsey()));
 					$aTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
 						$nodeScopeResolver,

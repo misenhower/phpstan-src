@@ -75,7 +75,7 @@ final class EmptyHandler implements ExprHandler
 
 				return new ConstantBooleanType(!$result);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $chainResults, $nodeScopeResolver): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $chainResults, $nodeScopeResolver, $beforeScope): SpecifiedTypes {
 				$isset = $exprResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
 				if ($isset === false) {
 					return new SpecifiedTypes();
@@ -100,8 +100,9 @@ final class EmptyHandler implements ExprHandler
 
 					return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($scope, $expr->expr, $readType, $issetNode, $negated);
 				};
-				$leftType = static function (MutatingScope $scope) use ($exprResult): Type {
-					$result = $exprResult->getIssetabilityResolution($scope, false)->isSet(static function (Type $type): ?bool {
+				$leftType = static function (bool $nativeTypesPromoted) use ($exprResult, $beforeScope): Type {
+					$issetabilityScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+					$result = $exprResult->getIssetabilityResolution($issetabilityScope, false)->isSet(static function (Type $type): ?bool {
 						$isNull = $type->isNull();
 						if ($isNull->maybe()) {
 							return null;
@@ -122,8 +123,8 @@ final class EmptyHandler implements ExprHandler
 
 					return $exprResult->getSpecifiedTypesForScope($scope, $ctx->negate());
 				};
-				$rightType = static function (MutatingScope $scope) use ($exprResult): Type {
-					$bool = $exprResult->getTypeOnScope($scope, $scope->nativeTypesPromoted)->toBoolean();
+				$rightType = static function (bool $nativeTypesPromoted) use ($exprResult): Type {
+					$bool = ($nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType())->toBoolean();
 					if ($bool->isTrue()->yes()) {
 						return new ConstantBooleanType(false);
 					}
