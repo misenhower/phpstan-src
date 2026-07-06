@@ -224,10 +224,11 @@ final class SpecifiedTypes
 
 		foreach ($this->sureNotTypes as $exprString => [$exprNode, $sureNotType]) {
 			if (!isset($sureTypes[$exprString])) {
-				// $nodeScopeResolver is passed from inside-out callbacks so the expr
-				// type is read from its ExpressionResult instead of Scope::getType().
+				// $nodeScopeResolver marks the inside-out (engine) path: the subject's
+				// current type is derived from the scope's tracked state without
+				// processing the node. Extensions calling without it read normally.
 				$exprType = $nodeScopeResolver !== null
-					? $nodeScopeResolver->readTypeOfMaybeStored($exprNode, $scope->toMutatingScope())
+					? $scope->toMutatingScope()->getStateType($exprNode)
 					: $scope->getType($exprNode);
 				$sureTypes[$exprString] = [$exprNode, TypeCombinator::remove($exprType, $sureNotType)];
 				continue;

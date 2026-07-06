@@ -153,7 +153,7 @@ final class ConditionalExpressionHolderHelper
 				continue;
 			}
 
-			$scopeType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
+			$scopeType = $scope->getStateType($expr);
 			$conditionType = TypeCombinator::remove($scopeType, $type);
 			if ($scopeType->equals($conditionType)) {
 				$droppedNoOpConditions[$exprString] = true;
@@ -171,7 +171,7 @@ final class ConditionalExpressionHolderHelper
 				continue;
 			}
 
-			$scopeType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $scope);
+			$scopeType = $scope->getStateType($expr);
 			$conditionType = TypeCombinator::intersect($scopeType, $type);
 			if ($scopeType->equals($conditionType)) {
 				$droppedNoOpConditions[$exprString] = true;
@@ -229,7 +229,7 @@ final class ConditionalExpressionHolderHelper
 				}
 
 				$targetScope = $expr instanceof Expr\Variable ? $scope : $rightScope;
-				$targetType = $nodeScopeResolver->readTypeOfMaybeStored($expr, $targetScope);
+				$targetType = $targetScope->getStateType($expr);
 				$holderType = $holdersFromSureTypes
 					? TypeCombinator::intersect($targetType, $type)
 					: TypeCombinator::remove($targetType, $type);

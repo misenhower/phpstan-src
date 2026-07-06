@@ -3052,6 +3052,18 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		return $scope->invalidateExpression($expr);
 	}
 
+	/**
+	 * A narrowable expression's current type as this scope sees it, derived
+	 * from tracked state (recursing into operands via reflection/offset reads)
+	 * - never by processing the node. The flavour follows the scope: a
+	 * native-promoted scope answers native types. Non-narrowable expressions
+	 * (calls, constants) fall back to getType().
+	 */
+	public function getStateType(Expr $expr): Type
+	{
+		return $this->resolveScopeStateType($expr, $this->nativeTypesPromoted);
+	}
+
 	private function getScopeStateType(Expr $expr): Type
 	{
 		return $this->resolveScopeStateType($expr, false);
