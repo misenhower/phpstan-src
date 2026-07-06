@@ -130,7 +130,12 @@ final class CoalesceHandler implements ExprHandler
 						($context->true() && $type->isSuperTypeOf($rightType)->no())
 						|| ($context->false() && $type->isSuperTypeOf($rightType)->yes())
 					) {
-						return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, $type, $context);
+						// the coalesce's own key is emitted alongside the left-side
+						// narrowing (createForExpr's double-key, like the nullsafe
+						// handlers) - consumers summing the checked expression's own
+						// entry (ImpossibleCheckTypeHelper) rely on it
+						return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, $type, $context)
+							->unionWith($this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context));
 					}
 				}
 
