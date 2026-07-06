@@ -547,7 +547,7 @@ final class StaticCallHandler implements ExprHandler
 			}
 
 			if (count($args) > 0 && $resolvedParametersAcceptor !== null) {
-				$specifiedTypes = $this->typeSpecifier->specifyTypesFromConditionalReturnType($context, $expr, $resolvedParametersAcceptor, $scope);
+				$specifiedTypes = $this->defaultNarrowingHelper->specifyTypesFromConditionalReturnType($context, $expr, $resolvedParametersAcceptor, $scope);
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes;
 				}

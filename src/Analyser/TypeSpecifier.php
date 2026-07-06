@@ -18,20 +18,16 @@ use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Reflection\Assertions;
 use PHPStan\Reflection\ParametersAcceptor;
 use PHPStan\Reflection\ReflectionProvider;
-use PHPStan\Reflection\ResolvedFunctionVariant;
 use PHPStan\ShouldNotHappenException;
 use PHPStan\TrinaryLogic;
 use PHPStan\Type\Accessory\HasOffsetValueType;
 use PHPStan\Type\Accessory\NonEmptyArrayType;
-use PHPStan\Type\ConditionalTypeForParameter;
 use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\Constant\ConstantIntegerType;
 use PHPStan\Type\FunctionTypeSpecifyingExtension;
 use PHPStan\Type\Generic\TemplateType;
 use PHPStan\Type\IntegerRangeType;
 use PHPStan\Type\MethodTypeSpecifyingExtension;
-use PHPStan\Type\MixedType;
-use PHPStan\Type\NeverType;
 use PHPStan\Type\NullType;
 use PHPStan\Type\StaticMethodTypeSpecifyingExtension;
 use PHPStan\Type\StaticTypeFactory;
@@ -129,112 +125,6 @@ final class TypeSpecifier
 		}
 
 		return (new SpecifiedTypes([], []))->setRootExpr($expr);
-	}
-
-	/** @internal */
-	public function specifyTypesFromConditionalReturnType(
-		TypeSpecifierContext $context,
-		Expr\CallLike $call,
-		ParametersAcceptor $parametersAcceptor,
-		Scope $scope,
-	): ?SpecifiedTypes
-	{
-		if (!$parametersAcceptor instanceof ResolvedFunctionVariant) {
-			return null;
-		}
-
-		$returnType = $parametersAcceptor->getOriginalParametersAcceptor()->getReturnType();
-		if (!$returnType instanceof ConditionalTypeForParameter) {
-			return null;
-		}
-
-		if ($context->true()) {
-			$leftType = new ConstantBooleanType(true);
-			$rightType = new ConstantBooleanType(false);
-		} elseif ($context->false()) {
-			$leftType = new ConstantBooleanType(false);
-			$rightType = new ConstantBooleanType(true);
-		} elseif ($context->null()) {
-			$leftType = new MixedType();
-			$rightType = new NeverType();
-		} else {
-			return null;
-		}
-
-		$argumentExpr = null;
-		$parameters = $parametersAcceptor->getParameters();
-		foreach ($call->getArgs() as $i => $arg) {
-			if ($arg->unpack) {
-				continue;
-			}
-
-			if ($arg->name !== null) {
-				$paramName = $arg->name->toString();
-			} elseif (isset($parameters[$i])) {
-				$paramName = $parameters[$i]->getName();
-			} else {
-				continue;
-			}
-
-			if ($returnType->getParameterName() !== '$' . $paramName) {
-				continue;
-			}
-
-			$argumentExpr = $arg->value;
-		}
-
-		if ($argumentExpr === null) {
-			return null;
-		}
-
-		return $this->getConditionalSpecifiedTypes($returnType, $leftType, $rightType, $scope, $argumentExpr);
-	}
-
-	private function getConditionalSpecifiedTypes(
-		ConditionalTypeForParameter $conditionalType,
-		Type $leftType,
-		Type $rightType,
-		Scope $scope,
-		Expr $argumentExpr,
-	): ?SpecifiedTypes
-	{
-		$targetType = $conditionalType->getTarget();
-		$ifType = $conditionalType->getIf();
-		$elseType = $conditionalType->getElse();
-
-		if (
-			(
-				$argumentExpr instanceof Node\Scalar
-				|| ($argumentExpr instanceof ConstFetch && in_array(strtolower($argumentExpr->name->toString()), ['true', 'false', 'null'], true))
-			) && ($ifType instanceof NeverType || $elseType instanceof NeverType)
-		) {
-			return null;
-		}
-
-		if ($leftType->isSuperTypeOf($ifType)->yes() && $rightType->isSuperTypeOf($elseType)->yes()) {
-			$context = $conditionalType->isNegated() ? TypeSpecifierContext::createFalse() : TypeSpecifierContext::createTrue();
-		} elseif ($leftType->isSuperTypeOf($elseType)->yes() && $rightType->isSuperTypeOf($ifType)->yes()) {
-			$context = $conditionalType->isNegated() ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createFalse();
-		} else {
-			return null;
-		}
-
-		$specifiedTypes = $this->create(
-			$argumentExpr,
-			$targetType,
-			$context,
-			$scope,
-		);
-
-		if ($targetType->isTrue()->yes() || $targetType->isFalse()->yes()) {
-			if ($targetType->isFalse()->yes()) {
-				$context = $context->negate();
-			}
-
-			$specifiedTypes = $specifiedTypes->unionWith($this->specifyTypesInCondition($scope, $argumentExpr, $context));
-		}
-
-		return $specifiedTypes;
 	}
 
 	/**
