@@ -200,9 +200,9 @@ final class DefaultNarrowingHelper
 			// memoized result type replace the old scope-type probe
 			if ($subjectResult->containsNullsafe()) {
 				if ($context->true()) {
-					$nullRuledOut = $type->isNull()->no() || $subjectResult->getTypeOnScope($s, $s->nativeTypesPromoted)->isNull()->no();
+					$nullRuledOut = $type->isNull()->no() || ($s->nativeTypesPromoted ? $subjectResult->getNativeType() : $subjectResult->getType())->isNull()->no();
 				} elseif ($context->false()) {
-					$nullRuledOut = TypeCombinator::containsNull($type) || $subjectResult->getTypeOnScope($s, $s->nativeTypesPromoted)->isNull()->no();
+					$nullRuledOut = TypeCombinator::containsNull($type) || ($s->nativeTypesPromoted ? $subjectResult->getNativeType() : $subjectResult->getType())->isNull()->no();
 				} else {
 					$nullRuledOut = false;
 				}

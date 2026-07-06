@@ -111,7 +111,7 @@ final class CoalesceHandler implements ExprHandler
 					return $this->coalesceCompositionHelper->getFalseySpecifiedTypes($s, $expr->left, $condResult, $expr, $context);
 				}
 
-				if ((new ConstantBooleanType(false))->isSuperTypeOf($rightResult->getTypeOnScope($s, $s->nativeTypesPromoted)->toBoolean())->yes()) {
+				if ((new ConstantBooleanType(false))->isSuperTypeOf(($s->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType())->toBoolean())->yes()) {
 					return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, new NullType(), TypeSpecifierContext::createFalse())->setRootExpr($expr);
 				}
 
@@ -125,7 +125,7 @@ final class CoalesceHandler implements ExprHandler
 			// TypeSpecifier::create() recovered by unwrapping the coalesce
 			createTypesCallback: function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult): SpecifiedTypes {
 				if (!$context->null()) {
-					$rightType = $rightResult->getTypeOnScope($s, $s->nativeTypesPromoted);
+					$rightType = $s->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 					if (
 						($context->true() && $type->isSuperTypeOf($rightType)->no())
 						|| ($context->false() && $type->isSuperTypeOf($rightType)->yes())

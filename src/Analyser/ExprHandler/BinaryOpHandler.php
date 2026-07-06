@@ -275,17 +275,11 @@ final class BinaryOpHandler implements ExprHandler
 						$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
 						$leftArgResult,
 						$rightArgResult,
-						// the comparison's own verdict, in Identical semantics
-						static function () use ($nodeScopeResolver, $expr, $scope, $typeCallback): Type {
-							// on storage misses (loop-convergence passes) compute the
-							// verdict from the captured operand results instead of
-							// re-walking the comparison on demand
-							$ownType = $nodeScopeResolver->findStoredResult($expr, $scope)?->getTypeOnScope($scope, $scope->nativeTypesPromoted);
-							if ($ownType === null) {
-								$ownType = $scope->hasExpressionType($expr)->yes()
-									? $scope->getTrackedExpressionType($expr)
-									: $typeCallback($scope->nativeTypesPromoted);
-							}
+						// the comparison's own verdict, in Identical semantics -
+						// computed from the captured operand results (the walk's
+						// evaluation point), only the flavour follows the ask
+						static function () use ($expr, $scope, $typeCallback): Type {
+							$ownType = $typeCallback($scope->nativeTypesPromoted);
 							if ($expr instanceof BinaryOp\NotIdentical) {
 								if ($ownType->isTrue()->yes()) {
 									return new ConstantBooleanType(false);
