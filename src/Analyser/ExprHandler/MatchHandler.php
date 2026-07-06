@@ -324,10 +324,12 @@ final class MatchHandler implements ExprHandler
 			}
 
 			$filteringExprs = [];
+			$filteringCondData = [];
 			$armCondScope = $matchScope;
 			$condNodes = [];
 			$armCondResultScope = $matchScope;
 			$bodyScope = null;
+			$condArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->cond, $storage);
 			foreach ($arm->conds as $j => $armCond) {
 				if (isset($armCondsToSkip[$i][$j])) {
 					continue;
@@ -348,7 +350,6 @@ final class MatchHandler implements ExprHandler
 				if ($armCondType->isTrue()->yes()) {
 					$hasAlwaysTrueCond = true;
 				}
-				$condArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($expr->cond, $storage);
 				$armCondArgResult = $this->identicalNarrowingHelper->captureFirstArgResult($armCond, $storage);
 				$specifyArmCond = fn (TypeSpecifierContext $specifyContext): SpecifiedTypes => ($this->identicalNarrowingHelper->specifyIdentical(
 					$nodeScopeResolver,
@@ -370,11 +371,38 @@ final class MatchHandler implements ExprHandler
 					$bodyScope = $bodyScope->mergeWith($armCondTruthyScope);
 				}
 				$filteringExprs[] = $armCond;
+				$filteringCondData[] = [$armCond, $armCondResult];
 			}
 
-			$filteringExpr = $this->getFilteringExprForMatchArm($expr, $filteringExprs);
-			$filteringExprResult = $nodeScopeResolver->processSyntheticOnDemand($filteringExpr, $matchScope);
-			$bodyScope ??= $matchScope->applySpecifiedTypes($filteringExprResult->getSpecifiedTypesForScope($matchScope, TypeSpecifierContext::createTruthy()));
+			if (count($filteringCondData) === 1) {
+				// single-condition arm: the filtering expression is the same
+				// subject === cond comparison - compose its verdict from the
+				// walk results instead of pricing a synthetic node ($bodyScope
+				// is always set here, so the multi-cond branch's ??= has no
+				// single-cond counterpart)
+				if ($bodyScope === null) {
+					throw new ShouldNotHappenException();
+				}
+				[$filteringCond, $filteringCondResult] = $filteringCondData[0];
+				$filteringIdentical = new BinaryOp\Identical($expr->cond, $filteringCond);
+				$filteringExprType = $this->richerScopeGetTypeHelper->getIdenticalResult($matchScope, $filteringIdentical, $nodeScopeResolver, $condResult->getType(), $filteringCondResult->getType())->type;
+				// the falsey narrowing stays a synthetic walk: the walk re-prices
+				// the subject on the arm-narrowed scope, and that progressive
+				// narrowing (each arm sees the subject minus the previous arms'
+				// values) is what lets the last arm decide exhaustiveness -
+				// composing from the original subject result loses it (bug-6064)
+				$filteringFalseyTypes = $nodeScopeResolver->processSyntheticOnDemand($filteringIdentical, $armCondScope)->getSpecifiedTypesForScope($armCondScope, TypeSpecifierContext::createFalsey());
+			} else {
+				// multi-condition arms compose through in_array so the narrowing
+				// stays owned by the in_array type-specifying extension; arms
+				// whose conditions were all skipped keep the empty in_array
+				// (always false)
+				$filteringExpr = $this->getFilteringExprForMatchArm($expr, $filteringExprs);
+				$filteringExprResult = $nodeScopeResolver->processSyntheticOnDemand($filteringExpr, $matchScope);
+				$bodyScope ??= $matchScope->applySpecifiedTypes($filteringExprResult->getSpecifiedTypesForScope($matchScope, TypeSpecifierContext::createTruthy()));
+				$filteringExprType = $filteringExprResult->getTypeOnScope($matchScope, false);
+				$filteringFalseyTypes = $nodeScopeResolver->processSyntheticOnDemand($filteringExpr, $armCondScope)->getSpecifiedTypesForScope($armCondScope, TypeSpecifierContext::createFalsey());
+			}
 			$matchArmBody = new MatchExpressionArmBody($bodyScope, $arm->body);
 			$armNodes[$i] = new MatchExpressionArm($matchArmBody, $condNodes, $arm->getStartLine());
 
@@ -395,15 +423,11 @@ final class MatchHandler implements ExprHandler
 			$impurePoints = array_merge($impurePoints, $armResult->getImpurePoints());
 			// Mirror getArmScopesAndTypes: an arm whose filtering expression is
 			// always false is unreachable and does not contribute to the result
-			// type. The filtering expression is synthetic - price it on demand
-			// against the current storage instead of re-walking via Scope::getType().
-			$filteringExprType = $filteringExprResult->getTypeOnScope($matchScope, false);
+			// type.
 			if (!$filteringExprType->isFalse()->yes()) {
 				$armTypeResults[] = [$armResult, $bodyScope, $arm->body];
 			}
-			$matchScope = $armCondScope->applySpecifiedTypes(
-				$nodeScopeResolver->processSyntheticOnDemand($filteringExpr, $armCondScope)->getSpecifiedTypesForScope($armCondScope, TypeSpecifierContext::createFalsey()),
-			);
+			$matchScope = $armCondScope->applySpecifiedTypes($filteringFalseyTypes);
 		}
 
 		if (!$hasDefaultCond && !$hasAlwaysTrueCond && $condType->isBoolean()->yes() && $condType->isConstantScalarValue()->yes()) {
