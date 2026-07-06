@@ -147,6 +147,9 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 */
 	public array $resolvedTypes = [];
 
+	/** @var array<string, array{Type, Type}> */
+	private array $pricedSpecifiedExprTypePairs = [];
+
 	/** @var array<string, static> */
 	private array $truthyScopes = [];
 
@@ -1253,8 +1256,15 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				];
 			}
 
-			// a synthetic node - price it on demand, see
-			// resolveTypeOfNewWorldHandlerNode()
+			// a call subject (or a synthetic plain-chain variant) is priced on
+			// demand once per scope: one walk answers both flavours, and the
+			// truthy and falsey applications of one narrowing - and every later
+			// ask on this scope - reuse the pair
+			$key = $this->getNodeKey($expr);
+			if (array_key_exists($key, $this->pricedSpecifiedExprTypePairs)) {
+				return $this->pricedSpecifiedExprTypePairs[$key];
+			}
+
 			$scope = $this->toMutatingScope();
 			$result = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
 				$expr,
@@ -1262,7 +1272,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				$storage->duplicate(),
 			);
 
-			return [
+			return $this->pricedSpecifiedExprTypePairs[$key] = [
 				$result->getTypeOnScope($scope, $scope->nativeTypesPromoted),
 				$result->getTypeOnScope($scope, true),
 			];
