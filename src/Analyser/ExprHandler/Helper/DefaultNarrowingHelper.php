@@ -7,6 +7,7 @@ use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Expr\CallLike;
+use PhpParser\Node\Name;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\ArrayDimFetch;
 use PhpParser\Node\Expr\PropertyFetch;
@@ -29,6 +30,7 @@ use PHPStan\Node\Expr\TypeExpr;
 use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Reflection\Assertions;
 use PHPStan\Reflection\ParametersAcceptor;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Reflection\ResolvedFunctionVariant;
 use PHPStan\Rules\Arrays\AllowedArrayKeysTypes;
 use PHPStan\Type\Accessory\HasOffsetType;
@@ -76,6 +78,7 @@ final class DefaultNarrowingHelper
 		private ExprPrinter $exprPrinter,
 		#[AutowiredParameter]
 		private bool $rememberPossiblyImpureFunctionValues,
+		private ReflectionProvider $reflectionProvider,
 	)
 	{
 	}
@@ -563,7 +566,12 @@ final class DefaultNarrowingHelper
 				return $expr->getExprType();
 			}
 
-			return $scope->obtainResultForNode($expr)->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+			$result = $scope->getCurrentExpressionResultStorage()?->findExpressionResult($expr);
+			if ($result !== null) {
+				return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+			}
+
+			return $scope->getStateType($expr);
 		};
 
 		/** @var SpecifiedTypes|null $types */
@@ -608,7 +616,13 @@ final class DefaultNarrowingHelper
 
 				$subjectResult = $assertExpr instanceof TypeExpr
 					? null
-					: $scope->obtainResultForNode($assertExpr);
+					: $scope->getCurrentExpressionResultStorage()?->findExpressionResult($assertExpr);
+				if ($subjectResult === null && $assertExpr instanceof CallLike && !$this->isRememberableCallSubject($scope, $assertExpr)) {
+					// a call subject whose value must not be remembered (side
+					// effects) contributes no narrowing - old create()'s purity
+					// gate, derived from reflection instead of a walk
+					continue;
+				}
 				$newTypes = $this->createSubjectTypes(
 					$scope,
 					$assertExpr,
@@ -731,10 +745,15 @@ final class DefaultNarrowingHelper
 			return null;
 		}
 
+		$argumentResult = $scope->getCurrentExpressionResultStorage()?->findExpressionResult($argumentExpr);
+		if ($argumentResult === null && $argumentExpr instanceof CallLike && !$this->isRememberableCallSubject($scope, $argumentExpr)) {
+			// old create()'s purity gate, derived from reflection instead of a walk
+			return null;
+		}
 		$specifiedTypes = $this->createSubjectTypes(
 			$scope,
 			$argumentExpr,
-			$scope->obtainResultForNode($argumentExpr),
+			$argumentResult,
 			$targetType,
 			$context,
 		);
@@ -748,6 +767,42 @@ final class DefaultNarrowingHelper
 		}
 
 		return $specifiedTypes;
+	}
+
+	/**
+	 * Whether a call subject's value may be remembered by narrowing - the
+	 * walk-free equivalent of the impure gate a stored ExpressionResult
+	 * carries: a call with (possible) side effects yields a different value
+	 * next time, so pinning a type to its expression string would lie.
+	 */
+	private function isRememberableCallSubject(MutatingScope $scope, Expr $expr): bool
+	{
+		if ($expr instanceof Expr\FuncCall && $expr->name instanceof Name) {
+			if (!$this->reflectionProvider->hasFunction($expr->name, $scope)) {
+				return false;
+			}
+			$hasSideEffects = $this->reflectionProvider->getFunction($expr->name, $scope)->hasSideEffects();
+		} elseif ($expr instanceof Expr\MethodCall && $expr->name instanceof Identifier) {
+			$methodReflection = $scope->getMethodReflection($scope->getStateType($expr->var), $expr->name->toString());
+			if ($methodReflection === null) {
+				return false;
+			}
+			$hasSideEffects = $methodReflection->hasSideEffects();
+		} elseif ($expr instanceof Expr\StaticCall && $expr->name instanceof Identifier && $expr->class instanceof Name) {
+			$methodReflection = $scope->getMethodReflection($scope->resolveTypeByName($expr->class), $expr->name->toString());
+			if ($methodReflection === null) {
+				return false;
+			}
+			$hasSideEffects = $methodReflection->hasSideEffects();
+		} else {
+			return false;
+		}
+
+		if ($hasSideEffects->yes()) {
+			return false;
+		}
+
+		return $this->rememberPossiblyImpureFunctionValues || $hasSideEffects->no();
 	}
 
 }
