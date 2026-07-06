@@ -91,13 +91,11 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			$scope = $scope->mergeWith($scopeBeforeNullsafe);
 		}
 
-		$varResult = $nodeScopeResolver->readStoredResult($expr->var, $storage);
-
 		// The `?->`'s own type on the asking scope. $receiverType is the receiver's
 		// real type, captured before it was ensured non-null; reading its stored
 		// result here would see the non-null device type and drop the
 		// short-circuit's null.
-		$nullsafeTypeCallback = function (bool $nativeTypesPromoted) use ($expr, $exprResult, $nodeScopeResolver, $receiverType, $beforeScope, $varResult): Type {
+		$nullsafeTypeCallback = static function (bool $nativeTypesPromoted) use ($exprResult, $receiverType): Type {
 			if ($receiverType->isNull()->yes()) {
 				return new NullType();
 			}
@@ -105,16 +103,11 @@ final class NullsafeMethodCallHandler implements ExprHandler
 				return $nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType();
 			}
 
-			// "receiver !== null" composed from the receiver's stored result -
-			// the identical-narrowing null slice, without synthesizing a
-			// NotIdentical node and re-walking the receiver on demand; the
-			// null-removal narrowing is applied to beforeScope (the evaluation
-			// point), not the asking scope.
-			$truthyScope = $beforeScope->applySpecifiedTypes($this->defaultNarrowingHelper->createSubjectTypes($beforeScope, $expr->var, $varResult, new NullType(), TypeSpecifierContext::createFalsey()));
-			$methodCall = new MethodCall($expr->var, $expr->name, $expr->args);
-
+			// the plain call was already priced on the ensured (null-removed)
+			// scope during processExpr - its result is the call's type on the
+			// non-null receiver; the short-circuit contributes the null
 			return TypeCombinator::union(
-				$nodeScopeResolver->processSyntheticOnDemand($methodCall, $truthyScope)->getTypeOnScope($truthyScope, $nativeTypesPromoted),
+				$nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType(),
 				new NullType(),
 			);
 		};
