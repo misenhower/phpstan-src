@@ -139,7 +139,6 @@ use const PHP_VERSION_ID;
 class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 {
 
-	public const KEEP_VOID_ATTRIBUTE_NAME = 'keepVoid';
 	private const COMPLEX_UNION_TYPE_MEMBER_LIMIT = 8;
 
 	/**
@@ -1375,6 +1374,8 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	{
 		if (
 			!$node instanceof Match_
+			&& !$node instanceof Expr\Yield_
+			&& !$node instanceof Expr\YieldFrom
 			&& (
 				(
 					!$node instanceof FuncCall
@@ -1392,10 +1393,22 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			return $originalType;
 		}
 
-		$clonedNode = clone $node;
-		$clonedNode->setAttribute(self::KEEP_VOID_ATTRIBUTE_NAME, true);
+		// the null may be a projected void: read the call's/match's raw
+		// (void-kept) own type. A result already stored in the current frame is
+		// read directly; a node evaluated on a different scope - e.g. an arrow
+		// body typed on the closure scope - is processed on demand there, its
+		// raw own type keeping void without any keep-void marker on the node.
+		$storage = $this->expressionResultStorageStack->getCurrent();
+		$result = $storage?->findExpressionResult($node);
+		if ($result === null) {
+			$result = $this->container->getByType(NodeScopeResolver::class)->processExprOnDemand(
+				$node,
+				$this->toMutatingScope(),
+				$storage !== null ? $storage->duplicate() : new ExpressionResultStorage(),
+			);
+		}
 
-		return $this->getType($clonedNode);
+		return $result->getKeepVoidType($this->nativeTypesPromoted);
 	}
 
 	public function doNotTreatPhpDocTypesAsCertain(): self

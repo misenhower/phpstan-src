@@ -6,8 +6,11 @@ use PhpParser\Node\Expr;
 use PHPStan\DependencyInjection\GenerateFactory;
 use PHPStan\DependencyInjection\Type\ExpressionTypeResolverExtensionRegistryProvider;
 use PHPStan\ShouldNotHappenException;
+use PHPStan\Analyser\Traverser\VoidToNullTraverser;
 use PHPStan\Type\Type;
+use PHPStan\Type\TypeTraverser;
 use PHPStan\Type\TypeUtils;
+use PHPStan\Type\UnionType;
 
 #[GenerateFactory(interface: ExpressionResultFactory::class)]
 final class ExpressionResult
@@ -33,6 +36,10 @@ final class ExpressionResult
 	private ?Type $resolvedType = null;
 
 	private ?Type $resolvedNativeType = null;
+
+	private ?Type $projectedType = null;
+
+	private ?Type $projectedNativeType = null;
 
 	/**
 	 * @param InternalThrowPoint[] $throwPoints
@@ -231,11 +238,17 @@ final class ExpressionResult
 	}
 
 	/**
-	 * The result's own type - the eager value or the memoized typeCallback,
+	 * The result's own raw type - the eager value or the memoized typeCallback,
 	 * with no tracked-holder interference. The callback is a pure function of
 	 * the flavour flag, so one memo slot per flavour is exact.
+	 *
+	 * A void-returning call keeps `void` here; the void->null projection every
+	 * value read applies happens in resolveOwnType(). getKeepVoidType() reads
+	 * this raw type so a void call used as a value (assigned, passed as an
+	 * argument, a void match arm) is still seen as void by the rules that
+	 * flag that misuse.
 	 */
-	private function resolveOwnType(bool $nativeTypesPromoted): Type
+	private function resolveOwnRawType(bool $nativeTypesPromoted): Type
 	{
 		if ($nativeTypesPromoted) {
 			if ($this->nativeType !== null) {
@@ -256,6 +269,43 @@ final class ExpressionResult
 		}
 
 		return $this->resolvedType ??= TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(false));
+	}
+
+	/**
+	 * The result's own type as a value: the raw type with `void` projected to
+	 * `null` (a void expression evaluates to null). The projection used to live
+	 * in the call handlers' return-type resolution; keeping it at this single
+	 * read boundary lets one raw type serve both value reads and
+	 * getKeepVoidType().
+	 */
+	private function resolveOwnType(bool $nativeTypesPromoted): Type
+	{
+		if ($nativeTypesPromoted) {
+			return $this->projectedNativeType ??= $this->projectVoidToNull($this->resolveOwnRawType(true));
+		}
+
+		return $this->projectedType ??= $this->projectVoidToNull($this->resolveOwnRawType(false));
+	}
+
+	private function projectVoidToNull(Type $type): Type
+	{
+		// void only ever originates from a call return type; the overwhelmingly
+		// common non-void, non-union result skips the traverser entirely
+		if ($type->isVoid()->no() && !$type instanceof UnionType) {
+			return $type;
+		}
+
+		return TypeTraverser::map($type, new VoidToNullTraverser());
+	}
+
+	/**
+	 * The own type with `void` kept (not projected to null) - answers
+	 * Scope::getKeepVoidType() from the stored result instead of re-processing
+	 * the node with a keep-void marker.
+	 */
+	public function getKeepVoidType(bool $nativeTypesPromoted): Type
+	{
+		return $this->resolveOwnRawType($nativeTypesPromoted);
 	}
 
 	/**

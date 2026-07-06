@@ -24,7 +24,6 @@ use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DynamicReturnTypeStoragePrimer;
 use PHPStan\Analyser\ExprHandler\Helper\EarlyTerminatingCallHelper;
 use PHPStan\Analyser\ExprHandler\Helper\OutputBufferHelper;
-use PHPStan\Analyser\ExprHandler\Helper\VoidToNullTypeTransformer;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
@@ -1086,7 +1085,9 @@ final class FuncCallHandler implements ExprHandler
 			}
 		}
 
-		return VoidToNullTypeTransformer::transform($parametersAcceptor->getReturnType(), $expr);
+		// the typeCallback keeps void; ExpressionResult projects void->null for
+		// value reads, getKeepVoidType() keeps it
+		return $parametersAcceptor->getReturnType();
 	}
 
 	/**

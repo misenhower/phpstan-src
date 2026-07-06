@@ -54,7 +54,7 @@ final class MethodCallReturnTypeHelper
 			$normalizedMethodCall = ArgumentsNormalizer::reorderStaticCallArguments($parametersAcceptor, $methodCall);
 		}
 		if ($normalizedMethodCall === null) {
-			return VoidToNullTypeTransformer::transform($parametersAcceptor->getReturnType(), $methodCall);
+			return $parametersAcceptor->getReturnType();
 		}
 
 		// re-expose the already-processed arguments so an extension's
@@ -120,13 +120,13 @@ final class MethodCallReturnTypeHelper
 					}
 				}
 
-				return VoidToNullTypeTransformer::transform(TypeCombinator::union(...$resolvedTypes), $methodCall);
+				return TypeCombinator::union(...$resolvedTypes);
 			}
 		} finally {
 			$popPrimedStorage();
 		}
 
-		return VoidToNullTypeTransformer::transform($parametersAcceptor->getReturnType(), $methodCall);
+		return $parametersAcceptor->getReturnType();
 	}
 
 }

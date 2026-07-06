@@ -488,21 +488,14 @@ final class MatchHandler implements ExprHandler
 			// is narrowed to that arm's condition - those captured scopes are the
 			// evaluation points, so the result type is just the union of the arm
 			// body types, no re-walk of the arms needed.
-			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $armTypeResults): Type {
-				$keepVoid = $expr->getAttribute(MutatingScope::KEEP_VOID_ATTRIBUTE_NAME) === true;
+			typeCallback: static function (bool $nativeTypesPromoted) use ($armTypeResults): Type {
+				// the union keeps void in the arm bodies (the raw type);
+				// ExpressionResult projects void->null for value reads and
+				// getKeepVoidType() keeps it, so UsageOfVoidMatchExpressionRule
+				// still sees a void arm
 				$types = [];
-				foreach ($armTypeResults as [$armResult, $bodyScope, $armBody]) {
-					if ($nativeTypesPromoted) {
-						$bodyScope = $bodyScope->doNotTreatPhpDocTypesAsCertain();
-					}
-					if ($keepVoid) {
-						// The only caller is getKeepVoidType (via a synthetic
-						// clone of the match) - it keeps void in the arm bodies
-						// instead of transforming it to null.
-						$types[] = $bodyScope->getKeepVoidType($armBody);
-					} else {
-						$types[] = ($nativeTypesPromoted ? $armResult->getNativeType() : $armResult->getType());
-					}
+				foreach ($armTypeResults as [$armResult]) {
+					$types[] = $armResult->getKeepVoidType($nativeTypesPromoted);
 				}
 
 				return TypeCombinator::union(...$types);

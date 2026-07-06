@@ -71,10 +71,6 @@ final class ScopeOps
 			$key .= '*/';
 		}
 
-		if (($attributes[MutatingScope::KEEP_VOID_ATTRIBUTE_NAME] ?? null) === true) {
-			$key .= '/*' . MutatingScope::KEEP_VOID_ATTRIBUTE_NAME . '*/';
-		}
-
 		return $key;
 	}
 
