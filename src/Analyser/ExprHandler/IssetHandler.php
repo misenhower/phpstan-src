@@ -173,9 +173,10 @@ final class IssetHandler implements ExprHandler
 			},
 			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $varResults, $chainResults, $nodeScopeResolver, $beforeScope, &$foldAccTypes): SpecifiedTypes {
 				// type of an already-processed chain link, read from its captured
-				// result (re-evaluated on the asking scope, honouring narrowing) -
-				// never re-walked through the scope
-				$readType = $this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $s, $nodeScopeResolver);
+				// result on the evaluation point (only the flavour follows the
+				// asking scope) - never re-walked through the scope
+				$evaluationScope = $s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+				$readType = $this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $evaluationScope, $nodeScopeResolver);
 
 				if (count($expr->vars) === 0 || $context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
@@ -189,7 +190,7 @@ final class IssetHandler implements ExprHandler
 						$types = new SpecifiedTypes();
 						foreach ($expr->vars as $var) {
 							$types = $types->unionWith(
-								$this->defaultNarrowingHelper->createIssetTruthyChainTypes($s, $var, $readType, $expr, $context),
+								$this->defaultNarrowingHelper->createIssetTruthyChainTypes($evaluationScope, $var, $readType, $expr, $context),
 							);
 						}
 
@@ -261,10 +262,10 @@ final class IssetHandler implements ExprHandler
 				$issetExpr = $expr->vars[0];
 
 				if (!$context->true()) {
-					return $this->defaultNarrowingHelper->createIssetSingleSubjectNonTrueTypes($s, $issetExpr, $varResults[0], $readType, $context, $expr);
+					return $this->defaultNarrowingHelper->createIssetSingleSubjectNonTrueTypes($evaluationScope, $issetExpr, $varResults[0], $readType, $context, $expr);
 				}
 
-				return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($s, $issetExpr, $readType, $expr, $context);
+				return $this->defaultNarrowingHelper->createIssetTruthyChainTypes($evaluationScope, $issetExpr, $readType, $expr, $context);
 			},
 		);
 	}
