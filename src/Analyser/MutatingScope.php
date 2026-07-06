@@ -1238,6 +1238,22 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		$result = $storage->findExpressionResult($expr);
 		if ($result === null) {
+			// a narrowable expression's scope-view type is derived from tracked
+			// state - no need to price the node on demand (the storage misses
+			// whenever the narrowing is applied on a different frame than the
+			// walk that produced the subject)
+			if (
+				($expr instanceof Expr\Variable && is_string($expr->name))
+				|| $expr instanceof PropertyFetch
+				|| $expr instanceof Expr\ArrayDimFetch
+				|| $expr instanceof Expr\StaticPropertyFetch
+			) {
+				return [
+					$this->resolveScopeStateType($expr, $this->nativeTypesPromoted),
+					$this->resolveScopeStateType($expr, true),
+				];
+			}
+
 			// a synthetic node - price it on demand, see
 			// resolveTypeOfNewWorldHandlerNode()
 			$scope = $this->toMutatingScope();
