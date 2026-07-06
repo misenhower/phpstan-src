@@ -3546,6 +3546,22 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 */
 	public function applySpecifiedTypes(SpecifiedTypes $specifiedTypes): self
 	{
+		// deferred augments see this scope's pre-application state - the
+		// application point of the narrowing; their entries join this batch
+		$pendingAugments = $specifiedTypes->getDeferredAugments();
+		while ($pendingAugments !== []) {
+			$augment = array_shift($pendingAugments);
+			$augmentTypes = $augment->evaluate($this);
+			if ($augmentTypes === null) {
+				continue;
+			}
+
+			foreach ($augmentTypes->getDeferredAugments() as $nestedAugment) {
+				$pendingAugments[] = $nestedAugment;
+			}
+			$specifiedTypes = $specifiedTypes->unionWith($augmentTypes);
+		}
+
 		$typeSpecifications = [];
 		foreach ($specifiedTypes->getSureTypes() as $exprString => [$expr, $type]) {
 			if ($expr instanceof Node\Scalar || $expr instanceof Array_ || $expr instanceof Expr\UnaryMinus && $expr->expr instanceof Node\Scalar) {

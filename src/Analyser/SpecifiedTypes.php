@@ -25,6 +25,15 @@ final class SpecifiedTypes
 	 */
 	private array $conditionalExpressionHolderRecipes = [];
 
+	/**
+	 * State-dependent augmentations evaluated against the applying scope by
+	 * MutatingScope::applySpecifiedTypes(); their entries join the applied
+	 * batch.
+	 *
+	 * @var list<DeferredSpecifiedTypesAugment>
+	 */
+	private array $deferredAugments = [];
+
 	private ?Expr $rootExpr = null;
 
 	/**
@@ -76,6 +85,7 @@ final class SpecifiedTypes
 		$self->overwrite = true;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
 		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self->deferredAugments = $this->deferredAugments;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -91,6 +101,7 @@ final class SpecifiedTypes
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
 		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self->deferredAugments = $this->deferredAugments;
 		$self->rootExpr = $rootExpr;
 
 		return $self;
@@ -106,6 +117,7 @@ final class SpecifiedTypes
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $newConditionalExpressionHolders;
 		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self->deferredAugments = $this->deferredAugments;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -121,6 +133,7 @@ final class SpecifiedTypes
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
 		$self->conditionalExpressionHolderRecipes = $recipes;
+		$self->deferredAugments = $this->deferredAugments;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -132,6 +145,43 @@ final class SpecifiedTypes
 	public function getConditionalExpressionHolderRecipes(): array
 	{
 		return $this->conditionalExpressionHolderRecipes;
+	}
+
+	public function withDeferredAugment(DeferredSpecifiedTypesAugment $augment): self
+	{
+		$self = new self($this->sureTypes, $this->sureNotTypes);
+		$self->alternativeTypes = $this->alternativeTypes;
+		$self->overwrite = $this->overwrite;
+		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self->deferredAugments = [...$this->deferredAugments, $augment];
+		$self->rootExpr = $this->rootExpr;
+
+		return $self;
+	}
+
+	/**
+	 * @param list<DeferredSpecifiedTypesAugment> $augments
+	 */
+	public function setDeferredAugments(array $augments): self
+	{
+		$self = new self($this->sureTypes, $this->sureNotTypes);
+		$self->alternativeTypes = $this->alternativeTypes;
+		$self->overwrite = $this->overwrite;
+		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self->deferredAugments = $augments;
+		$self->rootExpr = $this->rootExpr;
+
+		return $self;
+	}
+
+	/**
+	 * @return list<DeferredSpecifiedTypesAugment>
+	 */
+	public function getDeferredAugments(): array
+	{
+		return $this->deferredAugments;
 	}
 
 	/**
@@ -172,6 +222,7 @@ final class SpecifiedTypes
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
 		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self->deferredAugments = $this->deferredAugments;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -209,6 +260,7 @@ final class SpecifiedTypes
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
 		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self->deferredAugments = $this->deferredAugments;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -379,6 +431,7 @@ final class SpecifiedTypes
 		}
 		$result->newConditionalExpressionHolders = $conditionalExpressionHolders;
 		$result->conditionalExpressionHolderRecipes = array_merge($this->conditionalExpressionHolderRecipes, $other->conditionalExpressionHolderRecipes);
+		$result->deferredAugments = array_merge($this->deferredAugments, $other->deferredAugments);
 
 		return $result->setRootExpr($rootExpr);
 	}

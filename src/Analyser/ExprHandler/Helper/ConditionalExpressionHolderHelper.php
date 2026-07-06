@@ -8,12 +8,11 @@ use PhpParser\Node\Expr\BinaryOp\BooleanOr;
 use PhpParser\Node\Expr\BinaryOp\LogicalAnd;
 use PhpParser\Node\Expr\BinaryOp\LogicalOr;
 use PHPStan\Analyser\ConditionalExpressionHolderRecipe;
+use PHPStan\Analyser\DisjunctionBranchUnionAugment;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
-use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
-use PHPStan\Type\TypeCombinator;
 use function is_string;
 
 /**
@@ -31,50 +30,43 @@ final class ConditionalExpressionHolderHelper
 	{
 	}
 
-	public function augmentDisjunctionTypes(
+	/**
+	 * Captures the either-branch union recovery as a deferred augment: the
+	 * branch types are read from the operand-walk filtered scopes here at
+	 * compose time, while the does-it-actually-narrow gates run against the
+	 * applying scope when MutatingScope::applySpecifiedTypes() evaluates it.
+	 */
+	public function buildBranchUnionAugment(
 		NodeScopeResolver $nodeScopeResolver,
-		MutatingScope $scope,
-		SpecifiedTypes $leftNormalized,
-		SpecifiedTypes $rightNormalized,
+		SpecifiedTypes $leftTypes,
+		SpecifiedTypes $rightTypes,
 		MutatingScope $leftFilteredScope,
 		MutatingScope $rightFilteredScope,
 		SpecifiedTypes $types,
-	): SpecifiedTypes
+	): ?DisjunctionBranchUnionAugment
 	{
 		$candidateExprs = [];
-		foreach ($leftNormalized->getSureTypes() as $exprString => [$exprNode, $type]) {
+		foreach ($leftTypes->getSureTypes() as $exprString => [$exprNode, $type]) {
 			$candidateExprs[$exprString] = $exprNode;
 		}
-		foreach ($rightNormalized->getSureTypes() as $exprString => [$exprNode, $type]) {
+		foreach ($rightTypes->getSureTypes() as $exprString => [$exprNode, $type]) {
 			$candidateExprs[$exprString] = $exprNode;
 		}
 
 		$existingSureTypes = $types->getSureTypes();
 		$existingAlternativeTypes = $types->getAlternativeTypes();
 
-		$viableCandidates = [];
+		$candidates = [];
 		foreach ($candidateExprs as $exprString => $targetExpr) {
 			if (isset($existingSureTypes[$exprString])) {
 				continue;
 			}
 			// the exact either-branch merge already constrains this expression
 			// (an alternative-form entry) - the branch-scope union recovery
-			// below is the old lossy-merge compensation and would only add a
-			// weaker entry on top
+			// would only add a weaker entry on top
 			if (isset($existingAlternativeTypes[$exprString])) {
 				continue;
 			}
-			if (!$scope->hasExpressionType($targetExpr)->yes()) {
-				continue;
-			}
-			$viableCandidates[$exprString] = $targetExpr;
-		}
-
-		if ($viableCandidates === []) {
-			return $types;
-		}
-
-		foreach ($viableCandidates as $targetExpr) {
 			if (!$leftFilteredScope->hasExpressionType($targetExpr)->yes()) {
 				continue;
 			}
@@ -84,29 +76,18 @@ final class ConditionalExpressionHolderHelper
 
 			// the operands were processed during processExpr; read their stored
 			// results on these filtered scopes instead of re-walking via getType().
-			$originalType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
-			$leftType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftFilteredScope);
-			$rightType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightFilteredScope);
-
-			if ($leftType->equals($originalType) || !$originalType->isSuperTypeOf($leftType)->yes()) {
-				continue;
-			}
-
-			if ($rightType->equals($originalType) || !$originalType->isSuperTypeOf($rightType)->yes()) {
-				continue;
-			}
-
-			$unionType = TypeCombinator::union($leftType, $rightType);
-			if ($unionType->equals($originalType)) {
-				continue;
-			}
-
-			$types = $types->unionWith(
-				$this->defaultNarrowingHelper->createForSubject($targetExpr, $unionType, TypeSpecifierContext::createTrue(), $scope),
-			);
+			$candidates[] = [
+				$targetExpr,
+				$nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftFilteredScope),
+				$nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightFilteredScope),
+			];
 		}
 
-		return $types;
+		if ($candidates === []) {
+			return null;
+		}
+
+		return new DisjunctionBranchUnionAugment($nodeScopeResolver, $this->defaultNarrowingHelper, $candidates);
 	}
 
 	/**

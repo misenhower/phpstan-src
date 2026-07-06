@@ -58,7 +58,10 @@ final class BooleanNarrowingHelper
 				$types = $leftTypes->unionWith($rightTypes);
 			} else {
 				$types = $leftTypes->intersectWith($rightTypes);
-				$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, $leftFalseyScope, $rightFalseyScope, $types);
+				$branchUnionAugment = $this->conditionalExpressionHolderHelper->buildBranchUnionAugment($nodeScopeResolver, $leftTypes, $rightTypes, $leftFalseyScope, $rightFalseyScope, $types);
+				if ($branchUnionAugment !== null) {
+					$types = $types->withDeferredAugment($branchUnionAugment);
+				}
 			}
 			if ($context->false()) {
 				// Consequent (holder) narrowings projected by each holder: these must be
@@ -99,7 +102,7 @@ final class BooleanNarrowingHelper
 				$result = (new SpecifiedTypes(
 					$types->getSureTypes(),
 					$types->getSureNotTypes(),
-				))->withAlternativeTypesOf($types);
+				))->withAlternativeTypesOf($types)->setDeferredAugments($types->getDeferredAugments());
 				if ($types->shouldOverwrite()) {
 					$result = $result->setAlwaysOverwriteTypes();
 				}
@@ -168,7 +171,10 @@ final class BooleanNarrowingHelper
 						$rightTruthyScope,
 						$rootExpr,
 						$types);
-					$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, $leftTruthyScope, $rightTruthyScope, $types);
+					$branchUnionAugment = $this->conditionalExpressionHolderHelper->buildBranchUnionAugment($nodeScopeResolver, $leftTypes, $rightTypes, $leftTruthyScope, $rightTruthyScope, $types);
+					if ($branchUnionAugment !== null) {
+						$types = $types->withDeferredAugment($branchUnionAugment);
+					}
 				}
 			} else {
 				$types = $leftTypes->unionWith($rightTypes);
@@ -178,7 +184,7 @@ final class BooleanNarrowingHelper
 				$result = (new SpecifiedTypes(
 					$types->getSureTypes(),
 					$types->getSureNotTypes(),
-				))->withAlternativeTypesOf($types);
+				))->withAlternativeTypesOf($types)->setDeferredAugments($types->getDeferredAugments());
 				if ($types->shouldOverwrite()) {
 					$result = $result->setAlwaysOverwriteTypes();
 				}
