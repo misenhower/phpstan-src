@@ -492,12 +492,21 @@ final class NewHandler implements ExprHandler
 			return TypeCombinator::union(...$resolvedTypes);
 		}
 
-		// $methodCall is a synthetic StaticCall the handler built - it is not a
-		// source node, so Scope::getType() prices it on demand (the constructor's
-		// own never-returning conditional return type).
-		$methodResult = $scope->getType($methodCall);
-		if ($methodResult instanceof NeverType && $methodResult->isExplicit()) {
-			return $methodResult;
+		// A constructor makes `new` never-returning only when its own return type
+		// is (or can resolve to) explicit never; the dynamic static-method return
+		// type extensions already ran above, so only the base return type is left
+		// to check. Pricing the synthetic StaticCall on demand for this is
+		// expensive and pointless for the overwhelmingly common plain
+		// void/object constructor - skip it unless the return type could be never.
+		$constructorReturnType = $parametersAcceptor->getReturnType();
+		if ($constructorReturnType instanceof NeverType || $constructorReturnType->hasTemplateOrLateResolvableType()) {
+			// $methodCall is a synthetic StaticCall the handler built - it is not
+			// a source node, so Scope::getType() prices it on demand (the
+			// constructor's own never-returning conditional return type).
+			$methodResult = $scope->getType($methodCall);
+			if ($methodResult instanceof NeverType && $methodResult->isExplicit()) {
+				return $methodResult;
+			}
 		}
 
 		$objectType = $isStatic ? new StaticType($classReflection) : new ObjectType($resolvedClassName, classReflection: $classReflection);
