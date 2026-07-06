@@ -595,14 +595,29 @@ class NodeScopeResolver
 		StatementContext $context,
 	): InternalStatementResult
 	{
-		$statementResult = $this->processStmtNodesInternalWithoutFlushingPendingFibers(
-			$parentNode,
-			$stmts,
-			$scope,
-			$storage,
-			$nodeCallback,
-			$context,
-		);
+		// make the storage this walk writes into scope-visible: loop-convergence
+		// passes thread a throwaway duplicate that would otherwise never reach
+		// the storage stack, so every in-pass ask (applySpecifiedTypes pricing,
+		// rules via Scope::getType) would miss the pass's own results and
+		// re-process real nodes on demand
+		$pushStorage = $scope->getCurrentExpressionResultStorage() !== $storage;
+		if ($pushStorage) {
+			$scope->pushExpressionResultStorage($storage);
+		}
+		try {
+			$statementResult = $this->processStmtNodesInternalWithoutFlushingPendingFibers(
+				$parentNode,
+				$stmts,
+				$scope,
+				$storage,
+				$nodeCallback,
+				$context,
+			);
+		} finally {
+			if ($pushStorage) {
+				$scope->popExpressionResultStorage();
+			}
+		}
 		// Flush pending fibers only at a scope boundary - a function/method body,
 		// a class/trait body, a namespace. Nested control-flow statement lists
 		// (if/else branches, loop and switch/try bodies) must NOT flush: a rule
