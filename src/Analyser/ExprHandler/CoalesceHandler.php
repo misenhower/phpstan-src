@@ -112,7 +112,10 @@ final class CoalesceHandler implements ExprHandler
 					return $this->coalesceCompositionHelper->getFalseySpecifiedTypes($s, $s, $expr->left, $condResult, $expr, $context);
 				}
 
-				if ((new ConstantBooleanType(false))->isSuperTypeOf(($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType())->toBoolean())->yes()) {
+				if (
+					!$context->falsey()
+					&& (new ConstantBooleanType(false))->isSuperTypeOf(($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType())->toBoolean())->yes()
+				) {
 					return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, new NullType(), TypeSpecifierContext::createFalse())->setRootExpr($expr);
 				}
 
