@@ -1186,6 +1186,19 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			}
 		}
 
+		// a plain variable read is scope state - answer it directly instead of
+		// processing the node on demand (mirrors readTypeOfMaybeStored() and
+		// VariableHandler's typeCallback); rules asking Scope::getType($var) for
+		// a variable node not tracked in the current storage would otherwise pay
+		// a full on-demand walk for a scope lookup
+		if ($node instanceof Expr\Variable && is_string($node->name)) {
+			if ($scope->hasVariableType($node->name)->no()) {
+				return new ErrorType();
+			}
+
+			return $scope->getVariableType($node->name);
+		}
+
 		// A closure/arrow function type is computed directly (as
 		// resolveCallableTypeForScope() also does) - never by processing it on
 		// demand, which would re-enter ClosureHandler::processExpr() endlessly.
