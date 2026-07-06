@@ -1008,7 +1008,7 @@ final class FuncCallHandler implements ExprHandler
 			$normalizedNode = ArgumentsNormalizer::reorderFuncArguments($parametersAcceptor, $expr);
 			if ($normalizedNode !== null && $functionName !== null && $this->reflectionProvider->hasFunction($functionName, $reflectionScope)) {
 				$functionReflection = $this->reflectionProvider->getFunction($functionName, $reflectionScope);
-				$resolvedType = $this->getDynamicFunctionReturnType($reflectionScope, $normalizedNode, $functionReflection);
+				$resolvedType = $this->getDynamicFunctionReturnType($reflectionScope, $normalizedNode, $functionReflection, $argsResult);
 				if ($resolvedType !== null) {
 					return $resolvedType;
 				}
@@ -1078,7 +1078,7 @@ final class FuncCallHandler implements ExprHandler
 
 				return $cloneType;
 			}
-			$resolvedType = $this->getDynamicFunctionReturnType($reflectionScope, $normalizedNode, $functionReflection);
+			$resolvedType = $this->getDynamicFunctionReturnType($reflectionScope, $normalizedNode, $functionReflection, $argsResult);
 			if ($resolvedType !== null) {
 				return $resolvedType;
 			}
@@ -1247,17 +1247,54 @@ final class FuncCallHandler implements ExprHandler
 		return $this->rememberPossiblyImpureFunctionValues || $isPure->yes();
 	}
 
-	private function getDynamicFunctionReturnType(MutatingScope $scope, FuncCall $normalizedNode, FunctionReflection $functionReflection): ?Type
+	private function getDynamicFunctionReturnType(MutatingScope $scope, FuncCall $normalizedNode, FunctionReflection $functionReflection, ArgsResult $argsResult): ?Type
 	{
-		foreach ($this->dynamicReturnTypeExtensionRegistryProvider->getRegistry()->getDynamicFunctionReturnTypeExtensions($functionReflection) as $dynamicFunctionReturnTypeExtension) {
-			$resolvedType = $dynamicFunctionReturnTypeExtension->getTypeFromFunctionCall(
-				$functionReflection,
-				$normalizedNode,
-				$scope,
-			);
+		$extensions = $this->dynamicReturnTypeExtensionRegistryProvider->getRegistry()->getDynamicFunctionReturnTypeExtensions($functionReflection);
 
-			if ($resolvedType !== null) {
-				return $resolvedType;
+		// Prime a transient storage with the already-processed argument results so
+		// an extension's Scope::getType($arg->value) reads the stored result instead
+		// of re-walking the argument on demand: when the return type is asked lazily
+		// (from a rule, a parent expression, a later statement) the call's own
+		// storage frame is no longer current, so the arguments would otherwise miss.
+		// The current storage is the fallback, so every non-argument getType is
+		// unchanged; the arguments are re-exposed, not re-processed.
+		//
+		// Closures/arrow functions are deliberately excluded: the bridge computes
+		// their type directly (getClosureType) on the asking scope, which a stored
+		// result - captured at processArgs time - would shadow with a stale type.
+		$current = $scope->getCurrentExpressionResultStorage();
+		$primed = $current !== null ? $current->duplicate() : new ExpressionResultStorage();
+		$primedAny = false;
+		foreach ($normalizedNode->getArgs() as $arg) {
+			if ($arg->value instanceof Expr\Closure || $arg->value instanceof Expr\ArrowFunction) {
+				continue;
+			}
+			$argResult = $argsResult->getArgResult($arg->value);
+			if ($argResult === null) {
+				continue;
+			}
+			$primed->storeExpressionResult($arg->value, $argResult);
+			$primedAny = true;
+		}
+
+		if ($primedAny) {
+			$scope->pushExpressionResultStorage($primed);
+		}
+		try {
+			foreach ($extensions as $dynamicFunctionReturnTypeExtension) {
+				$resolvedType = $dynamicFunctionReturnTypeExtension->getTypeFromFunctionCall(
+					$functionReflection,
+					$normalizedNode,
+					$scope,
+				);
+
+				if ($resolvedType !== null) {
+					return $resolvedType;
+				}
+			}
+		} finally {
+			if ($primedAny) {
+				$scope->popExpressionResultStorage();
 			}
 		}
 
