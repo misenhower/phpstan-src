@@ -171,7 +171,8 @@ final class TernaryHandler implements ExprHandler
 					$elseType,
 				);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $nodeScopeResolver, $scope, &$aFalseyScope): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $nodeScopeResolver, $scope, &$aFalseyScope): SpecifiedTypes {
+				$s = $nativeTypesPromoted ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
 				if ($expr->cond instanceof Ternary || $context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}

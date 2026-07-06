@@ -102,16 +102,17 @@ final class CoalesceHandler implements ExprHandler
 				$expr,
 				$nativeTypesPromoted,
 			),
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult, $beforeScope): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $condResult, $rightResult, $beforeScope): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
+				$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 				if (!$context->true()) {
-					return $this->coalesceCompositionHelper->getFalseySpecifiedTypes($s, $s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope, $expr->left, $condResult, $expr, $context);
+					return $this->coalesceCompositionHelper->getFalseySpecifiedTypes($s, $s, $expr->left, $condResult, $expr, $context);
 				}
 
-				if ((new ConstantBooleanType(false))->isSuperTypeOf(($s->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType())->toBoolean())->yes()) {
+				if ((new ConstantBooleanType(false))->isSuperTypeOf(($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType())->toBoolean())->yes()) {
 					return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->left, $condResult, new NullType(), TypeSpecifierContext::createFalse())->setRootExpr($expr);
 				}
 

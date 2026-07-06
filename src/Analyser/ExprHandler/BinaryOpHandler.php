@@ -255,7 +255,8 @@ final class BinaryOpHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			typeCallback: $typeCallback,
-			specifyTypesCallback: function (MutatingScope $scope, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope, $leftArgResult, $rightArgResult, $typeCallback): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $beforeScope, $leftArgResult, $rightArgResult, $typeCallback): SpecifiedTypes {
+				$scope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 				if ($expr instanceof BinaryOp\Identical || $expr instanceof BinaryOp\NotIdentical) {
 					// `!==` narrowing is the `===` narrowing in the negated context -
 					// no synthetic Identical node. A null context never negates.
@@ -272,14 +273,14 @@ final class BinaryOpHandler implements ExprHandler
 						$expr instanceof BinaryOp\NotIdentical ? $context->negate() : $context,
 						// the narrowing composes on the evaluation scope; only the
 						// asked flavour comes from the asking scope
-						$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+						$scope,
 						$leftArgResult,
 						$rightArgResult,
 						// the comparison's own verdict, in Identical semantics -
 						// computed from the captured operand results (the walk's
 						// evaluation point), only the flavour follows the ask
-						static function () use ($expr, $scope, $typeCallback): Type {
-							$ownType = $typeCallback($scope->nativeTypesPromoted);
+						static function () use ($expr, $nativeTypesPromoted, $typeCallback): Type {
+							$ownType = $typeCallback($nativeTypesPromoted);
 							if ($expr instanceof BinaryOp\NotIdentical) {
 								if ($ownType->isTrue()->yes()) {
 									return new ConstantBooleanType(false);
@@ -311,7 +312,7 @@ final class BinaryOpHandler implements ExprHandler
 						$leftResult,
 						$rightResult,
 						$expr instanceof BinaryOp\NotEqual ? $context->negate() : $context,
-						$scope->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+						$scope,
 						$leftArgResult,
 						$rightArgResult,
 					);
@@ -357,12 +358,12 @@ final class BinaryOpHandler implements ExprHandler
 					// already computed results instead of re-walking via
 					// Scope::getType(). Their subexpressions (e.g. count() arguments)
 					// were also processed and are read from the stored result.
-					$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $scope, $nodeScopeResolver): Type {
+					$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $scope, $nodeScopeResolver, $nativeTypesPromoted): Type {
 						if ($e === $expr->left) {
-							return $scope->nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType();
+							return $nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType();
 						}
 						if ($e === $expr->right) {
-							return $scope->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
+							return $nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 						}
 
 						return $nodeScopeResolver->readTypeOfMaybeStored($e, $scope);

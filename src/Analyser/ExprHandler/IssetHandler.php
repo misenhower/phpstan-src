@@ -171,11 +171,10 @@ final class IssetHandler implements ExprHandler
 
 				return new ConstantBooleanType($issetResult);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $varResults, $chainResults, $nodeScopeResolver, $beforeScope, &$foldAccTypes): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $varResults, $chainResults, $nodeScopeResolver, $beforeScope, &$foldAccTypes): SpecifiedTypes {
 				// type of an already-processed chain link, read from its captured
-				// result on the evaluation point (only the flavour follows the
-				// asking scope) - never re-walked through the scope
-				$evaluationScope = $s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+				// result on the evaluation point - never re-walked through the scope
+				$evaluationScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 				$readType = $this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $evaluationScope, $nodeScopeResolver);
 
 				if (count($expr->vars) === 0 || $context->null()) {
@@ -219,7 +218,7 @@ final class IssetHandler implements ExprHandler
 					// not the asking scope - the accumulated conjunction closure
 					// is ask-independent and built once, reused across asks
 					if ($foldAccTypes !== null) {
-						return $foldAccTypes($s, $context)->setRootExpr($expr);
+						return $foldAccTypes($evaluationScope, $context)->setRootExpr($expr);
 					}
 
 					$accExpr = new Isset_([$expr->vars[0]], $expr->getAttributes());
@@ -256,7 +255,7 @@ final class IssetHandler implements ExprHandler
 
 					$foldAccTypes = $accTypes;
 
-					return $accTypes($s, $context)->setRootExpr($expr);
+					return $accTypes($evaluationScope, $context)->setRootExpr($expr);
 				}
 
 				$issetExpr = $expr->vars[0];

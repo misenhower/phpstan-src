@@ -152,7 +152,7 @@ final class AssignOpHandler implements ExprHandler
 
 			throw new ShouldNotHappenException(sprintf('Unhandled %s', get_class($expr)));
 		};
-		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+		$specifyTypesCallback = fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 		$createTypesCallback = null;
 		if ($expr instanceof Expr\AssignOp\Coalesce) {
 			// a type constraint on `$x ??= y` constrains the assigned variable -

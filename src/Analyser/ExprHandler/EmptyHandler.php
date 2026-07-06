@@ -79,8 +79,9 @@ final class EmptyHandler implements ExprHandler
 
 				return new ConstantBooleanType(!$result);
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $chainResults, $nodeScopeResolver, $beforeScope, &$foldScopes): SpecifiedTypes {
-				$isset = $exprResult->getIssetabilityResolution($s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope, false)->isSet(static fn (): bool => true);
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $exprResult, $chainResults, $nodeScopeResolver, $beforeScope, &$foldScopes): SpecifiedTypes {
+				$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+				$isset = $exprResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
 				if ($isset === false) {
 					return new SpecifiedTypes();
 				}

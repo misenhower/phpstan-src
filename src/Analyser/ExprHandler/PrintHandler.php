@@ -63,7 +63,7 @@ final class PrintHandler implements ExprHandler
 			throwPoints: $throwPoints,
 			impurePoints: array_merge($impurePoints, [new ImpurePoint($scope, $expr, 'print', 'print', true)]),
 			typeCallback: static fn (bool $nativeTypesPromoted): Type => new ConstantIntegerType(1),
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 

@@ -66,7 +66,7 @@ final class ArrayDimFetchHandler implements ExprHandler
 				containsNullsafe: $varResult->containsNullsafe(),
 				// `$arr[]` only appears as an assignment target; reading it is a NeverType
 				typeCallback: static fn (): Type => new NeverType(),
-				specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+				specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 			);
 		}
 
@@ -124,7 +124,7 @@ final class ArrayDimFetchHandler implements ExprHandler
 
 				return $shortCircuit($offsetAccessibleType->getOffsetValueType(($nativeTypesPromoted ? $dimResult->getNativeType() : $dimResult->getType())));
 			},
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 

@@ -98,7 +98,7 @@ final class InterpolatedStringHandler implements ExprHandler
 
 				return $resultType ?? new ConstantStringType('');
 			},
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 

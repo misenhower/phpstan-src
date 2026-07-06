@@ -64,8 +64,8 @@ final class AlwaysRememberedExprHandler implements ExprHandler
 			// Narrowing by the remembered wrapper is narrowing by the inner
 			// expression (TypeSpecifier unwrapped it and specified both keys);
 			// the wrapper node itself keeps the default truthy/falsey entry.
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context)->unionWith(
-				$innerResult->getSpecifiedTypesForScope($s, $context),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context)->unionWith(
+				$innerResult->getSpecifiedTypes($context, $nativeTypesPromoted),
 			),
 			// A type constraint on the remembered wrapper constrains both the wrapper
 			// node (under its __phpstanRemembered(...) key) and the inner expression -

@@ -153,7 +153,7 @@ final class VariableHandler implements ExprHandler
 			impurePoints: $impurePoints,
 			issetabilityDescriptor: is_string($expr->name) ? IssetabilityDescriptor::variable($expr->name) : null,
 			typeCallback: $this->createTypeCallback($expr, $nodeScopeResolver, $beforeScope, $nameResult, is_string($expr->name) ? null : $this->identicalNarrowingHelper->captureFirstArgResult($expr->name, $storage)),
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 

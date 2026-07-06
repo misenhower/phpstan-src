@@ -56,7 +56,7 @@ final class CloneHandler implements ExprHandler
 				$cloneType = TypeCombinator::intersect(($nativeTypesPromoted ? $exprResult->getNativeType() : $exprResult->getType()), new ObjectWithoutClassType());
 				return TypeTraverser::map($cloneType, new CloneTypeTraverser());
 			},
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 

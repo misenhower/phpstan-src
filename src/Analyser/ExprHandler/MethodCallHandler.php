@@ -193,11 +193,9 @@ final class MethodCallHandler implements ExprHandler
 				$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
 				$argsResult,
 			);
-		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
+		$specifyTypesCallback = fn (TypeSpecifierContext $specifyContext, bool $nativeTypesPromoted): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,
-			// the narrowing computes on the evaluation scope; only the asked
-			// flavour comes from the asking scope
-			$s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
+			$nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope,
 			$expr,
 			$normalizedExpr,
 			$varResult,

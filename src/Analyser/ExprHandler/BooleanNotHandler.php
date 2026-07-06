@@ -64,14 +64,14 @@ final class BooleanNotHandler implements ExprHandler
 
 				return new BooleanType();
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $exprResult): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
 				// The negated operand was processed above; compose its narrowing
 				// directly from its result rather than re-resolving the node.
-				return $exprResult->getSpecifiedTypesForScope($s, $context->negate())->setRootExpr($expr);
+				return $exprResult->getSpecifiedTypes($context->negate(), $nativeTypesPromoted)->setRootExpr($expr);
 			},
 		);
 	}

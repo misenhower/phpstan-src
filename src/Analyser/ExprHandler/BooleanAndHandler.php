@@ -95,10 +95,10 @@ final class BooleanAndHandler implements ExprHandler
 
 				return new BooleanType();
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $leftResult, $rightResult, $nodeScopeResolver): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $leftResult, $rightResult, $nodeScopeResolver, $scope): SpecifiedTypes {
 				return $this->booleanNarrowingHelper->specifyConjunction(
 					$nodeScopeResolver,
-					$s,
+					$nativeTypesPromoted ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope,
 					$context,
 					$expr,
 					$expr->left,

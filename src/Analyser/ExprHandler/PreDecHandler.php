@@ -117,7 +117,7 @@ final class PreDecHandler implements ExprHandler
 				throw new ShouldNotHappenException();
 			});
 		};
-		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
+		$specifyTypesCallback = fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 
 		// processVirtualAssign asks getType($expr) for the value to assign; store
 		// this result first so that resolves from the typeCallback below rather

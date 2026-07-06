@@ -57,7 +57,7 @@ final class IssetExprHandler implements ExprHandler
 			throwPoints: [],
 			impurePoints: [],
 			typeCallback: static fn (bool $nativeTypesPromoted): Type => $nodeScopeResolver->readTypeOfMaybeStored($expr->getExpr(), $nativeTypesPromoted ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope),
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $context) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 		);
 	}
 

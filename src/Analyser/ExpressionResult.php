@@ -20,7 +20,7 @@ final class ExpressionResult
 	/** @var (callable(bool): Type)|null */
 	private $typeCallback;
 
-	/** @var callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes */
+	/** @var callable(TypeSpecifierContext, bool): SpecifiedTypes */
 	private $specifyTypesCallback;
 
 	/** @var (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null */
@@ -49,7 +49,7 @@ final class ExpressionResult
 	 * @param InternalThrowPoint[] $throwPoints
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(bool): Type)|null $typeCallback
-	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $specifyTypesCallback
+	 * @param callable(TypeSpecifierContext, bool): SpecifiedTypes $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 */
 	public function __construct(
@@ -356,10 +356,7 @@ final class ExpressionResult
 	{
 		$key = (spl_object_id($context) << 1) | ($nativeTypesPromoted ? 1 : 0);
 
-		return $this->specifiedTypes[$key] ??= ($this->specifyTypesCallback)(
-			$nativeTypesPromoted ? $this->beforeScope->doNotTreatPhpDocTypesAsCertain() : $this->beforeScope,
-			$context,
-		);
+		return $this->specifiedTypes[$key] ??= ($this->specifyTypesCallback)($context, $nativeTypesPromoted);
 	}
 
 	/**

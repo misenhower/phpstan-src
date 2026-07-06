@@ -78,12 +78,12 @@ final class CastHandler implements ExprHandler
 					throw new ShouldNotHappenException();
 				});
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $nodeScopeResolver, $beforeScope, $subjectArgResult): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $exprResult, $nodeScopeResolver, $beforeScope, $subjectArgResult): SpecifiedTypes {
+				$evaluationScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 				// a cast's truthiness is a loose comparison of the inner
 				// expression - composed from its result; the fabricated
 				// literal is only printed into entries, never walked
 				if (($expr instanceof Cast\Bool_ || $expr instanceof Cast\Int_ || $expr instanceof Cast\Double) && !$context->null()) {
-					$evaluationScope = $s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 					if ($expr instanceof Cast\Bool_) {
 						$literal = new ConstFetch(new FullyQualified('true'));
 						$equalContext = $context;
@@ -103,15 +103,15 @@ final class CastHandler implements ExprHandler
 				}
 
 				if ($expr instanceof Cast\Bool_) {
-					return $s->obtainResultForNode(new Equal($expr->expr, new ConstFetch(new FullyQualified('true'))))->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
+					return $evaluationScope->obtainResultForNode(new Equal($expr->expr, new ConstFetch(new FullyQualified('true'))))->getSpecifiedTypes($context, $nativeTypesPromoted)->setRootExpr($expr);
 				}
 
 				if ($expr instanceof Cast\Int_) {
-					return $s->obtainResultForNode(new NotEqual($expr->expr, new Int_(0)))->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
+					return $evaluationScope->obtainResultForNode(new NotEqual($expr->expr, new Int_(0)))->getSpecifiedTypes($context, $nativeTypesPromoted)->setRootExpr($expr);
 				}
 
 				if ($expr instanceof Cast\Double) {
-					return $s->obtainResultForNode(new NotEqual($expr->expr, new Float_(0.0)))->getSpecifiedTypesForScope($s, $context)->setRootExpr($expr);
+					return $evaluationScope->obtainResultForNode(new NotEqual($expr->expr, new Float_(0.0)))->getSpecifiedTypes($context, $nativeTypesPromoted)->setRootExpr($expr);
 				}
 
 				return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);

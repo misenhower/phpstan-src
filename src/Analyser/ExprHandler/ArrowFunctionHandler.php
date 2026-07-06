@@ -78,7 +78,7 @@ final class ArrowFunctionHandler implements ExprHandler
 			isAlwaysTerminating: false,
 			throwPoints: [],
 			impurePoints: [],
-			specifyTypesCallback: fn (MutatingScope $s, TypeSpecifierContext $c) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $c),
+			specifyTypesCallback: fn (TypeSpecifierContext $c, bool $nativeTypesPromoted) => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $c),
 			type: $type,
 			nativeType: $nativeType,
 			typeCallback: null,

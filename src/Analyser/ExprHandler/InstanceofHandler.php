@@ -157,7 +157,8 @@ final class InstanceofHandler implements ExprHandler
 
 				return new BooleanType();
 			},
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $exprResult, $classResult, $nameNarrowType): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $exprResult, $classResult, $nameNarrowType, $beforeScope): SpecifiedTypes {
+				$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 				$exprNode = $expr->expr;
 				if ($expr->class instanceof Name) {
 					if ($nameNarrowType === null) {
@@ -171,7 +172,7 @@ final class InstanceofHandler implements ExprHandler
 				if ($classResult === null) {
 					throw new ShouldNotHappenException();
 				}
-				$classNameType = $classResult->getTypeOnScope($s, $s->nativeTypesPromoted);
+				$classNameType = $classResult->getTypeOnScope($s, $nativeTypesPromoted);
 				$result = $classNameType->toObjectTypeForInstanceofCheck();
 				$type = $result->type;
 				$uncertainty = $result->uncertainty;
@@ -184,7 +185,7 @@ final class InstanceofHandler implements ExprHandler
 						);
 						return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 					} elseif ($context->false() && !$uncertainty) {
-						$exprType = $exprResult->getTypeOnScope($s, $s->nativeTypesPromoted);
+						$exprType = $exprResult->getTypeOnScope($s, $nativeTypesPromoted);
 						if (!$type->isSuperTypeOf($exprType)->yes()) {
 							return $this->defaultNarrowingHelper->createSubjectTypes($s, $exprNode, $exprResult, $type, $context)->setRootExpr($expr);
 						}

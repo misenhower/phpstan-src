@@ -130,10 +130,12 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
 			typeCallback: $nullsafeTypeCallback,
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall, $exprResult, $receiverResult, $nonNullabilityResult, $beforeScope, $nodeScopeResolver, &$leftFalseyScope): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $methodCall, $exprResult, $receiverResult, $nonNullabilityResult, $beforeScope, $nodeScopeResolver, &$leftFalseyScope): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
+
+				$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 
 				// `$x?->...` narrows like ($x !== null) && $x->..., composed from
 				// the captured receiver and plain-twin results - the fabricated

@@ -12,7 +12,7 @@ interface ExpressionResultFactory
 	 * @param InternalThrowPoint[] $throwPoints
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(bool): Type)|null $typeCallback
-	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $specifyTypesCallback
+	 * @param callable(TypeSpecifierContext, bool): SpecifiedTypes $specifyTypesCallback
 	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
 	 */
 	public function create(

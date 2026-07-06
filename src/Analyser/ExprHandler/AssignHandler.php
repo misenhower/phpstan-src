@@ -234,7 +234,7 @@ final class AssignHandler implements ExprHandler
 					? $nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $beforeScope->doNotTreatPhpDocTypesAsCertain())
 					: $nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $beforeScope);
 			},
-			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($nodeScopeResolver, $expr, $assignedExprResult) : fn (MutatingScope $s, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
+			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($nodeScopeResolver, $expr, $assignedExprResult, $beforeScope) : fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
 			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult) : null,
 		);
 	}
@@ -265,11 +265,12 @@ final class AssignHandler implements ExprHandler
 	 * The null-context inferences stay in specifyTypes() - result-based asks
 	 * are always truthy or falsey.
 	 *
-	 * @return Closure(MutatingScope, TypeSpecifierContext): SpecifiedTypes
+	 * @return Closure(TypeSpecifierContext, bool): SpecifiedTypes
 	 */
-	private function createSpecifyTypesCallback(NodeScopeResolver $nodeScopeResolver, Assign $expr, ?ExpressionResult $assignedExprResult): Closure
+	private function createSpecifyTypesCallback(NodeScopeResolver $nodeScopeResolver, Assign $expr, ?ExpressionResult $assignedExprResult, MutatingScope $beforeScope): Closure
 	{
-		return function (MutatingScope $s, TypeSpecifierContext $context) use ($nodeScopeResolver, $expr, $assignedExprResult): SpecifiedTypes {
+		return function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($nodeScopeResolver, $expr, $assignedExprResult, $beforeScope): SpecifiedTypes {
+			$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 			if ($context->null()) {
 				$assignedScope = $s->exitFirstLevelStatements();
 				$result = $assignedExprResult ?? $assignedScope->obtainResultForNode($expr->expr);
