@@ -15,6 +15,7 @@ use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\BooleanNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\MutatingScope;
@@ -40,6 +41,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		private NonNullabilityHelper $nonNullabilityHelper,
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private BooleanNarrowingHelper $booleanNarrowingHelper,
 	)
 	{
 	}
@@ -112,6 +114,12 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			);
 		};
 
+		// the receiver's stored result, for composing the receiver-not-null
+		// narrowing without re-walking the chain
+		$receiverResult = $storage->findExpressionResult($expr->var);
+		// lazily memoized receiver-is-null branch scope of the decomposition
+		$leftFalseyScope = null;
+
 		return $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
@@ -122,18 +130,41 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
 			typeCallback: $nullsafeTypeCallback,
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall, $exprResult, $receiverResult, $nonNullabilityResult, $beforeScope, $nodeScopeResolver, &$leftFalseyScope): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
-				$types = $this->defaultNarrowingHelper->specifyTypesForNode(
+				// `$x?->...` narrows like ($x !== null) && $x->..., composed from
+				// the captured receiver and plain-twin results - the fabricated
+				// NotIdentical is only printed into holder keys, never walked
+				$notIdenticalNode = new NotIdentical($expr->var, new ConstFetch(new Name('null')));
+				$leftTypes = function (MutatingScope $scope, TypeSpecifierContext $ctx) use ($expr, $receiverResult, $notIdenticalNode): SpecifiedTypes {
+					if ($ctx->null()) {
+						return $this->defaultNarrowingHelper->specifyDefaultTypes($notIdenticalNode, $ctx);
+					}
+
+					return $this->defaultNarrowingHelper->createSubjectTypes($scope, $expr->var, $receiverResult, new NullType(), $ctx->negate());
+				};
+				$rightTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $exprResult->getSpecifiedTypesForScope($scope, $ctx);
+
+				// the plain twin was walked on the ensured-non-null scope - that
+				// is the left-truthy evaluation point; the receiver-is-null
+				// branch scope has no walk analog and derives lazily
+				$leftFalseyScope ??= $beforeScope->applySpecifiedTypes($leftTypes($beforeScope, TypeSpecifierContext::createFalsey()));
+
+				$types = $this->booleanNarrowingHelper->specifyConjunction(
+					$nodeScopeResolver,
 					$s,
-					new BooleanAnd(
-						new NotIdentical($expr->var, new ConstFetch(new Name('null'))),
-						$methodCall,
-					),
 					$context,
+					$expr,
+					$notIdenticalNode,
+					$leftTypes,
+					$nonNullabilityResult->getScope(),
+					$leftFalseyScope,
+					$methodCall,
+					$rightTypes,
+					$exprResult->getFalseyScope(),
 				)->setRootExpr($expr);
 
 				$nullSafeTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
