@@ -17,6 +17,14 @@ final class SpecifiedTypes
 	/** @var array<string, ConditionalExpressionHolder[]> */
 	private array $newConditionalExpressionHolders = [];
 
+	/**
+	 * Deferred boolean-decomposition holders, evaluated against the applying
+	 * scope by MutatingScope::applySpecifiedTypes().
+	 *
+	 * @var list<ConditionalExpressionHolderRecipe>
+	 */
+	private array $conditionalExpressionHolderRecipes = [];
+
 	private ?Expr $rootExpr = null;
 
 	/**
@@ -67,6 +75,7 @@ final class SpecifiedTypes
 		$self->alternativeTypes = $this->alternativeTypes;
 		$self->overwrite = true;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -81,6 +90,7 @@ final class SpecifiedTypes
 		$self->alternativeTypes = $this->alternativeTypes;
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
 		$self->rootExpr = $rootExpr;
 
 		return $self;
@@ -95,9 +105,33 @@ final class SpecifiedTypes
 		$self->alternativeTypes = $this->alternativeTypes;
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
+	}
+
+	/**
+	 * @param list<ConditionalExpressionHolderRecipe> $recipes
+	 */
+	public function setConditionalExpressionHolderRecipes(array $recipes): self
+	{
+		$self = new self($this->sureTypes, $this->sureNotTypes);
+		$self->alternativeTypes = $this->alternativeTypes;
+		$self->overwrite = $this->overwrite;
+		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $recipes;
+		$self->rootExpr = $this->rootExpr;
+
+		return $self;
+	}
+
+	/**
+	 * @return list<ConditionalExpressionHolderRecipe>
+	 */
+	public function getConditionalExpressionHolderRecipes(): array
+	{
+		return $this->conditionalExpressionHolderRecipes;
 	}
 
 	/**
@@ -137,6 +171,7 @@ final class SpecifiedTypes
 		$self->alternativeTypes = $other->alternativeTypes;
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -173,6 +208,7 @@ final class SpecifiedTypes
 		$self->alternativeTypes = $alternativeTypes;
 		$self->overwrite = $this->overwrite;
 		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
 		$self->rootExpr = $this->rootExpr;
 
 		return $self;
@@ -342,6 +378,7 @@ final class SpecifiedTypes
 			}
 		}
 		$result->newConditionalExpressionHolders = $conditionalExpressionHolders;
+		$result->conditionalExpressionHolderRecipes = array_merge($this->conditionalExpressionHolderRecipes, $other->conditionalExpressionHolderRecipes);
 
 		return $result->setRootExpr($rootExpr);
 	}

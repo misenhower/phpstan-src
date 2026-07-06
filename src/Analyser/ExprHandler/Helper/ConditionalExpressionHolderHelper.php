@@ -7,23 +7,19 @@ use PhpParser\Node\Expr\BinaryOp\BooleanAnd;
 use PhpParser\Node\Expr\BinaryOp\BooleanOr;
 use PhpParser\Node\Expr\BinaryOp\LogicalAnd;
 use PhpParser\Node\Expr\BinaryOp\LogicalOr;
-use PHPStan\Analyser\ConditionalExpressionHolder;
-use PHPStan\Analyser\ExpressionTypeHolder;
+use PHPStan\Analyser\ConditionalExpressionHolderRecipe;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
-use PHPStan\Type\NeverType;
 use PHPStan\Type\TypeCombinator;
-use function array_key_exists;
-use function count;
 use function is_string;
 
 /**
- * Builds the conditional expression holders used to project narrowings of
- * boolean operands (`&&`, `||`) into later scopes. Shared by BooleanAndHandler
- * and BooleanOrHandler.
+ * Builds the conditional-expression-holder recipes used to project narrowings
+ * of boolean operands (`&&`, `||`) into later scopes. Shared by
+ * BooleanAndHandler and BooleanOrHandler.
  */
 #[AutowiredService]
 final class ConditionalExpressionHolderHelper
@@ -114,172 +110,82 @@ final class ConditionalExpressionHolderHelper
 	}
 
 	/**
-	 * Combines several `processBooleanConditionalTypes()` results into one map.
+	 * Captures the raw entries of a boolean-decomposition holder pair as a
+	 * recipe; the state-dependent complement/target math runs against the
+	 * applying scope when MutatingScope::applySpecifiedTypes() evaluates it.
 	 *
-	 * A plain `array_merge()` would be keyed by the target expression string and
-	 * therefore let a later result overwrite an earlier one targeting the same
-	 * expression, silently dropping a holder. Holders for the same expression are
-	 * unioned by their key instead so all of them survive.
+	 * The condition side asserts that its sub-expression evaluates truthy.
+	 * When that sub-expression is itself a compound boolean (e.g. `$a && $b`),
+	 * the narrowings making it true are spread across both the sure and
+	 * sureNot lists of its specification. All of them are conjuncts of the
+	 * single "this side is true" condition, so they must be gathered together
+	 * into one condition set. Picking only one list would drop a conjunct and
+	 * let the resulting holder fire too eagerly.
 	 *
-	 * @param list<array<string, ConditionalExpressionHolder[]>> $holderLists
-	 * @return array<string, ConditionalExpressionHolder[]>
+	 * @param MutatingScope|null $nonVariableTargetScope the operand-walk scope non-variable
+	 *        holder targets were tracked on; their types are pinned from it at compose
+	 *        time (null = read every target from the applying scope)
 	 */
-	public function mergeConditionalHolders(array $holderLists): array
+	public function buildConditionalHolderRecipe(SpecifiedTypes $conditionSpecifiedTypes, SpecifiedTypes $holderSpecifiedTypes, bool $holdersFromSureTypes, bool $holderSideIsNegated, ?MutatingScope $nonVariableTargetScope, ?Expr $holderSideExpr = null): ?ConditionalExpressionHolderRecipe
 	{
-		$result = [];
-		foreach ($holderLists as $holders) {
-			foreach ($holders as $exprString => $exprHolders) {
-				foreach ($exprHolders as $key => $holder) {
-					$result[$exprString][$key] = $holder;
-				}
-			}
-		}
-
-		return $result;
-	}
-
-	/**
-	 * @return array<string, ConditionalExpressionHolder[]>
-	 */
-	public function processBooleanConditionalTypes(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, SpecifiedTypes $conditionSpecifiedTypes, SpecifiedTypes $holderSpecifiedTypes, bool $holdersFromSureTypes, bool $holderSideIsNegated, MutatingScope $rightScope, ?Expr $holderSideExpr = null): array
-	{
-		// The condition side asserts that its sub-expression evaluates truthy.
-		// When that sub-expression is itself a compound boolean (e.g. `$a && $b`),
-		// the narrowings making it true are spread across both the sure and
-		// sureNot lists of its specification. All of them are conjuncts of the
-		// single "this side is true" condition, so they must be gathered together
-		// into one condition set. Picking only one list would drop a conjunct and
-		// let the resulting holder fire too eagerly.
 		// an alternative-form entry (a cross-kind either-branch merge) has no
 		// single condition type; dropping it from the condition set would let
 		// the holder fire too eagerly - build no holders from such a condition
 		if ($conditionSpecifiedTypes->getAlternativeTypes() !== []) {
-			return [];
+			return null;
 		}
 
-		$conditionExpressionTypes = [];
-		$droppedNoOpConditions = [];
-		// the unnarrowed type of each condition expression, pinned at
-		// holder-build time: the dropped-self-condition complement below must
-		// not re-ask the scope later, when a different storage may be current
-		$conditionOriginalTypes = [];
+		// A holder side that is itself a compound boolean cannot always be split
+		// into independent per-expression holders. In the `BooleanAnd` false
+		// context the holder asserts its side is false: when that side is a
+		// conjunction (`$a && $b`), its negation is the disjunction `!$a || !$b`,
+		// which has no per-expression narrowing — narrowing each conjunct
+		// independently would drop a reachable value (e.g. `$a = false, $b = true`).
+		// Symmetrically, in the `BooleanOr` true context the holder asserts its
+		// side is true, and a disjunction side (`$a || $b`) is itself a disjunction.
+		// Such a side is left whole rather than split into over-narrowing holders.
+		if ($this->isUnsplittableCompoundHolderSide($holderSideExpr, $holderSideIsNegated)) {
+			return null;
+		}
+
+		$conditionEntries = [];
 		foreach ($conditionSpecifiedTypes->getSureTypes() as $exprString => [$expr, $type]) {
 			if (!$this->isTrackableExpression($expr)) {
 				continue;
 			}
 
-			$scopeType = $scope->getStateType($expr);
-			$conditionType = TypeCombinator::remove($scopeType, $type);
-			if ($scopeType->equals($conditionType)) {
-				$droppedNoOpConditions[$exprString] = true;
-				continue;
-			}
-
-			$conditionExpressionTypes[$exprString] = ExpressionTypeHolder::createYes(
-				$expr,
-				$conditionType,
-			);
-			$conditionOriginalTypes[$exprString] = $scopeType;
+			$conditionEntries[] = [(string) $exprString, $expr, true, $type];
 		}
 		foreach ($conditionSpecifiedTypes->getSureNotTypes() as $exprString => [$expr, $type]) {
 			if (!$this->isTrackableExpression($expr)) {
 				continue;
 			}
 
-			$scopeType = $scope->getStateType($expr);
-			$conditionType = TypeCombinator::intersect($scopeType, $type);
-			if ($scopeType->equals($conditionType)) {
-				$droppedNoOpConditions[$exprString] = true;
+			$conditionEntries[] = [(string) $exprString, $expr, false, $type];
+		}
+
+		if ($conditionEntries === []) {
+			return null;
+		}
+
+		$holderEntries = [];
+		$holderTypes = $holdersFromSureTypes ? $holderSpecifiedTypes->getSureTypes() : $holderSpecifiedTypes->getSureNotTypes();
+		foreach ($holderTypes as $exprString => [$expr, $type]) {
+			if (!$this->isTrackableExpression($expr)) {
 				continue;
 			}
 
-			$conditionExpressionTypes[$exprString] = ExpressionTypeHolder::createYes(
-				$expr,
-				$conditionType,
-			);
-			$conditionOriginalTypes[$exprString] = $scopeType;
+			$pinnedTargetType = !$expr instanceof Expr\Variable && $nonVariableTargetScope !== null
+				? $nonVariableTargetScope->getStateType($expr)
+				: null;
+			$holderEntries[] = [(string) $exprString, $expr, $type, $pinnedTargetType];
 		}
 
-		if (count($conditionExpressionTypes) > 0) {
-			$holders = [];
-			$holderTypes = $holdersFromSureTypes ? $holderSpecifiedTypes->getSureTypes() : $holderSpecifiedTypes->getSureNotTypes();
-
-			// A holder side that is itself a compound boolean cannot always be split
-			// into independent per-expression holders. In the `BooleanAnd` false
-			// context the holder asserts its side is false: when that side is a
-			// conjunction (`$a && $b`), its negation is the disjunction `!$a || !$b`,
-			// which has no per-expression narrowing — narrowing each conjunct
-			// independently would drop a reachable value (e.g. `$a = false, $b = true`).
-			// Symmetrically, in the `BooleanOr` true context the holder asserts its
-			// side is true, and a disjunction side (`$a || $b`) is itself a disjunction.
-			// Such a side is left whole rather than split into over-narrowing holders.
-			if ($this->isUnsplittableCompoundHolderSide($holderSideExpr, $holderSideIsNegated)) {
-				return [];
-			}
-
-			foreach ($holderTypes as $exprString => [$expr, $type]) {
-				if (!$this->isTrackableExpression($expr)) {
-					continue;
-				}
-
-				// The target's only link to the antecedent was a no-op relation (e.g.
-				// `$a === $b`) that got dropped, so the antecedent no longer constrains
-				// it. Projecting a consequent onto it would fire unsoundly. Skip it.
-				if (array_key_exists($exprString, $droppedNoOpConditions)) {
-					continue;
-				}
-
-				$conditions = $conditionExpressionTypes;
-				$droppedSelfCondition = null;
-				foreach ($conditions as $conditionExprString => $condition) {
-					if ($conditionExprString !== $exprString) {
-						continue;
-					}
-					$droppedSelfCondition = $condition;
-					unset($conditions[$conditionExprString]);
-				}
-
-				if (count($conditions) === 0) {
-					continue;
-				}
-
-				$targetScope = $expr instanceof Expr\Variable ? $scope : $rightScope;
-				$targetType = $targetScope->getStateType($expr);
-				$holderType = $holdersFromSureTypes
-					? TypeCombinator::intersect($targetType, $type)
-					: TypeCombinator::remove($targetType, $type);
-
-				// The dropped self-condition narrowed the target; without it the
-				// holder must allow the values it excluded, or it over-narrows when
-				// only the remaining conditions hold. So union back the complement,
-				// computed from the type pinned when the condition set was built.
-				if ($droppedSelfCondition !== null) {
-					$complement = TypeCombinator::remove($conditionOriginalTypes[$exprString], $droppedSelfCondition->getType());
-					if (!$complement instanceof NeverType) {
-						$holderType = TypeCombinator::union($holderType, $complement);
-					}
-				}
-
-				// These boolean-decomposition holders only refine an expression's
-				// type in a future scope; they must never collapse it to never and
-				// thereby mark the whole scope unreachable. A never result is an
-				// artifact (e.g. removing a non-nullable property's full type after
-				// swapping isset() narrowing), not a real contradiction.
-				if ($holderType instanceof NeverType && !$targetType instanceof NeverType) {
-					continue;
-				}
-				$holder = new ConditionalExpressionHolder(
-					$conditions,
-					ExpressionTypeHolder::createYes($expr, $holderType),
-				);
-				$holders[$exprString] ??= [];
-				$holders[$exprString][$holder->getKey()] = $holder;
-			}
-
-			return $holders;
+		if ($holderEntries === []) {
+			return null;
 		}
 
-		return [];
+		return new ConditionalExpressionHolderRecipe($conditionEntries, $holderEntries, $holdersFromSureTypes);
 	}
 
 	/**

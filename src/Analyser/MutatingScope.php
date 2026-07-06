@@ -3719,6 +3719,17 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		$scope = $scope->processConditionalExpressionsAfterSpecifying($specifiedExpressions);
 
+		$newConditionalExpressionHolders = $specifiedTypes->getNewConditionalExpressionHolders();
+		foreach ($specifiedTypes->getConditionalExpressionHolderRecipes() as $recipe) {
+			// the recipes' state-dependent math runs here, against this scope's
+			// pre-application state - the application point of the narrowing
+			foreach ($recipe->evaluate($this) as $exprString => $recipeHolders) {
+				foreach ($recipeHolders as $key => $holder) {
+					$newConditionalExpressionHolders[$exprString][$key] = $holder;
+				}
+			}
+		}
+
 		/** @var static */
 		return $scope->scopeFactory->create(
 			$scope->context,
@@ -3727,7 +3738,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$scope->getNamespace(),
 			$scope->expressionTypes,
 			$scope->nativeExpressionTypes,
-			$this->mergeConditionalExpressions($specifiedTypes->getNewConditionalExpressionHolders(), $scope->conditionalExpressions),
+			$this->mergeConditionalExpressions($newConditionalExpressionHolders, $scope->conditionalExpressions),
 			$scope->inClosureBindScopeClasses,
 			$scope->anonymousFunctionReflection,
 			$scope->inFirstLevelStatement,
