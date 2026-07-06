@@ -54,10 +54,18 @@ final class ConditionalExpressionHolderHelper
 		}
 
 		$existingSureTypes = $types->getSureTypes();
+		$existingAlternativeTypes = $types->getAlternativeTypes();
 
 		$viableCandidates = [];
 		foreach ($candidateExprs as $exprString => $targetExpr) {
 			if (isset($existingSureTypes[$exprString])) {
+				continue;
+			}
+			// the exact either-branch merge already constrains this expression
+			// (an alternative-form entry) - the branch-scope union recovery
+			// below is the old lossy-merge compensation and would only add a
+			// weaker entry on top
+			if (isset($existingAlternativeTypes[$exprString])) {
 				continue;
 			}
 			if (!$scope->hasExpressionType($targetExpr)->yes()) {
@@ -142,6 +150,13 @@ final class ConditionalExpressionHolderHelper
 		// single "this side is true" condition, so they must be gathered together
 		// into one condition set. Picking only one list would drop a conjunct and
 		// let the resulting holder fire too eagerly.
+		// an alternative-form entry (a cross-kind either-branch merge) has no
+		// single condition type; dropping it from the condition set would let
+		// the holder fire too eagerly - build no holders from such a condition
+		if ($conditionSpecifiedTypes->getAlternativeTypes() !== []) {
+			return [];
+		}
+
 		$conditionExpressionTypes = [];
 		$droppedNoOpConditions = [];
 		// the unnarrowed type of each condition expression, pinned at

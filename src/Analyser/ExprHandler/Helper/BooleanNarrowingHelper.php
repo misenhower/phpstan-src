@@ -48,15 +48,15 @@ final class BooleanNarrowingHelper
 	): SpecifiedTypes
 	{
 			$leftTypes = $leftTypesCallback($s, $context)->setRootExpr($rootExpr);
+			// the right operand lives after the left is known true - its narrowing
+			// bases read from the left-truthy view, never the raw ask scope
 			$rightScope = $leftTruthyScope;
-			$rightTypes = $rightTypesCallback($s, $context)->setRootExpr($rootExpr);
+			$rightTypes = $rightTypesCallback($rightScope, $context)->setRootExpr($rootExpr);
 			if ($context->true()) {
 				$types = $leftTypes->unionWith($rightTypes);
 			} else {
-				$leftNormalized = $leftTypes->normalize($s, $nodeScopeResolver);
-				$rightNormalized = $rightTypes->normalize($rightScope, $nodeScopeResolver);
-				$types = $leftNormalized->intersectWith($rightNormalized);
-				$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftNormalized, $rightNormalized, $leftFalseyScope, $rightFalseyScope, $types);
+				$types = $leftTypes->intersectWith($rightTypes);
+				$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, $leftFalseyScope, $rightFalseyScope, $types);
 			}
 			if ($context->false()) {
 				// Consequent (holder) narrowings projected by each holder: these must be
@@ -94,10 +94,10 @@ final class BooleanNarrowingHelper
 						$rightCondTypes = new SpecifiedTypes($truthyRightTypes->getSureNotTypes(), $truthyRightTypes->getSureTypes());
 					}
 				}
-				$result = new SpecifiedTypes(
+				$result = (new SpecifiedTypes(
 					$types->getSureTypes(),
 					$types->getSureNotTypes(),
-				);
+				))->withAlternativeTypesOf($types);
 				if ($types->shouldOverwrite()) {
 					$result = $result->setAlwaysOverwriteTypes();
 				}
@@ -144,20 +144,19 @@ final class BooleanNarrowingHelper
 			$rightScope = $leftFalseyScope;
 			$rightTypes = $rightTypesCallback($rightScope, $context)->setRootExpr($rootExpr);
 
+
 			if ($context->true()) {
 				if (
 					$leftTypeCallback($s)->toBoolean()->isFalse()->yes()
 				) {
-					$types = $rightTypes->normalize($rightScope, $nodeScopeResolver);
+					$types = $rightTypes;
 				} elseif (
 					$leftTypeCallback($s)->toBoolean()->isTrue()->yes()
 					|| $rightTypeCallback($s)->toBoolean()->isFalse()->yes()
 				) {
-					$types = $leftTypes->normalize($s, $nodeScopeResolver);
+					$types = $leftTypes;
 				} else {
-					$leftNormalized = $leftTypes->normalize($s, $nodeScopeResolver);
-					$rightNormalized = $rightTypes->normalize($rightScope, $nodeScopeResolver);
-					$types = $leftNormalized->intersectWith($rightNormalized);
+					$types = $leftTypes->intersectWith($rightTypes);
 					$types = $this->augmentDisjunctionTruthyWithConditionalHolders(
 						$nodeScopeResolver,
 						$s,
@@ -166,17 +165,17 @@ final class BooleanNarrowingHelper
 						$rightTruthyScope,
 						$rootExpr,
 						$types);
-					$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftNormalized, $rightNormalized, $leftTruthyScope, $rightTruthyScope, $types);
+					$types = $this->conditionalExpressionHolderHelper->augmentDisjunctionTypes($nodeScopeResolver, $s, $leftTypes, $rightTypes, $leftTruthyScope, $rightTruthyScope, $types);
 				}
 			} else {
 				$types = $leftTypes->unionWith($rightTypes);
 			}
 
 			if ($context->true()) {
-				$result = new SpecifiedTypes(
+				$result = (new SpecifiedTypes(
 					$types->getSureTypes(),
 					$types->getSureNotTypes(),
-				);
+				))->withAlternativeTypesOf($types);
 				if ($types->shouldOverwrite()) {
 					$result = $result->setAlwaysOverwriteTypes();
 				}
@@ -212,6 +211,12 @@ final class BooleanNarrowingHelper
 				}
 				$seen[$rootExprString] = true;
 				$targetExpr = $holders[array_key_first($holders)]->getTypeHolder()->getExpr();
+
+				// the exact either-branch merge already constrains this
+				// expression - do not add the weaker branch-scope union on top
+				if (isset($types->getAlternativeTypes()[$rootExprString])) {
+					continue;
+				}
 
 				// Only project when the target stays Yes-defined in the original
 				// scope and in both filtered branches. A sure type implicitly
@@ -255,6 +260,11 @@ final class BooleanNarrowingHelper
 
 	private function allExpressionsTrackable(SpecifiedTypes $types): bool
 	{
+		// an alternative-form entry has no single condition type to track
+		if ($types->getAlternativeTypes() !== []) {
+			return false;
+		}
+
 		foreach ($types->getSureTypes() as [$expr]) {
 			if (!$this->isTrackableExpression($expr)) {
 				return false;

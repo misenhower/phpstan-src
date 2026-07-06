@@ -119,6 +119,34 @@ final class DefaultNarrowingHelper
 	}
 
 	/**
+	 * Converts sure-not entries to sure form against the given evaluation
+	 * scope (position-fixed, captured at compose time) - for the decided
+	 * comparison paths whose consumers need a concrete sure type. This is NOT
+	 * the deleted SpecifiedTypes::normalize(): the scope here is the
+	 * narrowing's own evaluation position, never the application point.
+	 */
+	public function toSureTypes(SpecifiedTypes $types, MutatingScope $evaluationScope): SpecifiedTypes
+	{
+		$sureTypes = $types->getSureTypes();
+
+		foreach ($types->getSureNotTypes() as $exprString => [$exprNode, $sureNotType]) {
+			if (!isset($sureTypes[$exprString])) {
+				$sureTypes[$exprString] = [$exprNode, TypeCombinator::remove($evaluationScope->getStateType($exprNode), $sureNotType)];
+				continue;
+			}
+
+			$sureTypes[$exprString][1] = TypeCombinator::remove($sureTypes[$exprString][1], $sureNotType);
+		}
+
+		$result = new SpecifiedTypes($sureTypes, []);
+		if ($types->shouldOverwrite()) {
+			$result = $result->setAlwaysOverwriteTypes();
+		}
+
+		return $result->setRootExpr($types->getRootExpr());
+	}
+
+	/**
 	 * The new-world counterpart of TypeSpecifier::create() for a subject the
 	 * calling handler has already processed. The subject's own result says how
 	 * a type constraint on it translates into entries (an assignment fans out

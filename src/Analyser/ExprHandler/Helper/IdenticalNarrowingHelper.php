@@ -527,8 +527,8 @@ final class IdenticalNarrowingHelper
 				$this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $leftType, $context),
 			);
 		} elseif ($context->false()) {
-			return $this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, $leftType, $context)->normalize($evaluationScope, $nodeScopeResolver)
-				->intersectWith($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $rightType, $context)->normalize($evaluationScope, $nodeScopeResolver));
+			return $this->defaultNarrowingHelper->toSureTypes($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $left, $leftResult, $leftType, $context), $evaluationScope)
+				->intersectWith($this->defaultNarrowingHelper->toSureTypes($this->defaultNarrowingHelper->createSubjectTypes($evaluationScope, $right, $rightResult, $rightType, $context), $evaluationScope));
 		}
 
 		return new SpecifiedTypes([], []);
@@ -621,7 +621,7 @@ final class IdenticalNarrowingHelper
 
 		return $context->true()
 			? $leftTypes->unionWith($rightTypes)
-			: $leftTypes->normalize($evaluationScope, $nodeScopeResolver)->intersectWith($rightTypes->normalize($evaluationScope, $nodeScopeResolver));
+			: $this->defaultNarrowingHelper->toSureTypes($leftTypes, $evaluationScope)->intersectWith($this->defaultNarrowingHelper->toSureTypes($rightTypes, $evaluationScope));
 	}
 
 	/**

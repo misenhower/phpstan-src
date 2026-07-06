@@ -1238,23 +1238,26 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			return null;
 		}
 
+		// a narrowable expression's scope-view type is derived from tracked
+		// state - the application-point semantics this method exists for. The
+		// stored result must NOT win here: a narrowing entry's node sits inside
+		// the condition (the \$a of `'' !== \$a`, walked on a truthy branch), so
+		// its walk-position type carries branch narrowing that would poison the
+		// base the narrowing is applied to.
+		if (
+			($expr instanceof Expr\Variable && is_string($expr->name))
+			|| $expr instanceof PropertyFetch
+			|| $expr instanceof Expr\ArrayDimFetch
+			|| $expr instanceof Expr\StaticPropertyFetch
+		) {
+			return [
+				$this->resolveScopeStateType($expr, $this->nativeTypesPromoted),
+				$this->resolveScopeStateType($expr, true),
+			];
+		}
+
 		$result = $storage->findExpressionResult($expr);
 		if ($result === null) {
-			// a narrowable expression's scope-view type is derived from tracked
-			// state - no need to price the node on demand (the storage misses
-			// whenever the narrowing is applied on a different frame than the
-			// walk that produced the subject)
-			if (
-				($expr instanceof Expr\Variable && is_string($expr->name))
-				|| $expr instanceof PropertyFetch
-				|| $expr instanceof Expr\ArrayDimFetch
-				|| $expr instanceof Expr\StaticPropertyFetch
-			) {
-				return [
-					$this->resolveScopeStateType($expr, $this->nativeTypesPromoted),
-					$this->resolveScopeStateType($expr, true),
-				];
-			}
 
 			// a call subject (or a synthetic plain-chain variant) is priced on
 			// demand once per scope: one walk answers both flavours, and the
@@ -3566,6 +3569,17 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				'type' => $type,
 			];
 		}
+		foreach ($specifiedTypes->getAlternativeTypes() as $exprString => [$expr, $terms]) {
+			if ($expr instanceof Node\Scalar || $expr instanceof Array_ || $expr instanceof Expr\UnaryMinus && $expr->expr instanceof Node\Scalar) {
+				continue;
+			}
+			$typeSpecifications[] = [
+				'sure' => true,
+				'exprString' => (string) $exprString,
+				'expr' => $expr,
+				'terms' => $terms,
+			];
+		}
 
 		usort($typeSpecifications, static function (array $a, array $b): int {
 			$length = strlen($a['exprString']) - strlen($b['exprString']);
@@ -3580,7 +3594,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		$specifiedExpressions = [];
 		foreach ($typeSpecifications as $typeSpecification) {
 			$expr = $typeSpecification['expr'];
-			$type = $typeSpecification['type'];
 			$exprString = $typeSpecification['exprString'];
 
 			if ($expr instanceof IssetExpr) {
@@ -3640,6 +3653,43 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				}
 			}
 
+			if (isset($typeSpecification['terms'])) {
+				// an alternative-form entry: the union over its terms of
+				// `(sure ?? current) minus subtract`, evaluated here at the
+				// application point - the deferred descendant of the old
+				// SpecifiedTypes::normalize()
+				$evaluate = static function (?Type $current) use ($typeSpecification): ?Type {
+					$parts = [];
+					foreach ($typeSpecification['terms'] as [$sure, $subtract]) {
+						$base = $sure ?? $current;
+						if ($base === null) {
+							return null;
+						}
+						$parts[] = $subtract !== null ? TypeCombinator::remove($base, $subtract) : $base;
+					}
+
+					return TypeCombinator::union(...$parts);
+				};
+				$evaluated = $evaluate($trackedType);
+				if ($evaluated === null) {
+					// a current-type-dependent term with no known current type -
+					// nothing sound to specify (mirrors the sure-not behaviour)
+					continue;
+				}
+				$evaluatedNative = $evaluate($trackedNativeType ?? $trackedType) ?? $evaluated;
+
+				$newType = $trackedType !== null ? TypeCombinator::intersect($evaluated, $trackedType) : $evaluated;
+				$newNativeType = $trackedNativeType !== null ? TypeCombinator::intersect($evaluatedNative, $trackedNativeType) : $evaluatedNative;
+				$scope = $scope->specifyExpressionType($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+
+				$holderType = array_key_exists($exprString, $scope->expressionTypes)
+					? $scope->expressionTypes[$exprString]->getType()
+					: $newType;
+				$specifiedExpressions[$exprString] = ExpressionTypeHolder::createYes($expr, $holderType);
+				continue;
+			}
+
+			$type = $typeSpecification['type'];
 			if ($typeSpecification['sure']) {
 				if ($specifiedTypes->shouldOverwrite()) {
 					$scope = $scope->assignExpression($expr, $type, $type);

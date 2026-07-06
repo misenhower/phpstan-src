@@ -122,7 +122,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			impurePoints: $exprResult->getImpurePoints(),
 			containsNullsafe: true,
 			typeCallback: $nullsafeTypeCallback,
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall, $nodeScopeResolver): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $methodCall): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
@@ -137,7 +137,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 				)->setRootExpr($expr);
 
 				$nullSafeTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
-				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->normalize($s, $nodeScopeResolver)->intersectWith($nullSafeTypes->normalize($s, $nodeScopeResolver));
+				return $context->true() ? $types->unionWith($nullSafeTypes) : $types->intersectWith($nullSafeTypes);
 			},
 			// Inside-out copy of TypeSpecifier::createForExpr()'s `?->` handling.
 			// The short-circuit's null surfaces here, never by walking the chain:
