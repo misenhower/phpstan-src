@@ -3,11 +3,11 @@
 namespace PHPStan\Analyser\ExprHandler\Helper;
 
 use PhpParser\Node\Expr;
+use PHPStan\Analyser\DisjunctionHolderProjectionAugment;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
-use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\Type;
 use PHPStan\DependencyInjection\AutowiredService;
 use function array_filter;
@@ -163,14 +163,18 @@ final class BooleanNarrowingHelper
 					$types = $leftTypes;
 				} else {
 					$types = $leftTypes->intersectWith($rightTypes);
-					$types = $this->augmentDisjunctionTruthyWithConditionalHolders(
+					$alternativeKeys = [];
+					foreach ($types->getAlternativeTypes() as $exprString => $entry) {
+						$alternativeKeys[$exprString] = true;
+					}
+					$types = $types->withDeferredAugment(new DisjunctionHolderProjectionAugment(
 						$nodeScopeResolver,
-						$s,
+						$this->defaultNarrowingHelper,
 						$leftTruthyScope,
 						$rightScope,
 						$rightTruthyScope,
-						$rootExpr,
-						$types);
+						$alternativeKeys,
+					));
 					$branchUnionAugment = $this->conditionalExpressionHolderHelper->buildBranchUnionAugment($nodeScopeResolver, $leftTypes, $rightTypes, $leftTruthyScope, $rightTruthyScope, $types);
 					if ($branchUnionAugment !== null) {
 						$types = $types->withDeferredAugment($branchUnionAugment);
@@ -198,74 +202,6 @@ final class BooleanNarrowingHelper
 			}
 
 			return $types;
-	}
-
-	private function augmentDisjunctionTruthyWithConditionalHolders(
-		NodeScopeResolver $nodeScopeResolver,
-		MutatingScope $scope,
-		MutatingScope $leftTruthyScope,
-		MutatingScope $rightScope,
-		MutatingScope $rightTruthyScope,
-		Expr $rootExpr,
-		SpecifiedTypes $types,
-	): SpecifiedTypes
-	{
-		$seen = [];
-		foreach ([$scope, $rightScope] as $sourceScope) {
-			foreach ($sourceScope->getConditionalExpressions() as $rootExprString => $holders) {
-				if (isset($seen[$rootExprString])) {
-					continue;
-				}
-				if ($holders === []) {
-					continue;
-				}
-				$seen[$rootExprString] = true;
-				$targetExpr = $holders[array_key_first($holders)]->getTypeHolder()->getExpr();
-
-				// the exact either-branch merge already constrains this
-				// expression - do not add the weaker branch-scope union on top
-				if (isset($types->getAlternativeTypes()[$rootExprString])) {
-					continue;
-				}
-
-				// Only project when the target stays Yes-defined in the original
-				// scope and in both filtered branches. A sure type implicitly
-				// raises certainty to Yes, which would wrongly upgrade Maybe-defined
-				// variables — `if (empty($a['bar']))` for instance leaves `$a`
-				// Maybe-defined because `empty()` tolerates undefined offsets.
-				if (!$scope->hasExpressionType($targetExpr)->yes()) {
-					continue;
-				}
-				if (!$leftTruthyScope->hasExpressionType($targetExpr)->yes()) {
-					continue;
-				}
-				if (!$rightTruthyScope->hasExpressionType($targetExpr)->yes()) {
-					continue;
-				}
-
-				$origType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
-				$leftType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftTruthyScope);
-				$rightType = $nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightTruthyScope);
-
-				$leftNarrowed = !$leftType->equals($origType) && $origType->isSuperTypeOf($leftType)->yes();
-				$rightNarrowed = !$rightType->equals($origType) && $origType->isSuperTypeOf($rightType)->yes();
-
-				if (!$leftNarrowed || !$rightNarrowed) {
-					continue;
-				}
-
-				$unionType = TypeCombinator::union($leftType, $rightType);
-				if ($unionType->equals($origType)) {
-					continue;
-				}
-
-				$types = $types->unionWith(
-					$this->defaultNarrowingHelper->createSubjectTypes($scope, $targetExpr, null, $unionType, TypeSpecifierContext::createTrue()),
-				);
-			}
-		}
-
-		return $types;
 	}
 
 	private function allExpressionsTrackable(SpecifiedTypes $types): bool
