@@ -62,7 +62,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		// carry the receiver type to NullsafeMethodCallRule so it reads it from here
 		// instead of asking the scope for the unprocessed receiver.
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new NullsafeMethodCallExpressionNode($expr, $receiverType, $receiverNativeType), $beforeScope, $storage, $context);
-		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($nodeScopeResolver, $scope, $scope, $expr->var);
+		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($scope, $scope, $expr->var);
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafeMethodCall' => true]);
 		unset($attributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
 		$methodCall = new MethodCall(

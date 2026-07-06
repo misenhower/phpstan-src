@@ -60,7 +60,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 		// carry the receiver type to NullsafePropertyFetchRule so it reads it from
 		// here instead of asking the scope for the unprocessed receiver.
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new NullsafePropertyFetchExpressionNode($expr, $receiverType, $receiverNativeType), $beforeScope, $storage, $context);
-		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($nodeScopeResolver, $scope, $scope, $expr->var);
+		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($scope, $scope, $expr->var);
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafePropertyFetch' => true]);
 		unset($attributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
 		$propertyFetch = new PropertyFetch(

@@ -11,7 +11,6 @@ use PhpParser\Node\Expr\StaticPropertyFetch;
 use PHPStan\Analyser\EnsuredNonNullabilityResult;
 use PHPStan\Analyser\EnsuredNonNullabilityResultExpression;
 use PHPStan\Analyser\MutatingScope;
-use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\TrinaryLogic;
 use PHPStan\Type\TypeCombinator;
@@ -20,12 +19,12 @@ use PHPStan\Type\TypeCombinator;
 final class NonNullabilityHelper
 {
 
-	public function ensureShallowNonNullability(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, MutatingScope $originalScope, Expr $exprToSpecify): EnsuredNonNullabilityResult
+	public function ensureShallowNonNullability(MutatingScope $scope, MutatingScope $originalScope, Expr $exprToSpecify): EnsuredNonNullabilityResult
 	{
 		// the expression has not been processed into the storage yet (this runs
-		// before processExprNode), so read its type from the stored result or
-		// price it on demand instead of re-walking via Scope::getType().
-		$exprType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $scope);
+		// before processExprNode) - derive its current type from the scope's
+		// tracked state instead of pricing the node on demand.
+		$exprType = $scope->getStateType($exprToSpecify);
 		$isNull = $exprType->isNull();
 		if ($isNull->yes()) {
 			return new EnsuredNonNullabilityResult($scope, []);
@@ -35,9 +34,9 @@ final class NonNullabilityHelper
 
 		$exprTypeWithoutNull = TypeCombinator::removeNull($exprType);
 		if ($exprType->equals($exprTypeWithoutNull)) {
-			$originalExprType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $originalScope);
+			$originalExprType = $originalScope->getStateType($exprToSpecify);
 			if (!$originalExprType->equals($exprTypeWithoutNull)) {
-				$originalNativeType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $originalScope->doNotTreatPhpDocTypesAsCertain());
+				$originalNativeType = $originalScope->doNotTreatPhpDocTypesAsCertain()->getStateType($exprToSpecify);
 
 				return new EnsuredNonNullabilityResult($scope, [
 					new EnsuredNonNullabilityResultExpression($exprToSpecify, $originalExprType, $originalNativeType, $hasExpressionType),
@@ -55,8 +54,8 @@ final class NonNullabilityHelper
 			$parentExpr = $exprToSpecify->var;
 			$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression(
 				$parentExpr,
-				$nodeScopeResolver->readTypeOfMaybeStored($parentExpr, $scope),
-				$nodeScopeResolver->readTypeOfMaybeStored($parentExpr, $scope->doNotTreatPhpDocTypesAsCertain()),
+				$scope->getStateType($parentExpr),
+				$scope->doNotTreatPhpDocTypesAsCertain()->getStateType($parentExpr),
 				$originalScope->hasExpressionType($parentExpr),
 			);
 		}
@@ -67,7 +66,7 @@ final class NonNullabilityHelper
 			$certainty = $hasExpressionType;
 		}
 
-		$nativeType = $nodeScopeResolver->readTypeOfMaybeStored($exprToSpecify, $scope->doNotTreatPhpDocTypesAsCertain());
+		$nativeType = $scope->doNotTreatPhpDocTypesAsCertain()->getStateType($exprToSpecify);
 		$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression($exprToSpecify, $exprType, $nativeType, $certainty);
 		$scope = $scope->specifyExpressionType(
 			$exprToSpecify,
@@ -82,12 +81,12 @@ final class NonNullabilityHelper
 		);
 	}
 
-	public function ensureNonNullability(NodeScopeResolver $nodeScopeResolver, MutatingScope $scope, Expr $expr): EnsuredNonNullabilityResult
+	public function ensureNonNullability(MutatingScope $scope, Expr $expr): EnsuredNonNullabilityResult
 	{
 		$specifiedExpressions = [];
 		$originalScope = $scope;
-		$scope = $this->lookForExpressionCallback($scope, $expr, function ($scope, $expr) use (&$specifiedExpressions, $originalScope, $nodeScopeResolver) {
-			$result = $this->ensureShallowNonNullability($nodeScopeResolver, $scope, $originalScope, $expr);
+		$scope = $this->lookForExpressionCallback($scope, $expr, function ($scope, $expr) use (&$specifiedExpressions, $originalScope) {
+			$result = $this->ensureShallowNonNullability($scope, $originalScope, $expr);
 			foreach ($result->getSpecifiedExpressions() as $specifiedExpression) {
 				$specifiedExpressions[] = $specifiedExpression;
 			}
