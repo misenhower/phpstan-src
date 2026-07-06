@@ -242,11 +242,11 @@ final class IssetHandler implements ExprHandler
 							$expr,
 							$leftExprNode,
 							$leftTypes,
-							$leftTruthyScope,
-							$leftFalseyScope,
+							static fn (): MutatingScope => $leftTruthyScope,
+							static fn (): MutatingScope => $leftFalseyScope,
 							$rightExprNode,
 							$rightTypes,
-							$rightFalseyScope,
+							static fn (): MutatingScope => $rightFalseyScope,
 						);
 						$accExpr = new BooleanAnd($leftExprNode, $rightExprNode);
 						$accTruthyScope = $accTruthyScope->applySpecifiedTypes($rightTypes($accTruthyScope, TypeSpecifierContext::createTruthy()));

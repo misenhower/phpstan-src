@@ -130,11 +130,6 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 				};
 				$rightTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $exprResult->getSpecifiedTypesForScope($scope, $ctx);
 
-				// the plain twin was walked on the ensured-non-null scope - that
-				// is the left-truthy evaluation point; the receiver-is-null
-				// branch scope has no walk analog and derives lazily
-				$leftFalseyScope ??= $beforeScope->applySpecifiedTypes($leftTypes($beforeScope, TypeSpecifierContext::createFalsey()));
-
 				$types = $this->booleanNarrowingHelper->specifyConjunction(
 					$nodeScopeResolver,
 					$s,
@@ -142,11 +137,16 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 					$expr,
 					$notIdenticalNode,
 					$leftTypes,
-					$nonNullabilityResult->getScope(),
-					$leftFalseyScope,
+					static fn (): MutatingScope => $nonNullabilityResult->getScope(),
+					// the plain twin was walked on the ensured-non-null scope - that
+					// is the left-truthy evaluation point; the receiver-is-null
+					// branch scope has no walk analog and derives on first demand
+					static function () use ($beforeScope, $leftTypes, &$leftFalseyScope): MutatingScope {
+						return $leftFalseyScope ??= $beforeScope->applySpecifiedTypes($leftTypes($beforeScope, TypeSpecifierContext::createFalsey()));
+					},
 					$propertyFetch,
 					$rightTypes,
-					$exprResult->getFalseyScope(),
+					static fn (): MutatingScope => $exprResult->getFalseyScope(),
 				)->setRootExpr($expr);
 
 				$nullSafeTypes = $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);

@@ -214,13 +214,14 @@ final class TernaryHandler implements ExprHandler
 				$elseType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $elseResult->getNativeType() : $elseResult->getType();
 
 				// the decomposition's branch scopes are the operand walks' own
-				// memoized branch scopes (the evaluation points), not ask-derived
-				$condTruthyScope = $ternaryCondResult->getTruthyScope();
-				$condFalseyScope = $ternaryCondResult->getFalseyScope();
+				// memoized branch scopes (the evaluation points), not ask-derived;
+				// thunked so deep chains do not derive every level eagerly
+				$condTruthyScope = static fn (): MutatingScope => $ternaryCondResult->getTruthyScope();
+				$condFalseyScope = static fn (): MutatingScope => $ternaryCondResult->getFalseyScope();
 
 				// right disjunct: !cond && else
 				$bNode = new BooleanAnd($notCondNode, $expr->else);
-				$elseFalseyOnCondFalseyScope = $elseResult->getFalseyScope();
+				$elseFalseyOnCondFalseyScope = static fn (): MutatingScope => $elseResult->getFalseyScope();
 				$bTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
 					$nodeScopeResolver,
 					$scope,
@@ -235,14 +236,14 @@ final class TernaryHandler implements ExprHandler
 					$elseFalseyOnCondFalseyScope,
 				);
 				$bType = $andVerdict($notCondType, $elseType);
-				$bTruthyScope = $elseResult->getTruthyScope();
+				$bTruthyScope = static fn (): MutatingScope => $elseResult->getTruthyScope();
 
 				if ($ifResult !== null && $expr->if !== null) {
 					// left disjunct: cond && if
 					$aNode = new BooleanAnd($expr->cond, $expr->if);
 					$ifTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ifResult->getSpecifiedTypesForScope($scope, $ctx);
 					$ifType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $ifResult->getNativeType() : $ifResult->getType();
-					$ifFalseyOnCondTruthyScope = $ifResult->getFalseyScope();
+					$ifFalseyOnCondTruthyScope = static fn (): MutatingScope => $ifResult->getFalseyScope();
 					$aTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
 						$nodeScopeResolver,
 						$scope,
@@ -257,10 +258,12 @@ final class TernaryHandler implements ExprHandler
 						$ifFalseyOnCondTruthyScope,
 					);
 					$aType = $andVerdict($condType, $ifType);
-					$aTruthyScope = $ifResult->getTruthyScope();
+					$aTruthyScope = static fn (): MutatingScope => $ifResult->getTruthyScope();
 					// the merged falsey of (cond && if) has no single walk scope -
-					// derived from the evaluation point once, reused across asks
-					$aFalseyScope ??= $scope->applySpecifiedTypes($aTypes($scope, TypeSpecifierContext::createFalsey()));
+					// derived from the evaluation point on first demand, reused across asks
+					$aFalseyScopeThunk = static function () use ($scope, $aTypes, &$aFalseyScope): MutatingScope {
+						return $aFalseyScope ??= $scope->applySpecifiedTypes($aTypes($scope, TypeSpecifierContext::createFalsey()));
+					};
 
 					return $this->booleanNarrowingHelper->specifyDisjunction(
 						$nodeScopeResolver,
@@ -271,7 +274,7 @@ final class TernaryHandler implements ExprHandler
 						$aTypes,
 						$aType,
 						$aTruthyScope,
-						$aFalseyScope,
+						$aFalseyScopeThunk,
 						$bNode,
 						$bTypes,
 						$bType,

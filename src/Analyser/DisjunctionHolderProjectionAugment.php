@@ -19,6 +19,12 @@ final class DisjunctionHolderProjectionAugment implements DeferredSpecifiedTypes
 {
 
 	/**
+	 * The operand truthy scopes are thunks resolved only when a candidate
+	 * passes the applying-scope gates - deriving them per level of a deep
+	 * boolean chain is quadratic.
+	 *
+	 * @param callable(): MutatingScope $leftTruthyScope
+	 * @param callable(): MutatingScope $rightTruthyScope
 	 * @param array<string, true> $alternativeKeys expressions the exact either-branch
 	 *        merge already constrains - the weaker branch-scope union must not
 	 *        be added on top
@@ -26,9 +32,9 @@ final class DisjunctionHolderProjectionAugment implements DeferredSpecifiedTypes
 	public function __construct(
 		private NodeScopeResolver $nodeScopeResolver,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
-		private MutatingScope $leftTruthyScope,
+		private $leftTruthyScope,
 		private MutatingScope $leftFalseyScope,
-		private MutatingScope $rightTruthyScope,
+		private $rightTruthyScope,
 		private array $alternativeKeys,
 	)
 	{
@@ -38,6 +44,8 @@ final class DisjunctionHolderProjectionAugment implements DeferredSpecifiedTypes
 	{
 		$result = null;
 		$seen = [];
+		$leftTruthyScope = null;
+		$rightTruthyScope = null;
 		foreach ([$scope, $this->leftFalseyScope] as $sourceScope) {
 			foreach ($sourceScope->getConditionalExpressions() as $rootExprString => $holders) {
 				if (isset($seen[$rootExprString])) {
@@ -61,16 +69,18 @@ final class DisjunctionHolderProjectionAugment implements DeferredSpecifiedTypes
 				if (!$scope->hasExpressionType($targetExpr)->yes()) {
 					continue;
 				}
-				if (!$this->leftTruthyScope->hasExpressionType($targetExpr)->yes()) {
+				$leftTruthyScope ??= ($this->leftTruthyScope)();
+				$rightTruthyScope ??= ($this->rightTruthyScope)();
+				if (!$leftTruthyScope->hasExpressionType($targetExpr)->yes()) {
 					continue;
 				}
-				if (!$this->rightTruthyScope->hasExpressionType($targetExpr)->yes()) {
+				if (!$rightTruthyScope->hasExpressionType($targetExpr)->yes()) {
 					continue;
 				}
 
 				$origType = $this->nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
-				$leftType = $this->nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $this->leftTruthyScope);
-				$rightType = $this->nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $this->rightTruthyScope);
+				$leftType = $this->nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftTruthyScope);
+				$rightType = $this->nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightTruthyScope);
 
 				$leftNarrowed = !$leftType->equals($origType) && $origType->isSuperTypeOf($leftType)->yes();
 				$rightNarrowed = !$rightType->equals($origType) && $origType->isSuperTypeOf($rightType)->yes();

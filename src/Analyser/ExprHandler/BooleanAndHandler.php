@@ -103,11 +103,11 @@ final class BooleanAndHandler implements ExprHandler
 					$expr,
 					$expr->left,
 					static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $leftResult->getSpecifiedTypesForScope($scope, $ctx),
-					$leftResult->getTruthyScope(),
-					$leftResult->getFalseyScope(),
+					static fn (): MutatingScope => $leftResult->getTruthyScope(),
+					static fn (): MutatingScope => $leftResult->getFalseyScope(),
 					$expr->right,
 					static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $rightResult->getSpecifiedTypesForScope($scope, $ctx),
-					$rightResult->getFalseyScope(),
+					static fn (): MutatingScope => $rightResult->getFalseyScope(),
 				);
 			},
 		);

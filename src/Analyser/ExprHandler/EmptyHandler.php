@@ -161,12 +161,12 @@ final class EmptyHandler implements ExprHandler
 					$notIssetNode,
 					$leftTypes,
 					$leftType,
-					$leftTruthyScope,
-					$leftFalseyScope,
+					static fn (): MutatingScope => $leftTruthyScope,
+					static fn (): MutatingScope => $leftFalseyScope,
 					$notExprNode,
 					$rightTypes,
 					$rightType,
-					$rightTruthyScope,
+					static fn (): MutatingScope => $rightTruthyScope,
 				)->setRootExpr($expr);
 			},
 		);

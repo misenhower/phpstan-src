@@ -35,13 +35,20 @@ final class ConditionalExpressionHolderHelper
 	 * branch types are read from the operand-walk filtered scopes here at
 	 * compose time, while the does-it-actually-narrow gates run against the
 	 * applying scope when MutatingScope::applySpecifiedTypes() evaluates it.
+	 *
+	 * The filtered scopes are thunks resolved only when there are candidate
+	 * expressions - deriving them per level of a deep boolean chain is
+	 * quadratic.
+	 *
+	 * @param callable(): MutatingScope $leftFilteredScope
+	 * @param callable(): MutatingScope $rightFilteredScope
 	 */
 	public function buildBranchUnionAugment(
 		NodeScopeResolver $nodeScopeResolver,
 		SpecifiedTypes $leftTypes,
 		SpecifiedTypes $rightTypes,
-		MutatingScope $leftFilteredScope,
-		MutatingScope $rightFilteredScope,
+		callable $leftFilteredScope,
+		callable $rightFilteredScope,
 		SpecifiedTypes $types,
 	): ?DisjunctionBranchUnionAugment
 	{
@@ -57,6 +64,8 @@ final class ConditionalExpressionHolderHelper
 		$existingAlternativeTypes = $types->getAlternativeTypes();
 
 		$candidates = [];
+		$leftScope = null;
+		$rightScope = null;
 		foreach ($candidateExprs as $exprString => $targetExpr) {
 			if (isset($existingSureTypes[$exprString])) {
 				continue;
@@ -67,10 +76,12 @@ final class ConditionalExpressionHolderHelper
 			if (isset($existingAlternativeTypes[$exprString])) {
 				continue;
 			}
-			if (!$leftFilteredScope->hasExpressionType($targetExpr)->yes()) {
+			$leftScope ??= $leftFilteredScope();
+			$rightScope ??= $rightFilteredScope();
+			if (!$leftScope->hasExpressionType($targetExpr)->yes()) {
 				continue;
 			}
-			if (!$rightFilteredScope->hasExpressionType($targetExpr)->yes()) {
+			if (!$rightScope->hasExpressionType($targetExpr)->yes()) {
 				continue;
 			}
 
@@ -78,8 +89,8 @@ final class ConditionalExpressionHolderHelper
 			// results on these filtered scopes instead of re-walking via getType().
 			$candidates[] = [
 				$targetExpr,
-				$nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftFilteredScope),
-				$nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightFilteredScope),
+				$nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $leftScope),
+				$nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $rightScope),
 			];
 		}
 

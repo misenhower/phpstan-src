@@ -32,8 +32,16 @@ final class BooleanNarrowingHelper
 	}
 
 	/**
+	 * The branch scopes are thunks: for a deep boolean chain, eagerly deriving
+	 * every level's opposite-polarity scope is quadratic - they resolve only
+	 * when a consumer (an augment with candidates, a holder re-derivation)
+	 * genuinely needs the state.
+	 *
 	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $leftTypesCallback
 	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $rightTypesCallback
+	 * @param callable(): MutatingScope $leftTruthyScope
+	 * @param callable(): MutatingScope $leftFalseyScope
+	 * @param callable(): MutatingScope $rightFalseyScope
 	 */
 	public function specifyConjunction(
 		NodeScopeResolver $nodeScopeResolver,
@@ -42,17 +50,17 @@ final class BooleanNarrowingHelper
 		Expr $rootExpr,
 		Expr $leftExpr,
 		callable $leftTypesCallback,
-		MutatingScope $leftTruthyScope,
-		MutatingScope $leftFalseyScope,
+		callable $leftTruthyScope,
+		callable $leftFalseyScope,
 		Expr $rightExpr,
 		callable $rightTypesCallback,
-		MutatingScope $rightFalseyScope,
+		callable $rightFalseyScope,
 	): SpecifiedTypes
 	{
 			$leftTypes = $leftTypesCallback($s, $context)->setRootExpr($rootExpr);
 			// the right operand lives after the left is known true - its narrowing
 			// bases read from the left-truthy view, never the raw ask scope
-			$rightScope = $leftTruthyScope;
+			$rightScope = $leftTruthyScope();
 			$rightTypes = $rightTypesCallback($rightScope, $context)->setRootExpr($rootExpr);
 			if ($context->true()) {
 				$types = $leftTypes->unionWith($rightTypes);
@@ -133,6 +141,9 @@ final class BooleanNarrowingHelper
 	 * @param callable(bool): Type $leftTypeCallback
 	 * @param callable(MutatingScope, TypeSpecifierContext): SpecifiedTypes $rightTypesCallback
 	 * @param callable(bool): Type $rightTypeCallback
+	 * @param callable(): MutatingScope $leftTruthyScope
+	 * @param callable(): MutatingScope $leftFalseyScope
+	 * @param callable(): MutatingScope $rightTruthyScope
 	 */
 	public function specifyDisjunction(
 		NodeScopeResolver $nodeScopeResolver,
@@ -142,16 +153,16 @@ final class BooleanNarrowingHelper
 		Expr $leftExpr,
 		callable $leftTypesCallback,
 		callable $leftTypeCallback,
-		MutatingScope $leftTruthyScope,
-		MutatingScope $leftFalseyScope,
+		callable $leftTruthyScope,
+		callable $leftFalseyScope,
 		Expr $rightExpr,
 		callable $rightTypesCallback,
 		callable $rightTypeCallback,
-		MutatingScope $rightTruthyScope,
+		callable $rightTruthyScope,
 	): SpecifiedTypes
 	{
 			$leftTypes = $leftTypesCallback($s, $context)->setRootExpr($rootExpr);
-			$rightScope = $leftFalseyScope;
+			$rightScope = $leftFalseyScope();
 			$rightTypes = $rightTypesCallback($rightScope, $context)->setRootExpr($rootExpr);
 
 

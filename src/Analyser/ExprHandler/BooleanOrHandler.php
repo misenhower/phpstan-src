@@ -125,12 +125,12 @@ final class BooleanOrHandler implements ExprHandler
 					$expr->left,
 					static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $leftResult->getSpecifiedTypesForScope($scope, $ctx),
 					static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType(),
-					$leftResult->getTruthyScope(),
-					$leftResult->getFalseyScope(),
+					static fn (): MutatingScope => $leftResult->getTruthyScope(),
+					static fn (): MutatingScope => $leftResult->getFalseyScope(),
 					$expr->right,
 					static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $rightResult->getSpecifiedTypesForScope($scope, $ctx),
 					static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType(),
-					$rightResult->getTruthyScope(),
+					static fn (): MutatingScope => $rightResult->getTruthyScope(),
 				);
 			},
 		);
