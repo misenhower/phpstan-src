@@ -9,6 +9,7 @@ use PhpParser\Node\Identifier;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ArgumentsNormalizer;
+use PHPStan\Analyser\ArgsResult;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
@@ -190,6 +191,7 @@ final class MethodCallHandler implements ExprHandler
 				$varResult,
 				$nameResult,
 				$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+				$argsResult,
 			);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,
@@ -247,7 +249,7 @@ final class MethodCallHandler implements ExprHandler
 			// never re-running processArgs) - asking
 			// Scope::getType() for the MethodCall here would re-enter this handler on
 			// demand, as its final result is not stored yet.
-			$methodCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $varResult, $nameResult, $resolvedParametersAcceptor);
+			$methodCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $varResult, $nameResult, $resolvedParametersAcceptor, $argsResult);
 			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context, $methodCallReturnType);
 			if ($methodThrowPoint !== null) {
 				$throwPoints[] = $methodThrowPoint;
@@ -368,7 +370,7 @@ final class MethodCallHandler implements ExprHandler
 	 *
 	 * @param MethodCall $expr
 	 */
-	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $reflectionScope, bool $nativeTypesPromoted, MethodCall $expr, ExpressionResult $varResult, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor): Type
+	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $reflectionScope, bool $nativeTypesPromoted, MethodCall $expr, ExpressionResult $varResult, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor, ?ArgsResult $argsResult): Type
 	{
 		// the receiver (scope-dependent) is read from the operand result; the
 		// method reflection and dynamic-return-type extensions run on the
@@ -381,7 +383,7 @@ final class MethodCallHandler implements ExprHandler
 			? TypeCombinator::addNull($type)
 			: $type;
 
-		$resolveMethod = function (string $methodName, MethodCall $methodCall) use ($reflectionScope, $nativeTypesPromoted, $calledOnType, $preResolvedAcceptor): Type {
+		$resolveMethod = function (string $methodName, MethodCall $methodCall) use ($reflectionScope, $nativeTypesPromoted, $calledOnType, $preResolvedAcceptor, $argsResult): Type {
 			if ($nativeTypesPromoted) {
 				$methodReflection = $reflectionScope->getMethodReflection($calledOnType, $methodName);
 				if ($methodReflection === null) {
@@ -397,6 +399,7 @@ final class MethodCallHandler implements ExprHandler
 				$methodName,
 				$methodCall,
 				$preResolvedAcceptor,
+				$argsResult,
 			) ?? new ErrorType();
 		};
 

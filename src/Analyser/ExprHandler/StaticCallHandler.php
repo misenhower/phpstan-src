@@ -12,6 +12,7 @@ use PhpParser\Node\Name;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ArgumentsNormalizer;
+use PHPStan\Analyser\ArgsResult;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
@@ -267,6 +268,7 @@ final class StaticCallHandler implements ExprHandler
 				$classResult,
 				$nameResult,
 				$nativeTypesPromoted ? null : $resolvedParametersAcceptor,
+				$argsResult,
 			);
 		$specifyTypesCallback = fn (MutatingScope $s, TypeSpecifierContext $specifyContext): SpecifiedTypes => $this->specifyTypes(
 			$nodeScopeResolver,
@@ -315,7 +317,7 @@ final class StaticCallHandler implements ExprHandler
 			// never re-running processArgs) - asking
 			// Scope::getType() for the StaticCall here would re-enter this handler on
 			// demand, as its final result is not stored yet.
-			$staticCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $classResult, $nameResult, $resolvedParametersAcceptor);
+			$staticCallReturnType = $this->resolveReturnType($nodeScopeResolver, $scope, false, $expr, $classResult, $nameResult, $resolvedParametersAcceptor, $argsResult);
 			$methodThrowPoint = $this->methodThrowPointHelper->getThrowPoint($methodReflection, $parametersAcceptor, $normalizedExpr, $scope, $context, $staticCallReturnType);
 			if ($methodThrowPoint !== null) {
 				$throwPoints[] = $methodThrowPoint;
@@ -417,7 +419,7 @@ final class StaticCallHandler implements ExprHandler
 	 *
 	 * @param StaticCall $expr
 	 */
-	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $reflectionScope, bool $nativeTypesPromoted, StaticCall $expr, ?ExpressionResult $classResult, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor): Type
+	private function resolveReturnType(NodeScopeResolver $nodeScopeResolver, MutatingScope $reflectionScope, bool $nativeTypesPromoted, StaticCall $expr, ?ExpressionResult $classResult, ?ExpressionResult $nameResult, ?ParametersAcceptor $preResolvedAcceptor, ?ArgsResult $argsResult): Type
 	{
 		$classType = $classResult !== null
 			? ($nativeTypesPromoted ? $classResult->getNativeType() : $classResult->getType())
@@ -436,7 +438,7 @@ final class StaticCallHandler implements ExprHandler
 		// the method reflection and dynamic-return-type extensions run on the
 		// reflection scope (the lexical context / beforeScope); the class-
 		// expression type is read from the operand result above.
-		$resolveStaticMethod = function (string $methodName, StaticCall $staticCall) use ($reflectionScope, $nativeTypesPromoted, $classType, $nodeScopeResolver, $expr, $preResolvedAcceptor): Type {
+		$resolveStaticMethod = function (string $methodName, StaticCall $staticCall) use ($reflectionScope, $nativeTypesPromoted, $classType, $nodeScopeResolver, $expr, $preResolvedAcceptor, $argsResult): Type {
 			if ($nativeTypesPromoted) {
 				if ($expr->class instanceof Name) {
 					$staticMethodCalledOnType = $reflectionScope->resolveTypeByName($expr->class);
@@ -464,6 +466,7 @@ final class StaticCallHandler implements ExprHandler
 				$methodName,
 				$staticCall,
 				$preResolvedAcceptor,
+				$argsResult,
 			) ?? new ErrorType();
 		};
 

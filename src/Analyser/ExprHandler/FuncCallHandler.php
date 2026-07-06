@@ -21,6 +21,7 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\DynamicReturnTypeStoragePrimer;
 use PHPStan\Analyser\ExprHandler\Helper\EarlyTerminatingCallHelper;
 use PHPStan\Analyser\ExprHandler\Helper\OutputBufferHelper;
 use PHPStan\Analyser\ExprHandler\Helper\VoidToNullTypeTransformer;
@@ -104,6 +105,7 @@ final class FuncCallHandler implements ExprHandler
 		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 		private EarlyTerminatingCallHelper $earlyTerminatingHelper,
+		private DynamicReturnTypeStoragePrimer $storagePrimer,
 	)
 	{
 	}
@@ -1251,35 +1253,11 @@ final class FuncCallHandler implements ExprHandler
 	{
 		$extensions = $this->dynamicReturnTypeExtensionRegistryProvider->getRegistry()->getDynamicFunctionReturnTypeExtensions($functionReflection);
 
-		// Prime a transient storage with the already-processed argument results so
-		// an extension's Scope::getType($arg->value) reads the stored result instead
-		// of re-walking the argument on demand: when the return type is asked lazily
-		// (from a rule, a parent expression, a later statement) the call's own
-		// storage frame is no longer current, so the arguments would otherwise miss.
-		// The current storage is the fallback, so every non-argument getType is
-		// unchanged; the arguments are re-exposed, not re-processed.
-		//
-		// Closures/arrow functions are deliberately excluded: the bridge computes
-		// their type directly (getClosureType) on the asking scope, which a stored
-		// result - captured at processArgs time - would shadow with a stale type.
-		$current = $scope->getCurrentExpressionResultStorage();
-		$primed = $current !== null ? $current->duplicate() : new ExpressionResultStorage();
-		$primedAny = false;
-		foreach ($normalizedNode->getArgs() as $arg) {
-			if ($arg->value instanceof Expr\Closure || $arg->value instanceof Expr\ArrowFunction) {
-				continue;
-			}
-			$argResult = $argsResult->getArgResult($arg->value);
-			if ($argResult === null) {
-				continue;
-			}
-			$primed->storeExpressionResult($arg->value, $argResult);
-			$primedAny = true;
-		}
-
-		if ($primedAny) {
-			$scope->pushExpressionResultStorage($primed);
-		}
+		// re-expose the already-processed arguments so an extension's
+		// Scope::getType($arg->value) reads the stored result instead of re-walking
+		// the argument on demand (the call's argument storage frame is no longer
+		// current when the return type is asked lazily)
+		$popPrimedStorage = $this->storagePrimer->pushPrimedStorage($scope, $normalizedNode->getArgs(), $argsResult);
 		try {
 			foreach ($extensions as $dynamicFunctionReturnTypeExtension) {
 				$resolvedType = $dynamicFunctionReturnTypeExtension->getTypeFromFunctionCall(
@@ -1293,9 +1271,7 @@ final class FuncCallHandler implements ExprHandler
 				}
 			}
 		} finally {
-			if ($primedAny) {
-				$scope->popExpressionResultStorage();
-			}
+			$popPrimedStorage();
 		}
 
 		return null;
