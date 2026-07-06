@@ -4,6 +4,8 @@ namespace PHPStan\Analyser\ExprHandler\Helper;
 
 use Closure;
 use PhpParser\Node\Expr;
+use PhpParser\Node\Expr\CallLike;
+use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\ArrayDimFetch;
 use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\StaticPropertyFetch;
@@ -15,18 +17,25 @@ use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NullsafeOperatorHelper;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
+use PHPStan\ShouldNotHappenException;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredParameter;
 use PHPStan\Node\IssetExpr;
 use PHPStan\DependencyInjection\AutowiredService;
+use PHPStan\Node\Expr\TypeExpr;
 use PHPStan\Node\Printer\ExprPrinter;
+use PHPStan\Reflection\Assertions;
+use PHPStan\Reflection\ParametersAcceptor;
 use PHPStan\Rules\Arrays\AllowedArrayKeysTypes;
 use PHPStan\Type\Accessory\HasOffsetType;
 use PHPStan\Type\Accessory\HasPropertyType;
 use PHPStan\Type\Accessory\NonEmptyArrayType;
 use PHPStan\Type\Constant\ConstantIntegerType;
+use PHPStan\Type\ConditionalTypeForParameter;
 use PHPStan\Type\Constant\ConstantStringType;
+use PHPStan\Type\Generic\TemplateType;
+use PHPStan\Type\TypeTraverser;
 use PHPStan\Type\IntersectionType;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\NullType;
@@ -34,7 +43,12 @@ use PHPStan\Type\ObjectWithoutClassType;
 use PHPStan\Type\StaticTypeFactory;
 use PHPStan\Type\TypeCombinator;
 use PHPStan\Type\Type;
+use function array_key_exists;
+use function array_last;
+use function array_map;
 use function array_reverse;
+use function count;
+use function substr;
 use function is_string;
 use function spl_object_id;
 
@@ -479,5 +493,142 @@ final class DefaultNarrowingHelper
 	}
 
 
+
+	/**
+	 * The narrowing a call's @phpstan-assert tags contribute - the new-world
+	 * home of TypeSpecifier::specifyTypesFromAsserts(). Subjects and argument
+	 * types are read through their ExpressionResults (stored, or priced once
+	 * for out-of-frame asks), so createSubjectTypes() composes with the
+	 * result-carried structure (impure gate, nullsafe twin) instead of
+	 * create()'s scope re-probing.
+	 */
+	public function specifyTypesFromAsserts(TypeSpecifierContext $context, CallLike $call, Assertions $assertions, ParametersAcceptor $parametersAcceptor, MutatingScope $scope): ?SpecifiedTypes
+	{
+		if ($context->null()) {
+			$asserts = $assertions->getAsserts();
+		} elseif ($context->true()) {
+			$asserts = $assertions->getAssertsIfTrue();
+		} elseif ($context->false()) {
+			$asserts = $assertions->getAssertsIfFalse();
+		} else {
+			throw new ShouldNotHappenException();
+		}
+
+		if (count($asserts) === 0) {
+			return null;
+		}
+
+		$argsMap = [];
+		$parameters = $parametersAcceptor->getParameters();
+		foreach ($call->getArgs() as $i => $arg) {
+			if ($arg->unpack) {
+				continue;
+			}
+
+			if ($arg->name !== null) {
+				$paramName = $arg->name->toString();
+			} elseif (isset($parameters[$i])) {
+				$paramName = $parameters[$i]->getName();
+			} elseif (count($parameters) > 0 && $parametersAcceptor->isVariadic()) {
+				$lastParameter = array_last($parameters);
+				$paramName = $lastParameter->getName();
+			} else {
+				continue;
+			}
+
+			$argsMap[$paramName][] = $arg->value;
+		}
+		foreach ($parameters as $parameter) {
+			$name = $parameter->getName();
+			$defaultValue = $parameter->getDefaultValue();
+			if (isset($argsMap[$name]) || $defaultValue === null) {
+				continue;
+			}
+			$argsMap[$name][] = new TypeExpr($defaultValue);
+		}
+
+		if ($call instanceof MethodCall) {
+			$argsMap['this'] = [$call->var];
+		}
+
+		$getArgType = static function (Expr $expr) use ($scope): Type {
+			if ($expr instanceof TypeExpr) {
+				return $expr->getExprType();
+			}
+
+			return $scope->obtainResultForNode($expr)->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+		};
+
+		/** @var SpecifiedTypes|null $types */
+		$types = null;
+
+		foreach ($asserts as $assert) {
+			foreach ($argsMap[substr($assert->getParameter()->getParameterName(), 1)] ?? [] as $parameterExpr) {
+				$assertedType = TypeTraverser::map($assert->getType(), static function (Type $type, callable $traverse) use ($argsMap, $getArgType): Type {
+					if ($type instanceof ConditionalTypeForParameter) {
+						$parameterName = substr($type->getParameterName(), 1);
+						if (array_key_exists($parameterName, $argsMap)) {
+							$type = $traverse($type);
+							if ($type instanceof ConditionalTypeForParameter) {
+								$argType = TypeCombinator::union(...array_map($getArgType, $argsMap[substr($type->getParameterName(), 1)]));
+								return $type->toConditional($argType);
+							}
+							return $type;
+						}
+					}
+
+					return $traverse($type);
+				});
+
+				$assertExpr = $assert->getParameter()->getExpr($parameterExpr);
+
+				$templateTypeMap = $parametersAcceptor->getResolvedTemplateTypeMap();
+				$containsUnresolvedTemplate = false;
+				TypeTraverser::map(
+					$assert->getOriginalType(),
+					static function (Type $type, callable $traverse) use ($templateTypeMap, &$containsUnresolvedTemplate) {
+						if ($type instanceof TemplateType && $type->getScope()->getClassName() !== null) {
+							$resolvedType = $templateTypeMap->getType($type->getName());
+							if ($resolvedType === null || $type->getBound()->equals($resolvedType)) {
+								$containsUnresolvedTemplate = true;
+								return $type;
+							}
+						}
+
+						return $traverse($type);
+					},
+				);
+
+				$subjectResult = $assertExpr instanceof TypeExpr
+					? null
+					: $scope->obtainResultForNode($assertExpr);
+				$newTypes = $this->createSubjectTypes(
+					$scope,
+					$assertExpr,
+					$subjectResult,
+					$assertedType,
+					$assert->isNegated() ? TypeSpecifierContext::createFalse() : TypeSpecifierContext::createTrue(),
+				)->setRootExpr($containsUnresolvedTemplate || $assert->isEquality() ? $call : null);
+				$types = $types !== null ? $types->unionWith($newTypes) : $newTypes;
+
+				if (!$context->null() || (!$assertedType->isTrue()->yes() && !$assertedType->isFalse()->yes())) {
+					continue;
+				}
+
+				$subContext = $assertedType->isTrue()->yes() ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createFalse();
+				if ($assert->isNegated()) {
+					$subContext = $subContext->negate();
+				}
+
+				$types = $types->unionWith($this->specifyTypesForNode(
+					$scope,
+					$assertExpr,
+					$subContext,
+				));
+			}
+		}
+
+		return $types;
+	}
 
 }

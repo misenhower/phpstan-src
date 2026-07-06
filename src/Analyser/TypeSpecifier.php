@@ -226,8 +226,8 @@ final class TypeSpecifier
 			$scope,
 		);
 
-		if ($targetType instanceof ConstantBooleanType) {
-			if (!$targetType->getValue()) {
+		if ($targetType->isTrue()->yes() || $targetType->isFalse()->yes()) {
+			if ($targetType->isFalse()->yes()) {
 				$context = $context->negate();
 			}
 
@@ -235,124 +235,6 @@ final class TypeSpecifier
 		}
 
 		return $specifiedTypes;
-	}
-
-	/** @internal */
-	public function specifyTypesFromAsserts(TypeSpecifierContext $context, Expr\CallLike $call, Assertions $assertions, ParametersAcceptor $parametersAcceptor, Scope $scope): ?SpecifiedTypes
-	{
-		if ($context->null()) {
-			$asserts = $assertions->getAsserts();
-		} elseif ($context->true()) {
-			$asserts = $assertions->getAssertsIfTrue();
-		} elseif ($context->false()) {
-			$asserts = $assertions->getAssertsIfFalse();
-		} else {
-			throw new ShouldNotHappenException();
-		}
-
-		if (count($asserts) === 0) {
-			return null;
-		}
-
-		$argsMap = [];
-		$parameters = $parametersAcceptor->getParameters();
-		foreach ($call->getArgs() as $i => $arg) {
-			if ($arg->unpack) {
-				continue;
-			}
-
-			if ($arg->name !== null) {
-				$paramName = $arg->name->toString();
-			} elseif (isset($parameters[$i])) {
-				$paramName = $parameters[$i]->getName();
-			} elseif (count($parameters) > 0 && $parametersAcceptor->isVariadic()) {
-				$lastParameter = array_last($parameters);
-				$paramName = $lastParameter->getName();
-			} else {
-				continue;
-			}
-
-			$argsMap[$paramName][] = $arg->value;
-		}
-		foreach ($parameters as $parameter) {
-			$name = $parameter->getName();
-			$defaultValue = $parameter->getDefaultValue();
-			if (isset($argsMap[$name]) || $defaultValue === null) {
-				continue;
-			}
-			$argsMap[$name][] = new TypeExpr($defaultValue);
-		}
-
-		if ($call instanceof MethodCall) {
-			$argsMap['this'] = [$call->var];
-		}
-
-		/** @var SpecifiedTypes|null $types */
-		$types = null;
-
-		foreach ($asserts as $assert) {
-			foreach ($argsMap[substr($assert->getParameter()->getParameterName(), 1)] ?? [] as $parameterExpr) {
-				$assertedType = TypeTraverser::map($assert->getType(), static function (Type $type, callable $traverse) use ($argsMap, $scope): Type {
-					if ($type instanceof ConditionalTypeForParameter) {
-						$parameterName = substr($type->getParameterName(), 1);
-						if (array_key_exists($parameterName, $argsMap)) {
-							$type = $traverse($type);
-							if ($type instanceof ConditionalTypeForParameter) {
-								$argType = TypeCombinator::union(...array_map(static fn (Expr $expr) => $scope->getType($expr), $argsMap[substr($type->getParameterName(), 1)]));
-								return $type->toConditional($argType);
-							}
-							return $type;
-						}
-					}
-
-					return $traverse($type);
-				});
-
-				$assertExpr = $assert->getParameter()->getExpr($parameterExpr);
-
-				$templateTypeMap = $parametersAcceptor->getResolvedTemplateTypeMap();
-				$containsUnresolvedTemplate = false;
-				TypeTraverser::map(
-					$assert->getOriginalType(),
-					static function (Type $type, callable $traverse) use ($templateTypeMap, &$containsUnresolvedTemplate) {
-						if ($type instanceof TemplateType && $type->getScope()->getClassName() !== null) {
-							$resolvedType = $templateTypeMap->getType($type->getName());
-							if ($resolvedType === null || $type->getBound()->equals($resolvedType)) {
-								$containsUnresolvedTemplate = true;
-								return $type;
-							}
-						}
-
-						return $traverse($type);
-					},
-				);
-
-				$newTypes = $this->create(
-					$assertExpr,
-					$assertedType,
-					$assert->isNegated() ? TypeSpecifierContext::createFalse() : TypeSpecifierContext::createTrue(),
-					$scope,
-				)->setRootExpr($containsUnresolvedTemplate || $assert->isEquality() ? $call : null);
-				$types = $types !== null ? $types->unionWith($newTypes) : $newTypes;
-
-				if (!$context->null() || !$assertedType instanceof ConstantBooleanType) {
-					continue;
-				}
-
-				$subContext = $assertedType->getValue() ? TypeSpecifierContext::createTrue() : TypeSpecifierContext::createFalse();
-				if ($assert->isNegated()) {
-					$subContext = $subContext->negate();
-				}
-
-				$types = $types->unionWith($this->specifyTypesInCondition(
-					$scope,
-					$assertExpr,
-					$subContext,
-				));
-			}
-		}
-
-		return $types;
 	}
 
 	/**

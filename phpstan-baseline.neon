@@ -97,12 +97,6 @@ parameters:
 			path: src/Analyser/RuleErrorTransformer.php
 
 		-
-			rawMessage: 'Doing instanceof PHPStan\Type\Constant\ConstantBooleanType is error-prone and deprecated. Use Type::isTrue() or Type::isFalse() instead.'
-			identifier: phpstanApi.instanceofType
-			count: 2
-			path: src/Analyser/TypeSpecifier.php
-
-		-
 			rawMessage: 'Template type TNodeType is declared as covariant, but occurs in contravariant position in parameter node of method PHPStan\Collectors\Collector::processNode().'
 			identifier: generics.variance
 			count: 1

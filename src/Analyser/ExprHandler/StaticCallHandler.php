@@ -561,7 +561,7 @@ final class StaticCallHandler implements ExprHandler
 					$resolvedParametersAcceptor instanceof ExtendedParametersAcceptor ? $resolvedParametersAcceptor->getCallSiteVarianceMap() : TemplateTypeVarianceMap::createEmpty(),
 					TemplateTypeVariance::createInvariant(),
 				));
-				$specifiedTypes = $this->typeSpecifier->specifyTypesFromAsserts($context, $expr, $asserts, $resolvedParametersAcceptor, $scope);
+				$specifiedTypes = $this->defaultNarrowingHelper->specifyTypesFromAsserts($context, $expr, $asserts, $resolvedParametersAcceptor, $scope);
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes
 						->unionWith($this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context))

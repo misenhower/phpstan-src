@@ -82,7 +82,6 @@ final class NewHandler implements ExprHandler
 		#[AutowiredParameter(ref: '%exceptions.implicitThrows%')]
 		private bool $implicitThrows,
 		private ExpressionResultFactory $expressionResultFactory,
-		private TypeSpecifier $typeSpecifier,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
@@ -737,7 +736,7 @@ final class NewHandler implements ExprHandler
 					TemplateTypeVariance::createInvariant(),
 				));
 
-				$specifiedTypes = $this->typeSpecifier->specifyTypesFromAsserts($context, $expr, $asserts, $resolvedParametersAcceptor, $scope);
+				$specifiedTypes = $this->defaultNarrowingHelper->specifyTypesFromAsserts($context, $expr, $asserts, $resolvedParametersAcceptor, $scope);
 
 				if ($specifiedTypes !== null) {
 					return $specifiedTypes;
