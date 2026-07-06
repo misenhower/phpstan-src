@@ -11,6 +11,7 @@ use PHPStan\Type\Type;
 use PHPStan\Type\TypeTraverser;
 use PHPStan\Type\TypeUtils;
 use PHPStan\Type\UnionType;
+use function spl_object_id;
 
 #[GenerateFactory(interface: ExpressionResultFactory::class)]
 final class ExpressionResult
@@ -24,6 +25,9 @@ final class ExpressionResult
 
 	/** @var (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null */
 	private $createTypesCallback;
+
+	/** @var array<int, SpecifiedTypes> */
+	private array $specifiedTypes = [];
 
 	private ?MutatingScope $truthyScope = null;
 
@@ -165,7 +169,7 @@ final class ExpressionResult
 		}
 
 		return $this->truthyScope = $this->scope->applySpecifiedTypes(
-			($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createTruthy()),
+			$this->getSpecifiedTypes(TypeSpecifierContext::createTruthy(), $this->scope->nativeTypesPromoted),
 		);
 	}
 
@@ -182,7 +186,7 @@ final class ExpressionResult
 		}
 
 		return $this->falseyScope = $this->scope->applySpecifiedTypes(
-			($this->specifyTypesCallback)($this->scope, TypeSpecifierContext::createFalsey()),
+			$this->getSpecifiedTypes(TypeSpecifierContext::createFalsey(), $this->scope->nativeTypesPromoted),
 		);
 	}
 
@@ -336,7 +340,26 @@ final class ExpressionResult
 	/** Evaluates this expression's narrowing on the given scope. */
 	public function getSpecifiedTypesForScope(MutatingScope $scope, TypeSpecifierContext $context): SpecifiedTypes
 	{
-		return ($this->specifyTypesCallback)($scope, $context);
+		return $this->getSpecifiedTypes($context, $scope->nativeTypesPromoted);
+	}
+
+	/**
+	 * The expression's narrowing for the given context, computed at its own
+	 * evaluation point (the flavour-mapped beforeScope) and memoized per
+	 * (context, flavour). All state-dependent math lives in the symbolic
+	 * SpecifiedTypes (alternative terms, holder recipes, deferred augments)
+	 * and is evaluated by applySpecifiedTypes() against whichever scope the
+	 * narrowing is applied to - so one memoized SpecifiedTypes serves every
+	 * asking position.
+	 */
+	public function getSpecifiedTypes(TypeSpecifierContext $context, bool $nativeTypesPromoted = false): SpecifiedTypes
+	{
+		$key = (spl_object_id($context) << 1) | ($nativeTypesPromoted ? 1 : 0);
+
+		return $this->specifiedTypes[$key] ??= ($this->specifyTypesCallback)(
+			$nativeTypesPromoted ? $this->beforeScope->doNotTreatPhpDocTypesAsCertain() : $this->beforeScope,
+			$context,
+		);
 	}
 
 	/**
