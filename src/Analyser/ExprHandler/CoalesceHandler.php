@@ -58,7 +58,7 @@ final class CoalesceHandler implements ExprHandler
 
 		// the falsey narrowing of this very node - asking the scope about it
 		// mid-processing would take the on-demand path and recurse
-		$rightScope = $scope->applySpecifiedTypes($this->coalesceCompositionHelper->getFalseySpecifiedTypes($scope, $expr->left, $condResult, $expr, TypeSpecifierContext::createFalsey()));
+		$rightScope = $scope->applySpecifiedTypes($this->coalesceCompositionHelper->getFalseySpecifiedTypes($scope, $scope, $expr->left, $condResult, $expr, TypeSpecifierContext::createFalsey()));
 		$rightResult = $nodeScopeResolver->processExprNode($stmt, $expr->right, $rightScope, $storage, $nodeCallback, $context->enterDeep());
 		// the left-is-set narrowing, composed from the already-processed chain
 		// results - the inside-out equivalent of narrowing by isset($expr->left)
@@ -102,13 +102,13 @@ final class CoalesceHandler implements ExprHandler
 				$expr,
 				$nativeTypesPromoted,
 			),
-			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult): SpecifiedTypes {
+			specifyTypesCallback: function (MutatingScope $s, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult, $beforeScope): SpecifiedTypes {
 				if ($context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 				}
 
 				if (!$context->true()) {
-					return $this->coalesceCompositionHelper->getFalseySpecifiedTypes($s, $expr->left, $condResult, $expr, $context);
+					return $this->coalesceCompositionHelper->getFalseySpecifiedTypes($s, $s->nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope, $expr->left, $condResult, $expr, $context);
 				}
 
 				if ((new ConstantBooleanType(false))->isSuperTypeOf(($s->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType())->toBoolean())->yes()) {

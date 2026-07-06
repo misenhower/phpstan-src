@@ -32,9 +32,14 @@ final class CoalesceCompositionHelper
 	/**
 	 * A falsey coalesce means its left side was null (when it was surely set).
 	 */
-	public function getFalseySpecifiedTypes(MutatingScope $s, Expr $leftExpr, ExpressionResult $leftResult, Expr $rootExpr, TypeSpecifierContext $context): SpecifiedTypes
+	/**
+	 * The issetability verdict runs on the evaluation scope (where the left
+	 * side was walked); the asking scope is only the conduit for the left
+	 * side's narrowing fan-out.
+	 */
+	public function getFalseySpecifiedTypes(MutatingScope $s, MutatingScope $evaluationScope, Expr $leftExpr, ExpressionResult $leftResult, Expr $rootExpr, TypeSpecifierContext $context): SpecifiedTypes
 	{
-		$isset = $leftResult->getIssetabilityResolution($s, false)->isSet(static fn (): bool => true);
+		$isset = $leftResult->getIssetabilityResolution($evaluationScope, false)->isSet(static fn (): bool => true);
 
 		if ($isset !== true) {
 			return new SpecifiedTypes();
