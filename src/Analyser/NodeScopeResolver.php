@@ -238,6 +238,42 @@ class NodeScopeResolver
 	public static bool $guardNewWorld = false;
 
 	/**
+	 * Depth of sanctioned before-the-walk reads in progress. Some reads price
+	 * a node the walk will process later BY DESIGN - an isset/?? ensure needs
+	 * the subject's pre-device type before it can device the scope the walk
+	 * runs on, a statement-level @var needs the annotated expression's
+	 * original type to detect the annotation changing it, and lazy property
+	 * inference prices initializers outside any walk. Those sites wrap the
+	 * read in sanctionedGuardRead() so the PHPSTAN_GUARD_NW diagnostic keeps
+	 * catching the UNINTENDED pre-processing reads.
+	 */
+	private static int $guardSanctionDepth = 0;
+
+	/**
+	 * @template T
+	 * @param callable(): T $read
+	 * @return T
+	 */
+	public static function sanctionedGuardRead(callable $read)
+	{
+		if (!self::$guardNewWorld) {
+			return $read();
+		}
+
+		self::$guardSanctionDepth++;
+		try {
+			return $read();
+		} finally {
+			self::$guardSanctionDepth--;
+		}
+	}
+
+	public static function isInSanctionedGuardRead(): bool
+	{
+		return self::$guardSanctionDepth > 0;
+	}
+
+	/**
 	 * Nodes the PHPSTAN_GUARD_NW diagnostic never fires for: closures/arrow
 	 * functions are priced compute-direct (getClosureType) by design, and
 	 * constant shapes (scalars, constant fetches, class constants on a named
@@ -3061,6 +3097,7 @@ class NodeScopeResolver
 	{
 		if (
 			!self::$guardNewWorld
+			|| self::$guardSanctionDepth > 0
 			|| self::isGuardExemptNode($expr)
 			|| !isset(self::$guardRealExprIds[spl_object_id($expr)])
 			|| isset(self::$guardProcessedExprIds[spl_object_id($expr)])
@@ -4976,7 +5013,12 @@ class NodeScopeResolver
 		}
 
 		if (count($variableLessTags) === 1 && $defaultExpr !== null) {
-			$originalType = $this->readTypeOfMaybeStored($defaultExpr, $scope);
+			// the annotated expression is processed by its statement handler AFTER
+			// this annotation runs, and this read deliberately wants its type
+			// BEFORE the @var applies - a sanctioned before-the-walk read (a
+			// store-only pre-walk is unsound: rules suspended at the statement
+			// callback would resume on the pre-annotation result)
+			$originalType = self::sanctionedGuardRead(fn (): Type => $this->readTypeOfMaybeStored($defaultExpr, $scope));
 			$varTag = $variableLessTags[0];
 			if (!$originalType->equals($varTag->getType())) {
 				$this->callNodeCallback($nodeCallback, new VarTagChangedExpressionTypeNode($varTag, $defaultExpr), $scope, $storage);
