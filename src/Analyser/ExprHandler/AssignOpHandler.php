@@ -157,7 +157,11 @@ final class AssignOpHandler implements ExprHandler
 		if ($expr instanceof Expr\AssignOp\Coalesce) {
 			// a type constraint on `$x ??= y` constrains the assigned variable -
 			// what TypeSpecifier::create() recovered by its AssignOp\Coalesce arm
-			$createTypesCallback = fn (MutatingScope $cs, Type $constraintType, TypeSpecifierContext $cctx): SpecifiedTypes => $this->defaultNarrowingHelper->createSubjectTypes($cs, $expr->var, $nodeScopeResolver->findStoredResult($expr->var, $cs), $constraintType, $cctx);
+			$createTypesCallback = function (Type $constraintType, TypeSpecifierContext $cctx, bool $nativeTypesPromoted) use ($expr, $nodeScopeResolver, $beforeScope): SpecifiedTypes {
+				$cs = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+
+				return $this->defaultNarrowingHelper->createSubjectTypes($cs, $expr->var, $nodeScopeResolver->findStoredResult($expr->var, $cs), $constraintType, $cctx);
+			};
 		}
 
 		// processAssignVar asks getType($expr) for the value to assign; store this

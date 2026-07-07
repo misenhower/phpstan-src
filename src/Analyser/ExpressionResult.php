@@ -23,7 +23,7 @@ final class ExpressionResult
 	/** @var callable(TypeSpecifierContext, bool): SpecifiedTypes */
 	private $specifyTypesCallback;
 
-	/** @var (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null */
+	/** @var (callable(Type, TypeSpecifierContext, bool): SpecifiedTypes)|null */
 	private $createTypesCallback;
 
 	/** @var array<int, SpecifiedTypes> */
@@ -50,7 +50,7 @@ final class ExpressionResult
 	 * @param ImpurePoint[] $impurePoints
 	 * @param (callable(bool): Type)|null $typeCallback
 	 * @param callable(TypeSpecifierContext, bool): SpecifiedTypes $specifyTypesCallback
-	 * @param (callable(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes)|null $createTypesCallback
+	 * @param (callable(Type, TypeSpecifierContext, bool): SpecifiedTypes)|null $createTypesCallback
 	 */
 	public function __construct(
 		private ExpressionTypeResolverExtensionRegistryProvider $expressionTypeResolverExtensionRegistryProvider,
@@ -371,11 +371,21 @@ final class ExpressionResult
 	 */
 	public function getCreatedTypesForScope(MutatingScope $scope, Type $type, TypeSpecifierContext $context): ?SpecifiedTypes
 	{
+		return $this->getCreatedTypes($type, $context, $scope->nativeTypesPromoted);
+	}
+
+	/**
+	 * The narrowing entries a type constraint on this expression fans out to,
+	 * computed at the expression's own evaluation point - the asking scope
+	 * reduces to its flavour bit, like getSpecifiedTypes().
+	 */
+	public function getCreatedTypes(Type $type, TypeSpecifierContext $context, bool $nativeTypesPromoted = false): ?SpecifiedTypes
+	{
 		if ($this->createTypesCallback === null) {
 			return null;
 		}
 
-		return ($this->createTypesCallback)($scope, $type, $context);
+		return ($this->createTypesCallback)($type, $context, $nativeTypesPromoted);
 	}
 
 	/**

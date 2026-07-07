@@ -175,14 +175,15 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			// Inside-out copy of TypeSpecifier::createForExpr()'s `?->` handling.
 			// The short-circuit's null surfaces here, never by walking the chain:
 			// a receiver that is itself a ?-> composes through the parent handler.
-			createTypesCallback: function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $methodCall, $exprResult, $nullsafeTypeCallback): SpecifiedTypes {
+			createTypesCallback: function (Type $type, TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $methodCall, $exprResult, $nullsafeTypeCallback, $beforeScope): SpecifiedTypes {
 				// null() context: createForExpr never computes $containsNull and
 				// emits no entry for the subject - behave the same.
 				if ($context->null()) {
 					return (new SpecifiedTypes())->setRootExpr($expr);
 				}
 
-				$nullsafeType = $nullsafeTypeCallback($s->nativeTypesPromoted);
+				$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+				$nullsafeType = $nullsafeTypeCallback($nativeTypesPromoted);
 				if ($context->true()) {
 					$containsNull = !$type->isNull()->no() && !$nullsafeType->isNull()->no();
 				} else {

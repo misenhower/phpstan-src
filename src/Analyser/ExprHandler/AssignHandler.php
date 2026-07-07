@@ -235,7 +235,7 @@ final class AssignHandler implements ExprHandler
 					: $nodeScopeResolver->readTypeOfMaybeStored($expr->expr, $beforeScope);
 			},
 			specifyTypesCallback: $expr instanceof Assign ? $this->createSpecifyTypesCallback($nodeScopeResolver, $expr, $assignedExprResult, $beforeScope) : fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context),
-			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult) : null,
+			createTypesCallback: $expr instanceof Assign ? $this->createCreateTypesCallback($expr, $assignedExprResult, $beforeScope) : null,
 		);
 	}
 
@@ -245,11 +245,12 @@ final class AssignHandler implements ExprHandler
 	 * by unwrapping assign chains. Nested assignments compose through the
 	 * assigned expression's own result.
 	 *
-	 * @return Closure(MutatingScope, Type, TypeSpecifierContext): SpecifiedTypes
+	 * @return Closure(Type, TypeSpecifierContext, bool): SpecifiedTypes
 	 */
-	private function createCreateTypesCallback(Assign $expr, ?ExpressionResult $assignedExprResult): Closure
+	private function createCreateTypesCallback(Assign $expr, ?ExpressionResult $assignedExprResult, MutatingScope $beforeScope): Closure
 	{
-		return function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $assignedExprResult): SpecifiedTypes {
+		return function (Type $type, TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $assignedExprResult, $beforeScope): SpecifiedTypes {
+			$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 			$types = $this->defaultNarrowingHelper->createSubjectTypes($s, $expr->var, null, $type, $context);
 
 			return $types->unionWith(

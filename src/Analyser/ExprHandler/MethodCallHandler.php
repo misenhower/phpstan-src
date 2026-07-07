@@ -206,9 +206,13 @@ final class MethodCallHandler implements ExprHandler
 		// A type constraint on a (narrowable, i.e. non-side-effecting) method call
 		// narrows the call itself - the inside-out equivalent of createForExpr's
 		// MethodCall purity gate + tail entry. An impure call narrows to nothing.
-		$createTypesCallback = fn (MutatingScope $s, Type $type, TypeSpecifierContext $createContext): SpecifiedTypes => $this->isMethodCallNarrowable($s, $expr, $varResult)
-			? $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext)
-			: new SpecifiedTypes([], []);
+		$createTypesCallback = function (Type $type, TypeSpecifierContext $createContext, bool $nativeTypesPromoted) use ($expr, $varResult, $beforeScope): SpecifiedTypes {
+			$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+
+			return $this->isMethodCallNarrowable($s, $expr, $varResult)
+				? $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext)
+				: new SpecifiedTypes([], []);
+		};
 
 		// Store a preliminary result carrying the type/specify callbacks before the
 		// throw point is computed: the method throw point resolves the return type

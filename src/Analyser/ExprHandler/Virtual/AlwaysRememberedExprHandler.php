@@ -72,9 +72,13 @@ final class AlwaysRememberedExprHandler implements ExprHandler
 			// what TypeSpecifier::create() recovered by fanning the AlwaysRememberedExpr
 			// out into wrapper + inner. The inner composes through its own child result;
 			// raw-Expr callers still go through create()->createForExpr.
-			createTypesCallback: fn (MutatingScope $s, Type $type, TypeSpecifierContext $context): SpecifiedTypes => $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context)->unionWith(
-				$this->defaultNarrowingHelper->createSubjectTypes($s, $innerExpr, $innerResult, $type, $context),
-			),
+			createTypesCallback: function (Type $type, TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $innerExpr, $innerResult, $beforeScope): SpecifiedTypes {
+				$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+
+				return $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context)->unionWith(
+					$this->defaultNarrowingHelper->createSubjectTypes($s, $innerExpr, $innerResult, $type, $context),
+				);
+			},
 		);
 	}
 

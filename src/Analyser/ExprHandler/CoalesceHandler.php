@@ -127,9 +127,10 @@ final class CoalesceHandler implements ExprHandler
 			// a type constraint on the coalesce constrains its left side when
 			// the type rules the right side in or out - what
 			// TypeSpecifier::create() recovered by unwrapping the coalesce
-			createTypesCallback: function (MutatingScope $s, Type $type, TypeSpecifierContext $context) use ($expr, $condResult, $rightResult): SpecifiedTypes {
+			createTypesCallback: function (Type $type, TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $condResult, $rightResult, $beforeScope): SpecifiedTypes {
+				$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 				if (!$context->null()) {
-					$rightType = $s->nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
+					$rightType = $nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType();
 					if (
 						($context->true() && $type->isSuperTypeOf($rightType)->no())
 						|| ($context->false() && $type->isSuperTypeOf($rightType)->yes())

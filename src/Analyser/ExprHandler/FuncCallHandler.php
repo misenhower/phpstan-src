@@ -355,7 +355,8 @@ final class FuncCallHandler implements ExprHandler
 		// function call narrows the call itself - the inside-out equivalent of
 		// createForExpr's FuncCall purity gate + tail entry. An impure call narrows to
 		// nothing.
-		$createTypesCallback = function (MutatingScope $s, Type $type, TypeSpecifierContext $createContext) use ($nodeScopeResolver, $expr, $nameResult): SpecifiedTypes {
+		$createTypesCallback = function (Type $type, TypeSpecifierContext $createContext, bool $nativeTypesPromoted) use ($nodeScopeResolver, $expr, $nameResult, $beforeScope): SpecifiedTypes {
+			$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 			if (!$this->isFuncCallNarrowable($nodeScopeResolver, $s, $expr, $nameResult)) {
 				return new SpecifiedTypes([], []);
 			}
