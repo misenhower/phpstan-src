@@ -2,8 +2,11 @@
 
 namespace PHPStan\Analyser;
 
+use PhpParser\Node;
 use PhpParser\Node\Expr;
-use PhpParser\NodeFinder;
+use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitor;
+use PhpParser\NodeVisitorAbstract;
 use PHPStan\DependencyInjection\GenerateFactory;
 use PHPStan\DependencyInjection\Type\ExpressionTypeResolverExtensionRegistryProvider;
 use PHPStan\ShouldNotHappenException;
@@ -491,6 +494,13 @@ final class ExpressionResult
 		if ($scope === $this->beforeScope) {
 			return true;
 		}
+		// a closure's stored result IS its (by-ref converged) walk; re-walking
+		// it at a foreign position would re-run the whole convergence loop. Its
+		// body variables are not reads of the asking position, and the
+		// position-sensitive TYPE is computed by getClosureType at ask sites.
+		if ($this->expr instanceof Expr\Closure || $this->expr instanceof Expr\ArrowFunction) {
+			return true;
+		}
 		$names = $this->getReadVariableNames();
 		if ($names === []) {
 			return true;
@@ -563,15 +573,40 @@ final class ExpressionResult
 			return $this->readVariableNames;
 		}
 
-		$names = [];
-		foreach ((new NodeFinder())->findInstanceOf([$this->expr], Expr\Variable::class) as $variable) {
-			if (!is_string($variable->name) || $variable->name === 'this') {
-				continue;
-			}
-			$names[$variable->name] = true;
-		}
+		$visitor = new class extends NodeVisitorAbstract {
 
-		return $this->readVariableNames = array_keys($names);
+			/** @var array<string, true> */
+			public array $names = [];
+
+			#[\Override]
+			public function enterNode(Node $node): ?int
+			{
+				if ($node instanceof Expr\Variable && is_string($node->name) && $node->name !== 'this') {
+					$this->names[$node->name] = true;
+				}
+				// a closure body's variables live in its own scope - only the
+				// use() clause reads the enclosing position. Arrow functions
+				// capture implicitly and are traversed.
+				if ($node instanceof Expr\Closure) {
+					foreach ($node->uses as $use) {
+						if (!is_string($use->var->name)) {
+							continue;
+						}
+						$this->names[$use->var->name] = true;
+					}
+
+					return NodeVisitor::DONT_TRAVERSE_CHILDREN;
+				}
+
+				return null;
+			}
+
+		};
+		$traverser = new NodeTraverser();
+		$traverser->addVisitor($visitor);
+		$traverser->traverse([$this->expr]);
+
+		return $this->readVariableNames = array_keys($visitor->names);
 	}
 
 }

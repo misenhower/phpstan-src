@@ -4257,151 +4257,207 @@ class NodeScopeResolver
 			}
 
 			if ($arg->value instanceof Expr\Closure) {
-				$restoreThisScope = null;
-				if (
-					$closureBindScopeFactory === null
-					&& $parameter instanceof ExtendedParameterReflection
-					&& !$arg->value->static
-				) {
-					$closureThisType = $this->resolveClosureThisType($callLike, $calleeReflection, $parameter, $scopeToPass);
-					if ($closureThisType !== null) {
-						$restoreThisScope = $scopeToPass;
-						$scopeToPass = $scopeToPass->assignVariable('this', $closureThisType, new ObjectWithoutClassType(), TrinaryLogic::createYes());
+
+				$storedClosureArgResult = null;
+				if ($this->returnStoredExpressionResults || $this->consumeStoredExpressionResults) {
+					// an on-demand re-walk of the enclosing call must not re-run the
+					// closure's whole by-ref convergence: consume the main walk's
+					// stored result, or (when the body release already dropped it)
+					// price the closure through getClosureType's per-node cache -
+					// a single body walk on miss, none on repeat asks
+					$storedClosureArgResult = $storage->findExpressionResult($arg->value);
+					if ($storedClosureArgResult === null) {
+						$closureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
+						$storedClosureArgResult = $this->expressionResultFactory->create(
+							$scopeToPass,
+							beforeScope: $scopeToPass,
+							expr: $arg->value,
+							hasYield: false,
+							isAlwaysTerminating: false,
+							throwPoints: [],
+							impurePoints: [],
+							type: $closureTypeResolver->getClosureType($scopeToPass, $arg->value),
+							nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+							typeCallback: null,
+							specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
+						);
+						$this->storeExpressionResult($storage, $arg->value, $storedClosureArgResult);
 					}
 				}
-
-				if ($parameter !== null) {
-					$overwritingParameterType = $this->getParameterTypeFromParameterClosureTypeExtension($callLike, $calleeReflection, $parameter, $scopeToPass);
-
-					if ($overwritingParameterType !== null) {
-						$parameterType = $overwritingParameterType;
+				if ($storedClosureArgResult !== null) {
+					$argResults[spl_object_id($arg->value)] = $storedClosureArgResult;
+				} else {					$restoreThisScope = null;
+					if (
+						$closureBindScopeFactory === null
+						&& $parameter instanceof ExtendedParameterReflection
+						&& !$arg->value->static
+					) {
+						$closureThisType = $this->resolveClosureThisType($callLike, $calleeReflection, $parameter, $scopeToPass);
+						if ($closureThisType !== null) {
+							$restoreThisScope = $scopeToPass;
+							$scopeToPass = $scopeToPass->assignVariable('this', $closureThisType, new ObjectWithoutClassType(), TrinaryLogic::createYes());
+						}
 					}
-				}
 
-				$this->callNodeCallbackWithExpression($nodeCallback, $arg->value, $scopeToPass, $storage, $context);
-				$closureResult = $this->processClosureNode($stmt, $arg->value, $scopeToPass, $storage, $nodeCallback, $context, $parameterType ?? null, $parameterNativeType);
-				if ($this->callCallbackImmediately($parameter, $parameterType, $calleeReflection)) {
-					$throwPoints = array_merge($throwPoints, array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->isExplicit() ? InternalThrowPoint::createExplicit($scope, $throwPoint->getType(), $arg->value, $throwPoint->canContainAnyThrowable()) : InternalThrowPoint::createImplicit($scope, $arg->value), $closureResult->getThrowPoints()));
-					$impurePoints = array_merge($impurePoints, $closureResult->getImpurePoints());
-				}
+					if ($parameter !== null) {
+						$overwritingParameterType = $this->getParameterTypeFromParameterClosureTypeExtension($callLike, $calleeReflection, $parameter, $scopeToPass);
 
-				$closureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
-				$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
-					$closureResult->getScope(),
-					$scopeToPass,
-					$arg->value,
-					hasYield: false,
-					isAlwaysTerminating: false,
-					throwPoints: [],
-					impurePoints: [],
-					type: $closureTypeResolver->buildClosureTypeForClosure(
+						if ($overwritingParameterType !== null) {
+							$parameterType = $overwritingParameterType;
+						}
+					}
+
+					$this->callNodeCallbackWithExpression($nodeCallback, $arg->value, $scopeToPass, $storage, $context);
+					$closureResult = $this->processClosureNode($stmt, $arg->value, $scopeToPass, $storage, $nodeCallback, $context, $parameterType ?? null, $parameterNativeType);
+					if ($this->callCallbackImmediately($parameter, $parameterType, $calleeReflection)) {
+						$throwPoints = array_merge($throwPoints, array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->isExplicit() ? InternalThrowPoint::createExplicit($scope, $throwPoint->getType(), $arg->value, $throwPoint->canContainAnyThrowable()) : InternalThrowPoint::createImplicit($scope, $arg->value), $closureResult->getThrowPoints()));
+						$impurePoints = array_merge($impurePoints, $closureResult->getImpurePoints());
+					}
+
+					$closureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
+					$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
+						$closureResult->getScope(),
 						$scopeToPass,
 						$arg->value,
-						$closureResult->getGatheredReturnStatements(),
-						$closureResult->getGatheredYieldStatements(),
-						$closureResult->getExecutionEnds(),
-						$closureResult->getThrowPoints(),
-						$closureResult->getClosureTypeImpurePoints(),
-						$closureResult->getInvalidateExpressions(),
-					),
-					nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
-					typeCallback: null,
-					specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
-				));
+						hasYield: false,
+						isAlwaysTerminating: false,
+						throwPoints: [],
+						impurePoints: [],
+						type: $closureTypeResolver->buildClosureTypeForClosure(
+							$scopeToPass,
+							$arg->value,
+							$closureResult->getGatheredReturnStatements(),
+							$closureResult->getGatheredYieldStatements(),
+							$closureResult->getExecutionEnds(),
+							$closureResult->getThrowPoints(),
+							$closureResult->getClosureTypeImpurePoints(),
+							$closureResult->getInvalidateExpressions(),
+						),
+						nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+						typeCallback: null,
+						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
+					));
 
-				$uses = [];
-				foreach ($arg->value->uses as $use) {
-					if (!is_string($use->var->name)) {
-						continue;
-					}
-
-					$uses[] = $use->var->name;
-				}
-
-				$scope = $closureResult->getScope();
-				$deferredByRefClosureResults[] = $closureResult;
-				// Prefer the invalidate expressions collected on the ClosureType: those
-				// are gathered with the closure's pending fibers flushed, so they also
-				// cover writes that go through a parked fiber (e.g. $this->prop[] = ...),
-				// unlike $closureResult->getInvalidateExpressions().
-				$closureExprType = $scope->getType($arg->value);
-				$invalidateExpressions = $closureExprType instanceof ClosureType
-					? $closureExprType->getInvalidateExpressions()
-					: $closureResult->getInvalidateExpressions();
-				if ($restoreThisScope !== null) {
-					$nodeFinder = new NodeFinder();
-					$cb = static fn ($expr) => $expr instanceof Variable && $expr->name === 'this';
-					foreach ($invalidateExpressions as $j => $invalidateExprNode) {
-						$foundThis = $nodeFinder->findFirst([$invalidateExprNode->getExpr()], $cb);
-						if ($foundThis === null) {
+					$uses = [];
+					foreach ($arg->value->uses as $use) {
+						if (!is_string($use->var->name)) {
 							continue;
 						}
 
-						unset($invalidateExpressions[$j]);
+						$uses[] = $use->var->name;
 					}
-					$invalidateExpressions = array_values($invalidateExpressions);
-					$scope = $scope->restoreThis($restoreThisScope);
-				}
 
-				if ($this->shouldInvalidateCallbackExpressions($parameter)) {
-					$deferredInvalidateExpressions[] = [$invalidateExpressions, $uses];
-				}
+					$scope = $closureResult->getScope();
+					$deferredByRefClosureResults[] = $closureResult;
+					// Prefer the invalidate expressions collected on the ClosureType: those
+					// are gathered with the closure's pending fibers flushed, so they also
+					// cover writes that go through a parked fiber (e.g. $this->prop[] = ...),
+					// unlike $closureResult->getInvalidateExpressions().
+					$closureExprType = $scope->getType($arg->value);
+					$invalidateExpressions = $closureExprType instanceof ClosureType
+						? $closureExprType->getInvalidateExpressions()
+						: $closureResult->getInvalidateExpressions();
+					if ($restoreThisScope !== null) {
+						$nodeFinder = new NodeFinder();
+						$cb = static fn ($expr) => $expr instanceof Variable && $expr->name === 'this';
+						foreach ($invalidateExpressions as $j => $invalidateExprNode) {
+							$foundThis = $nodeFinder->findFirst([$invalidateExprNode->getExpr()], $cb);
+							if ($foundThis === null) {
+								continue;
+							}
+
+							unset($invalidateExpressions[$j]);
+						}
+						$invalidateExpressions = array_values($invalidateExpressions);
+						$scope = $scope->restoreThis($restoreThisScope);
+					}
+
+					if ($this->shouldInvalidateCallbackExpressions($parameter)) {
+						$deferredInvalidateExpressions[] = [$invalidateExpressions, $uses];
+					}
+	}
 			} elseif ($arg->value instanceof Expr\ArrowFunction) {
-				if (
-					$closureBindScopeFactory === null
-					&& $parameter instanceof ExtendedParameterReflection
-					&& !$arg->value->static
-				) {
-					$closureThisType = $this->resolveClosureThisType($callLike, $calleeReflection, $parameter, $scopeToPass);
-					if ($closureThisType !== null) {
-						$scopeToPass = $scopeToPass->assignVariable('this', $closureThisType, new ObjectWithoutClassType(), TrinaryLogic::createYes());
+
+				$storedClosureArgResult = null;
+				if ($this->returnStoredExpressionResults || $this->consumeStoredExpressionResults) {
+					// see the Closure branch above - consume or price via the cache
+					$storedClosureArgResult = $storage->findExpressionResult($arg->value);
+					if ($storedClosureArgResult === null) {
+						$closureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
+						$storedClosureArgResult = $this->expressionResultFactory->create(
+							$scopeToPass,
+							beforeScope: $scopeToPass,
+							expr: $arg->value,
+							hasYield: false,
+							isAlwaysTerminating: false,
+							throwPoints: [],
+							impurePoints: [],
+							type: $closureTypeResolver->getClosureType($scopeToPass, $arg->value),
+							nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+							typeCallback: null,
+							specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
+						);
+						$this->storeExpressionResult($storage, $arg->value, $storedClosureArgResult);
 					}
 				}
-
-				if ($parameter !== null) {
-					$overwritingParameterType = $this->getParameterTypeFromParameterClosureTypeExtension($callLike, $calleeReflection, $parameter, $scopeToPass);
-
-					if ($overwritingParameterType !== null) {
-						$parameterType = $overwritingParameterType;
+				if ($storedClosureArgResult !== null) {
+					$argResults[spl_object_id($arg->value)] = $storedClosureArgResult;
+				} else {					if (
+						$closureBindScopeFactory === null
+						&& $parameter instanceof ExtendedParameterReflection
+						&& !$arg->value->static
+					) {
+						$closureThisType = $this->resolveClosureThisType($callLike, $calleeReflection, $parameter, $scopeToPass);
+						if ($closureThisType !== null) {
+							$scopeToPass = $scopeToPass->assignVariable('this', $closureThisType, new ObjectWithoutClassType(), TrinaryLogic::createYes());
+						}
 					}
-				}
 
-				$this->callNodeCallbackWithExpression($nodeCallback, $arg->value, $scopeToPass, $storage, $context);
-				$arrowFunctionResult = $this->processArrowFunctionNode($stmt, $arg->value, $scopeToPass, $storage, $nodeCallback, $parameterType ?? null, $parameterNativeType);
-				$arrowFunctionExprResult = $arrowFunctionResult->getExpressionResult();
-				$argResults[spl_object_id($arg->value)] = $arrowFunctionExprResult;
-				if ($this->callCallbackImmediately($parameter, $parameterType, $calleeReflection)) {
-					$throwPoints = array_merge($throwPoints, array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->isExplicit() ? InternalThrowPoint::createExplicit($scope, $throwPoint->getType(), $arg->value, $throwPoint->canContainAnyThrowable()) : InternalThrowPoint::createImplicit($scope, $arg->value), $arrowFunctionExprResult->getThrowPoints()));
-					$impurePoints = array_merge($impurePoints, $arrowFunctionExprResult->getImpurePoints());
-				}
-				if ($this->shouldInvalidateCallbackExpressions($parameter)) {
-					$arrowFunctionType = $scope->getType($arg->value);
-					if ($arrowFunctionType instanceof ClosureType) {
-						$deferredInvalidateExpressions[] = [$arrowFunctionType->getInvalidateExpressions(), $arrowFunctionType->getUsedVariables()];
+					if ($parameter !== null) {
+						$overwritingParameterType = $this->getParameterTypeFromParameterClosureTypeExtension($callLike, $calleeReflection, $parameter, $scopeToPass);
+
+						if ($overwritingParameterType !== null) {
+							$parameterType = $overwritingParameterType;
+						}
 					}
-				}
-				$arrowFunctionClosureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
-				$arrowFunctionScope = $arrowFunctionResult->getArrowFunctionScope();
-				$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
-					$arrowFunctionExprResult->getScope(),
-					beforeScope: $scopeToPass,
-					expr: $arg->value,
-					hasYield: $arrowFunctionExprResult->hasYield(),
-					isAlwaysTerminating: $arrowFunctionExprResult->isAlwaysTerminating(),
-					throwPoints: $arrowFunctionExprResult->getThrowPoints(),
-					impurePoints: $arrowFunctionExprResult->getImpurePoints(),
-					type: $arrowFunctionClosureTypeResolver->buildClosureTypeForArrowFunction(
-						$scopeToPass,
-						$arg->value,
-						$arrowFunctionScope,
-						$arrowFunctionResult->getClosureTypeThrowPoints(),
-						$arrowFunctionResult->getClosureTypeImpurePoints(),
-						$arrowFunctionResult->getInvalidateExpressions(),
-					),
-					nativeType: $arrowFunctionClosureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
-					typeCallback: null,
-					specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
-				));
+
+					$this->callNodeCallbackWithExpression($nodeCallback, $arg->value, $scopeToPass, $storage, $context);
+					$arrowFunctionResult = $this->processArrowFunctionNode($stmt, $arg->value, $scopeToPass, $storage, $nodeCallback, $parameterType ?? null, $parameterNativeType);
+					$arrowFunctionExprResult = $arrowFunctionResult->getExpressionResult();
+					$argResults[spl_object_id($arg->value)] = $arrowFunctionExprResult;
+					if ($this->callCallbackImmediately($parameter, $parameterType, $calleeReflection)) {
+						$throwPoints = array_merge($throwPoints, array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->isExplicit() ? InternalThrowPoint::createExplicit($scope, $throwPoint->getType(), $arg->value, $throwPoint->canContainAnyThrowable()) : InternalThrowPoint::createImplicit($scope, $arg->value), $arrowFunctionExprResult->getThrowPoints()));
+						$impurePoints = array_merge($impurePoints, $arrowFunctionExprResult->getImpurePoints());
+					}
+					if ($this->shouldInvalidateCallbackExpressions($parameter)) {
+						$arrowFunctionType = $scope->getType($arg->value);
+						if ($arrowFunctionType instanceof ClosureType) {
+							$deferredInvalidateExpressions[] = [$arrowFunctionType->getInvalidateExpressions(), $arrowFunctionType->getUsedVariables()];
+						}
+					}
+					$arrowFunctionClosureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
+					$arrowFunctionScope = $arrowFunctionResult->getArrowFunctionScope();
+					$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
+						$arrowFunctionExprResult->getScope(),
+						beforeScope: $scopeToPass,
+						expr: $arg->value,
+						hasYield: $arrowFunctionExprResult->hasYield(),
+						isAlwaysTerminating: $arrowFunctionExprResult->isAlwaysTerminating(),
+						throwPoints: $arrowFunctionExprResult->getThrowPoints(),
+						impurePoints: $arrowFunctionExprResult->getImpurePoints(),
+						type: $arrowFunctionClosureTypeResolver->buildClosureTypeForArrowFunction(
+							$scopeToPass,
+							$arg->value,
+							$arrowFunctionScope,
+							$arrowFunctionResult->getClosureTypeThrowPoints(),
+							$arrowFunctionResult->getClosureTypeImpurePoints(),
+							$arrowFunctionResult->getInvalidateExpressions(),
+						),
+						nativeType: $arrowFunctionClosureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+						typeCallback: null,
+						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
+					));
+	}
 			} else {
 				$enterExpressionAssignForByRef = $assignByReference && $arg->value instanceof ArrayDimFetch && $arg->value->dim === null;
 				if ($enterExpressionAssignForByRef) {
