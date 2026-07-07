@@ -938,49 +938,58 @@ class NodeScopeResolver
 			$gatheredYieldStatements = [];
 			$executionEnds = [];
 			$functionImpurePoints = [];
-			$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $functionScope, $storage, static function (Node $node, Scope $scope) use ($nodeCallback, $functionScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$functionImpurePoints): void {
-				$nodeCallback($node, $scope);
-				if ($scope->getFunction() !== $functionScope->getFunction()) {
-					return;
-				}
-				if ($scope->isInAnonymousFunction()) {
-					return;
-				}
-				if ($node instanceof PropertyAssignNode) {
-					$functionImpurePoints[] = new ImpurePoint(
-						$scope,
-						$node,
-						'propertyAssign',
-						'property assignment',
-						true,
-					);
-					return;
-				}
-				if ($node instanceof ExecutionEndNode) {
-					$executionEnds[] = $node;
-					return;
-				}
-				if ($node instanceof Expr\Yield_ || $node instanceof Expr\YieldFrom) {
-					$gatheredYieldStatements[] = $node;
-				}
-				if (!$node instanceof Return_) {
-					return;
-				}
+			// the body's results live in a per-body storage released right after
+			// the FunctionReturnStatementsNode rules ran - see the ClassMethod
+			// branch for the reasoning
+			$bodyStorage = $storage->duplicate();
+			$scope->pushExpressionResultStorage($bodyStorage);
+			try {
+				$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $functionScope, $bodyStorage, static function (Node $node, Scope $scope) use ($nodeCallback, $functionScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$functionImpurePoints): void {
+					$nodeCallback($node, $scope);
+					if ($scope->getFunction() !== $functionScope->getFunction()) {
+						return;
+					}
+					if ($scope->isInAnonymousFunction()) {
+						return;
+					}
+					if ($node instanceof PropertyAssignNode) {
+						$functionImpurePoints[] = new ImpurePoint(
+							$scope,
+							$node,
+							'propertyAssign',
+							'property assignment',
+							true,
+						);
+						return;
+					}
+					if ($node instanceof ExecutionEndNode) {
+						$executionEnds[] = $node;
+						return;
+					}
+					if ($node instanceof Expr\Yield_ || $node instanceof Expr\YieldFrom) {
+						$gatheredYieldStatements[] = $node;
+					}
+					if (!$node instanceof Return_) {
+						return;
+					}
 
-				$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
-			}, StatementContext::createTopLevel())->toPublic();
+					$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
+				}, StatementContext::createTopLevel())->toPublic();
 
-			$this->callNodeCallback($nodeCallback, new FunctionReturnStatementsNode(
-				$stmt,
-				$gatheredReturnStatements,
-				$gatheredYieldStatements,
-				$statementResult,
-				$executionEnds,
-				array_merge($statementResult->getImpurePoints(), $functionImpurePoints),
-				$functionReflection,
-			), $functionScope, $storage);
-			if (!$scope->isInAnonymousFunction()) {
-				$this->processPendingFibers($storage);
+				$this->callNodeCallback($nodeCallback, new FunctionReturnStatementsNode(
+					$stmt,
+					$gatheredReturnStatements,
+					$gatheredYieldStatements,
+					$statementResult,
+					$executionEnds,
+					array_merge($statementResult->getImpurePoints(), $functionImpurePoints),
+					$functionReflection,
+				), $functionScope, $bodyStorage);
+				if (!$scope->isInAnonymousFunction()) {
+					$this->processPendingFibers($bodyStorage);
+				}
+			} finally {
+				$scope->popExpressionResultStorage();
 			}
 
 			// declaring the function defines it in global state, so a negative
@@ -1093,62 +1102,74 @@ class NodeScopeResolver
 				$gatheredYieldStatements = [];
 				$executionEnds = [];
 				$methodImpurePoints = [];
-				$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $methodScope, $storage, function (Node $node, Scope $scope) use ($nodeCallback, $methodScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$methodImpurePoints): void {
-					$nodeCallback($node, $scope);
-					if ($scope->getFunction() !== $methodScope->getFunction()) {
-						return;
-					}
-					if ($scope->isInAnonymousFunction()) {
-						return;
-					}
-					if ($node instanceof PropertyAssignNode) {
-						if (
-							$node->getPropertyFetch() instanceof Expr\PropertyFetch
-							&& $scope->getFunction() instanceof PhpMethodFromParserNodeReflection
-							&& $scope->getFunction()->getDeclaringClass()->hasConstructor()
-							&& $scope->getFunction()->getDeclaringClass()->getConstructor()->getName() === $scope->getFunction()->getName()
-							&& TypeUtils::findThisType($this->readTypeOfMaybeStored($node->getPropertyFetch()->var, $scope->toMutatingScope())) !== null
-						) {
+				// the body's results live in a per-body storage released right
+				// after the MethodReturnStatementsNode rules ran: later asks about
+				// body expressions (e.g. class-level rules pricing gathered nodes)
+				// go through the on-demand bridge, so keeping the results for the
+				// rest of the file would only pin the body's whole result graph
+				// (callbacks, scopes, types) at no benefit
+				$bodyStorage = $storage->duplicate();
+				$scope->pushExpressionResultStorage($bodyStorage);
+				try {
+					$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $methodScope, $bodyStorage, function (Node $node, Scope $scope) use ($nodeCallback, $methodScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$methodImpurePoints): void {
+						$nodeCallback($node, $scope);
+						if ($scope->getFunction() !== $methodScope->getFunction()) {
 							return;
 						}
-						$methodImpurePoints[] = new ImpurePoint(
-							$scope,
-							$node,
-							'propertyAssign',
-							'property assignment',
-							true,
-						);
-						return;
-					}
-					if ($node instanceof ExecutionEndNode) {
-						$executionEnds[] = $node;
-						return;
-					}
-					if ($node instanceof Expr\Yield_ || $node instanceof Expr\YieldFrom) {
-						$gatheredYieldStatements[] = $node;
-					}
-					if (!$node instanceof Return_) {
-						return;
+						if ($scope->isInAnonymousFunction()) {
+							return;
+						}
+						if ($node instanceof PropertyAssignNode) {
+							if (
+								$node->getPropertyFetch() instanceof Expr\PropertyFetch
+								&& $scope->getFunction() instanceof PhpMethodFromParserNodeReflection
+								&& $scope->getFunction()->getDeclaringClass()->hasConstructor()
+								&& $scope->getFunction()->getDeclaringClass()->getConstructor()->getName() === $scope->getFunction()->getName()
+								&& TypeUtils::findThisType($this->readTypeOfMaybeStored($node->getPropertyFetch()->var, $scope->toMutatingScope())) !== null
+							) {
+								return;
+							}
+							$methodImpurePoints[] = new ImpurePoint(
+								$scope,
+								$node,
+								'propertyAssign',
+								'property assignment',
+								true,
+							);
+							return;
+						}
+						if ($node instanceof ExecutionEndNode) {
+							$executionEnds[] = $node;
+							return;
+						}
+						if ($node instanceof Expr\Yield_ || $node instanceof Expr\YieldFrom) {
+							$gatheredYieldStatements[] = $node;
+						}
+						if (!$node instanceof Return_) {
+							return;
+						}
+
+						$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
+					}, StatementContext::createTopLevel())->toPublic();
+
+					$methodReflection = $methodScope->getFunction();
+					if (!$methodReflection instanceof PhpMethodFromParserNodeReflection) {
+						throw new ShouldNotHappenException();
 					}
 
-					$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
-				}, StatementContext::createTopLevel())->toPublic();
-
-				$methodReflection = $methodScope->getFunction();
-				if (!$methodReflection instanceof PhpMethodFromParserNodeReflection) {
-					throw new ShouldNotHappenException();
+					$this->callNodeCallback($nodeCallback, new MethodReturnStatementsNode(
+						$stmt,
+						$gatheredReturnStatements,
+						$gatheredYieldStatements,
+						$statementResult,
+						$executionEnds,
+						array_merge($statementResult->getImpurePoints(), $methodImpurePoints),
+						$classReflection,
+						$methodReflection,
+					), $methodScope, $bodyStorage);
+				} finally {
+					$scope->popExpressionResultStorage();
 				}
-
-				$this->callNodeCallback($nodeCallback, new MethodReturnStatementsNode(
-					$stmt,
-					$gatheredReturnStatements,
-					$gatheredYieldStatements,
-					$statementResult,
-					$executionEnds,
-					array_merge($statementResult->getImpurePoints(), $methodImpurePoints),
-					$classReflection,
-					$methodReflection,
-				), $methodScope, $storage);
 
 				if ($isConstructor) {
 					$finalScope = null;
