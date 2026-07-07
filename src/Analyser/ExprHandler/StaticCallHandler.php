@@ -188,7 +188,10 @@ final class StaticCallHandler implements ExprHandler
 			} elseif ($expr->class instanceof Expr) {
 				// the class expr was processed above as the receiver; read its
 				// already-computed result instead of re-walking via Scope::getType().
-				$classType = $classResult->getType()->getObjectTypeOrClassStringObjectType();
+				// A nullsafe receiver's null is the chain short-circuit, not a
+				// callee - strip it before the reflection lookup, like the
+				// return-type resolution does.
+				$classType = TypeCombinator::removeNull($classResult->getType())->getObjectTypeOrClassStringObjectType();
 				$methodName = $expr->name->name;
 				$methodReflection = $scope->getMethodReflection($classType, $methodName);
 				if ($methodReflection !== null) {
