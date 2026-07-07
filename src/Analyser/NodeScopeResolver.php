@@ -237,7 +237,7 @@ class NodeScopeResolver
 	/** Whether the PHPSTAN_GUARD_NW diagnostic is enabled (cached from the env). */
 	public static bool $guardNewWorld = false;
 
-  /**
+	  /**
 	 * spl_object_id => true of every Expr in the file's parsed AST. Populated
 	 * only when the PHPSTAN_GUARD_NW diagnostic is enabled, so the guards can
 	 * tell a real AST node from a node a rule built during analysis (which
@@ -3042,6 +3042,10 @@ class NodeScopeResolver
 	{
 		if (
 			!self::$guardNewWorld
+			// closures/arrow functions are priced compute-direct (getClosureType)
+			// by design - asking about one before its walk is not a violation
+			|| $expr instanceof Expr\Closure
+			|| $expr instanceof Expr\ArrowFunction
 			|| !isset(self::$guardRealExprIds[spl_object_id($expr)])
 			|| isset(self::$guardProcessedExprIds[spl_object_id($expr)])
 		) {
@@ -3143,6 +3147,7 @@ class NodeScopeResolver
 		ExpressionContext $context,
 	): ExpressionResult
 	{
+
 
 		if ($expr instanceof Expr\CallLike && $expr->isFirstClassCallable()) {
 			if ($expr instanceof FuncCall) {
