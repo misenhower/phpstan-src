@@ -52,7 +52,7 @@ final class UnsetOffsetExprHandler implements ExprHandler
 			throwPoints: [],
 			impurePoints: [],
 			typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType())->unsetOffset(($nativeTypesPromoted ? $dimResult->getNativeType() : $dimResult->getType())),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 		);
 	}
 

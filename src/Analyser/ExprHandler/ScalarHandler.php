@@ -52,7 +52,7 @@ final class ScalarHandler implements ExprHandler
 			throwPoints: [],
 			impurePoints: [],
 			typeCallback: fn () => $this->initializerExprTypeResolver->getType($expr, $initializerExprContext),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 		);
 	}
 

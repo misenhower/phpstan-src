@@ -51,7 +51,7 @@ final class ExistingArrayDimFetchHandler implements ExprHandler
 			throwPoints: [],
 			impurePoints: [],
 			typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $arrayDimFetchResult->getNativeType() : $arrayDimFetchResult->getType()),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 		);
 	}
 

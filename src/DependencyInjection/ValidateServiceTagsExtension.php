@@ -6,6 +6,7 @@ use Nette\DI\CompilerExtension;
 use Override;
 use PhpParser\NodeVisitor;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\PerFileAnalysisResettable;
 use PHPStan\Analyser\IgnoreErrorExtension;
 use PHPStan\Analyser\ResultCache\ResultCacheMetaExtension;
 use PHPStan\Analyser\TypeSpecifierFactory;
@@ -121,6 +122,7 @@ final class ValidateServiceTagsExtension extends CompilerExtension
 		DiagnoseExtension::class => DiagnoseExtension::EXTENSION_TAG,
 		IgnoreErrorExtension::class => IgnoreErrorExtension::EXTENSION_TAG,
 		ExprHandler::class => ExprHandler::EXTENSION_TAG,
+		PerFileAnalysisResettable::class => PerFileAnalysisResettable::TAG,
 	];
 
 	/**

@@ -214,7 +214,7 @@ final class AssignOpHandler implements ExprHandler
 						$exprResult->getThrowPoints(),
 						$exprResult->getImpurePoints(),
 						typeCallback: static fn () => new MixedType(),
-						specifyTypesCallback: static fn () => new SpecifiedTypes(),
+						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 					);
 				}
 

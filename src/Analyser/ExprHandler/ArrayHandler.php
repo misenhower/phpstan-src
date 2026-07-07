@@ -125,7 +125,7 @@ final class ArrayHandler implements ExprHandler
 
 				return $type;
 			},
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 		);
 	}
 

@@ -58,7 +58,7 @@ final class ImplicitToStringCallHelper
 				throwPoints: [],
 				impurePoints: [],
 				typeCallback: static fn () => new MixedType(),
-				specifyTypesCallback: static fn () => new SpecifiedTypes(),
+				specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 			);
 		}
 
@@ -98,7 +98,7 @@ final class ImplicitToStringCallHelper
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
 			typeCallback: static fn () => new MixedType(),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 		);
 	}
 

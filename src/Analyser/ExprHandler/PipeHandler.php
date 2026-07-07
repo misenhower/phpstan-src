@@ -90,7 +90,7 @@ final class PipeHandler implements ExprHandler
 				throwPoints: [],
 				impurePoints: [],
 				typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $callableNodeResult->getNativeType() : $callableNodeResult->getType()),
-				specifyTypesCallback: static fn () => new SpecifiedTypes(),
+				specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 			));
 		}
 

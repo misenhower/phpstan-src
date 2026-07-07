@@ -56,7 +56,7 @@ final class SetExistingOffsetValueTypeExprHandler implements ExprHandler
 				($nativeTypesPromoted ? $dimResult->getNativeType() : $dimResult->getType()),
 				($nativeTypesPromoted ? $valueResult->getNativeType() : $valueResult->getType()),
 			),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 		);
 	}
 

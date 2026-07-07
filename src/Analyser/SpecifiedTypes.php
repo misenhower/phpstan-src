@@ -2,6 +2,7 @@
 
 namespace PHPStan\Analyser;
 
+use Closure;
 use PhpParser\Node\Expr;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\Type;
@@ -11,6 +12,9 @@ use function array_merge;
 
 final class SpecifiedTypes
 {
+
+	/** @var (Closure(TypeSpecifierContext, bool): self)|null */
+	private static ?Closure $emptySpecifyCallback = null;
 
 	private bool $overwrite = false;
 
@@ -59,6 +63,18 @@ final class SpecifiedTypes
 		private array $sureNotTypes = [],
 	)
 	{
+	}
+
+	/**
+	 * A shared no-narrowing specify callback for results whose expression never
+	 * narrows anything (literals, virtual write nodes) - one process-wide
+	 * closure instead of one allocation per created ExpressionResult.
+	 *
+	 * @return Closure(TypeSpecifierContext, bool): self
+	 */
+	public static function emptySpecifyCallback(): Closure
+	{
+		return self::$emptySpecifyCallback ??= static fn (): self => new self();
 	}
 
 	/**

@@ -174,7 +174,7 @@ final class AssignHandler implements ExprHandler
 					throwPoints: $throwPoints,
 					impurePoints: $impurePoints,
 					typeCallback: static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $result->getNativeType() : $result->getType(),
-					specifyTypesCallback: static fn () => new SpecifiedTypes(),
+					specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 				);
 			},
 			true,
@@ -690,7 +690,7 @@ final class AssignHandler implements ExprHandler
 						throwPoints: [],
 						impurePoints: [],
 						typeCallback: static fn (): Type => new NeverType(),
-						specifyTypesCallback: static fn () => new SpecifiedTypes(),
+						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 					));
 
 				} else {
@@ -714,7 +714,7 @@ final class AssignHandler implements ExprHandler
 						throwPoints: [],
 						impurePoints: [],
 						typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $nodeScopeResolver->readTypeOfMaybeStored($dimFetch->var, $scope->doNotTreatPhpDocTypesAsCertain()) : $nodeScopeResolver->readTypeOfMaybeStored($dimFetch->var, $scope))->getOffsetValueType($nativeTypesPromoted ? $nodeScopeResolver->readTypeOfMaybeStored($dimExpr, $scope->doNotTreatPhpDocTypesAsCertain()) : $nodeScopeResolver->readTypeOfMaybeStored($dimExpr, $scope)),
-						specifyTypesCallback: static fn () => new SpecifiedTypes(),
+						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 					));
 					$scope = $result->getScope();
 
@@ -1069,7 +1069,7 @@ final class AssignHandler implements ExprHandler
 					$context,
 					fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $getOffsetValueTypeExpr, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: [],
 					typeCallback: static fn () => new MixedType(),
-					specifyTypesCallback: static fn () => new SpecifiedTypes(),),
+					specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),),
 					$enterExpressionAssign,
 				);
 				$scope = $result->getScope();
@@ -1169,7 +1169,7 @@ final class AssignHandler implements ExprHandler
 		// stored where processAssignVar is called
 		return $this->expressionResultFactory->create($scope, $beforeScope, $var, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints,
 	typeCallback: static fn () => new MixedType(),
-	specifyTypesCallback: static fn () => new SpecifiedTypes(),);
+	specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),);
 	}
 
 	private function createArrayDimFetchConditionalExpressionHolder(

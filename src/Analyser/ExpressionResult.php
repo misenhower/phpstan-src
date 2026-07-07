@@ -213,7 +213,7 @@ final class ExpressionResult
 			}
 		}
 
-		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope)) {
+		if ($this->hasOwnLazyResolution() && !$this->hasTrackedExpressionType($this->beforeScope)) {
 			return $this->cachedType = $this->resolveOwnType(false);
 		}
 
@@ -233,7 +233,7 @@ final class ExpressionResult
 			return $this->cachedNativeType;
 		}
 
-		if ($this->typeCallback !== null && !$this->hasTrackedExpressionType($this->beforeScope->doNotTreatPhpDocTypesAsCertain())) {
+		if ($this->hasOwnLazyResolution() && !$this->hasTrackedExpressionType($this->beforeScope->doNotTreatPhpDocTypesAsCertain())) {
 			return $this->cachedNativeType = $this->resolveOwnType(true);
 		}
 
@@ -259,21 +259,49 @@ final class ExpressionResult
 			if ($this->nativeType !== null) {
 				return $this->nativeType;
 			}
+			if ($this->resolvedNativeType !== null) {
+				return $this->resolvedNativeType;
+			}
 			if ($this->typeCallback === null) {
 				throw new ShouldNotHappenException();
 			}
 
-			return $this->resolvedNativeType ??= TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(true));
+			$resolvedNativeType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(true));
+			$this->resolvedNativeType = $resolvedNativeType;
+			$this->releaseTypeCallbackIfResolved();
+
+			return $resolvedNativeType;
 		}
 
 		if ($this->type !== null) {
 			return $this->type;
 		}
+		if ($this->resolvedType !== null) {
+			return $this->resolvedType;
+		}
 		if ($this->typeCallback === null) {
 			throw new ShouldNotHappenException();
 		}
 
-		return $this->resolvedType ??= TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(false));
+		$resolvedType = TypeUtils::resolveLateResolvableTypes(($this->typeCallback)(false));
+		$this->resolvedType = $resolvedType;
+		$this->releaseTypeCallbackIfResolved();
+
+		return $resolvedType;
+	}
+
+	/**
+	 * Once both flavours are memoized the callback can never be invoked again -
+	 * dropping it releases its captured environment (child results, intermediate
+	 * scopes) for refcount collection while the file is still being analysed.
+	 */
+	private function releaseTypeCallbackIfResolved(): void
+	{
+		if ($this->resolvedType === null || $this->resolvedNativeType === null) {
+			return;
+		}
+
+		$this->typeCallback = null;
 	}
 
 	/**
@@ -335,7 +363,16 @@ final class ExpressionResult
 	 */
 	public function canResolveOwnType(): bool
 	{
-		return $this->type !== null || $this->typeCallback !== null;
+		return $this->type !== null || $this->hasOwnLazyResolution();
+	}
+
+	/**
+	 * True while the typeCallback is alive or after it was released because both
+	 * flavour memos are filled - either way the result answers its own type.
+	 */
+	private function hasOwnLazyResolution(): bool
+	{
+		return $this->typeCallback !== null || $this->resolvedType !== null;
 	}
 
 	/** Evaluates this expression's narrowing on the given scope. */

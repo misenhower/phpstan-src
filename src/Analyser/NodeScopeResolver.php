@@ -298,12 +298,12 @@ class NodeScopeResolver
 	 */
 	public function resetPerFileAnalysisState(): void
 	{
-		foreach ($this->container->getServicesByTag(ExprHandler::EXTENSION_TAG) as $exprHandlerService) {
-			if (!$exprHandlerService instanceof PerFileAnalysisResettable) {
+		foreach ($this->container->getServicesByTag(PerFileAnalysisResettable::TAG) as $resettableService) {
+			if (!$resettableService instanceof PerFileAnalysisResettable) {
 				continue;
 			}
 
-			$exprHandlerService->resetFileAnalysisState();
+			$resettableService->resetFileAnalysisState();
 		}
 	}
 
@@ -3095,7 +3095,7 @@ class NodeScopeResolver
 				// the first-class callable closure type lives on the *CallableNode
 				// result; delegate so getType() of the original CallLike answers from it
 				typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $newExprResult->getNativeType() : $newExprResult->getType()),
-				specifyTypesCallback: static fn () => new SpecifiedTypes(),
+				specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 			);
 			$this->storeExpressionResult($storage, $expr, $expressionResult);
 			return $expressionResult;
@@ -3630,7 +3630,7 @@ class NodeScopeResolver
 		return new ProcessArrowFunctionResult(
 			$this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $expr, hasYield: false, isAlwaysTerminating: $exprResult->isAlwaysTerminating(), throwPoints: $exprResult->getThrowPoints(), impurePoints: $exprResult->getImpurePoints(),
 			typeCallback: static fn () => new MixedType(),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),),
 			$arrowFunctionScope,
 			$closureTypeThrowPoints,
 			$closureTypeImpurePoints,
@@ -4232,7 +4232,7 @@ class NodeScopeResolver
 					),
 					nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
 					typeCallback: null,
-					specifyTypesCallback: static fn () => new SpecifiedTypes(),
+					specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 				));
 
 				$uses = [];
@@ -4326,7 +4326,7 @@ class NodeScopeResolver
 					),
 					nativeType: $arrowFunctionClosureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
 					typeCallback: null,
-					specifyTypesCallback: static fn () => new SpecifiedTypes(),
+					specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 				));
 			} else {
 				$enterExpressionAssignForByRef = $assignByReference && $arg->value instanceof ArrayDimFetch && $arg->value->dim === null;
@@ -4498,7 +4498,7 @@ class NodeScopeResolver
 		return new ArgsResult(
 			$this->expressionResultFactory->create($scope, $scope, $callLike, $hasYield, $isAlwaysTerminating, $throwPoints, $impurePoints,
 			typeCallback: static fn () => new MixedType(),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),),
 			$resolvedAcceptor,
 			$argResults,
 		);
@@ -4805,7 +4805,7 @@ class NodeScopeResolver
 			ExpressionContext::createDeep(),
 			fn (MutatingScope $scope): ExpressionResult => $this->expressionResultFactory->create($scope, beforeScope: $scope, expr: $assignedExpr, hasYield: false, isAlwaysTerminating: false, throwPoints: [], impurePoints: [],
 			typeCallback: static fn () => new MixedType(),
-			specifyTypesCallback: static fn () => new SpecifiedTypes(),),
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),),
 			false,
 		);
 	}

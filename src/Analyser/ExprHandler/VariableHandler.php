@@ -92,7 +92,7 @@ final class VariableHandler implements ExprHandler
 						throwPoints: [],
 						impurePoints: [],
 						typeCallback: static fn (): Type => $constantString,
-						specifyTypesCallback: static fn (): SpecifiedTypes => new SpecifiedTypes(),
+						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 					);
 					$specifiedTypes = $this->identicalNarrowingHelper->specifyIdentical(
 						$nodeScopeResolver,

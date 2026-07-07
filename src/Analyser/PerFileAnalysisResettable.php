@@ -12,6 +12,8 @@ namespace PHPStan\Analyser;
 interface PerFileAnalysisResettable
 {
 
+	public const TAG = 'phpstan.perFileAnalysisResettable';
+
 	public function resetFileAnalysisState(): void;
 
 }
