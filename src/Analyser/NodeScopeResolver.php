@@ -52,6 +52,7 @@ use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStan\Analyser\ExprHandler\AssignHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ClosureTypeResolver;
+use PHPStan\Analyser\ExprHandler\Helper\IdenticalNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
 use PHPStan\Analyser\ExprHandler\Helper\VirtualExprResultHelper;
 use PHPStan\BetterReflection\Reflection\Adapter\ReflectionClass;
@@ -146,7 +147,10 @@ use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\Properties\ReadWritePropertiesExtensionProvider;
 use PHPStan\ShouldNotHappenException;
 use PHPStan\TrinaryLogic;
+use PHPStan\Type\BooleanType;
 use PHPStan\Type\ClosureType;
+use PHPStan\Type\Constant\ConstantArrayType;
+use PHPStan\Type\Constant\ConstantBooleanType;
 use PHPStan\Type\Constant\ConstantIntegerType;
 use PHPStan\Type\Constant\ConstantStringType;
 use PHPStan\Type\ErrorType;
@@ -1680,13 +1684,46 @@ class NodeScopeResolver
 				$this->callNodeCallback($nodeCallback, $virtualAssign, $scope, $storage);
 			}
 
+			// the "iteratee !== []" narrowing every loop pass merges in - composed
+			// once from the iteratee's result (the same sentinel comparison the
+			// walked synthetic would delegate to); the walk is the composition's
+			// miss seam
+			$nonEmptyIterateeScope = $scope;
+			if ($this->polluteScopeWithAlwaysIterableForeach) {
+				$identicalNarrowingHelper = $this->container->getByType(IdenticalNarrowingHelper::class);
+				$emptyArrayType = new ConstantArrayType([], []);
+				$nonEmptyTypes = $identicalNarrowingHelper->specifyIdenticalAgainstType(
+					$stmt->expr,
+					$condResult,
+					$arrayComparisonExpr->right,
+					$emptyArrayType,
+					TypeSpecifierContext::createFalse(),
+					$scope,
+					$identicalNarrowingHelper->captureFirstArgResult($stmt->expr, $storage),
+					static function () use ($condResult, $emptyArrayType): Type {
+						$iterateeType = $condResult->getType();
+						if ($iterateeType->equals($emptyArrayType)) {
+							return new ConstantBooleanType(true);
+						}
+						if ($emptyArrayType->isSuperTypeOf($iterateeType)->no()) {
+							return new ConstantBooleanType(false);
+						}
+
+						return new BooleanType();
+					},
+				);
+				$nonEmptyIterateeScope = $nonEmptyTypes !== null
+					? $scope->applySpecifiedTypes($nonEmptyTypes)
+					: $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy());
+			}
+
 			$originalStorage = $storage;
 			$unrolledEndScope = null;
 			$unrolledTotalKeys = null;
 			if ($context->isTopLevel()) {
 				$storage = $originalStorage->duplicate();
 
-				$originalScope = $this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope;
+				$originalScope = $nonEmptyIterateeScope;
 				// $originalScope may narrow the iteratee to a non-empty array - a genuinely
 				// different scope than its own. The narrowing is tracked by the scope
 				// (getTypeOnScope's authoritative read), so the iteratee only needs
@@ -1709,7 +1746,7 @@ class NodeScopeResolver
 					$count = 0;
 					do {
 						$prevScope = $bodyScope;
-						$bodyScope = $bodyScope->mergeWith($this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope);
+						$bodyScope = $bodyScope->mergeWith($nonEmptyIterateeScope);
 						$storage = $originalStorage->duplicate();
 						$bodyScope = $this->enterForeach($bodyScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
 						$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
@@ -1729,7 +1766,7 @@ class NodeScopeResolver
 				}
 			}
 
-			$bodyScope = $bodyScope->mergeWith($this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope);
+			$bodyScope = $bodyScope->mergeWith($nonEmptyIterateeScope);
 			$storage = $originalStorage;
 			$bodyScope = $this->enterForeach($bodyScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
 			$finalPassContext = $unrolledTotalKeys !== null ? $context->enterUnrolledForeach($unrolledTotalKeys) : $context;
