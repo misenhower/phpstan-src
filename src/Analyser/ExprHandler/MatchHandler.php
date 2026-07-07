@@ -449,9 +449,12 @@ final class MatchHandler implements ExprHandler, PerFileAnalysisResettable
 
 		$isExhaustive = $hasDefaultCond || $hasAlwaysTrueCond;
 		if (!$isExhaustive) {
-			// $matchScope is the subject narrowed by "no arm matched" - a genuinely
-			// different scope than the subject's own - so reprocess the subject there.
-			$remainingType = $nodeScopeResolver->processExprOnDemand($expr->cond, $matchScope, new ExpressionResultStorage())->getType();
+			// $matchScope is the subject narrowed by "no arm matched". The arm
+			// narrowing is tracked by the scope (getTypeOnScope's authoritative
+			// read); only an untracked subject needs reprocessing there.
+			$remainingType = $condResult->answersOnScope($matchScope, false)
+				? $condResult->getTypeOnScope($matchScope, false)
+				: $nodeScopeResolver->processExprOnDemand($expr->cond, $matchScope, new ExpressionResultStorage())->getType();
 			if ($remainingType instanceof NeverType) {
 				$isExhaustive = true;
 			}

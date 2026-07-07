@@ -2338,7 +2338,23 @@ class NodeScopeResolver
 					$hasYield = $hasYield || $caseResult->hasYield();
 					$throwPoints = array_merge($throwPoints, $caseResult->getThrowPoints());
 					$impurePoints = array_merge($impurePoints, $caseResult->getImpurePoints());
-					$branchScope = $this->narrowScopeWithCondition($caseResult->getScope(), $condExpr, TypeSpecifierContext::createTruthy());
+					// the == narrowing composed from the subject's and the case's
+					// results (what the walked synthetic delegates to); the walk is
+					// the composition's miss seam
+					$caseEqualTypes = $this->container->getByType(IdenticalNarrowingHelper::class)->specifyEqual(
+						$this,
+						$stmt->cond,
+						$caseNode->cond,
+						$condResult,
+						$caseResult,
+						TypeSpecifierContext::createTruthy(),
+						$caseResult->getScope(),
+						null,
+						null,
+					);
+					$branchScope = $caseEqualTypes !== null
+						? $caseResult->getScope()->applySpecifiedTypes($caseEqualTypes->setRootExpr($condExpr))
+						: $this->narrowScopeWithCondition($caseResult->getScope(), $condExpr, TypeSpecifierContext::createTruthy());
 				} else {
 					$hasDefaultCase = true;
 					$fullCondExpr = null;
@@ -2375,10 +2391,13 @@ class NodeScopeResolver
 				}
 			}
 
-			// $scopeForBranches is the subject narrowed by "none of the cases matched";
-			// that is a genuinely different scope than the subject's own, so reprocess
-			// the subject there rather than re-running its result on a foreign scope.
-			$exhaustive = $this->processExprOnDemand($stmt->cond, $scopeForBranches, new ExpressionResultStorage())->getType() instanceof NeverType;
+			// $scopeForBranches is the subject narrowed by "none of the cases
+			// matched". The narrowing is tracked by the scope (getTypeOnScope's
+			// authoritative read); only an untracked subject needs reprocessing there.
+			$remainingCaseType = $condResult->answersOnScope($scopeForBranches, false)
+				? $condResult->getTypeOnScope($scopeForBranches, false)
+				: $this->processExprOnDemand($stmt->cond, $scopeForBranches, new ExpressionResultStorage())->getType();
+			$exhaustive = $remainingCaseType instanceof NeverType;
 
 			if (!$hasDefaultCase && !$exhaustive) {
 				$alwaysTerminating = false;
