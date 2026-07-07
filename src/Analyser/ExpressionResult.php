@@ -11,6 +11,7 @@ use PHPStan\Type\Type;
 use PHPStan\Type\TypeTraverser;
 use PHPStan\Type\TypeUtils;
 use PHPStan\Type\UnionType;
+use function is_string;
 use function spl_object_id;
 
 #[GenerateFactory(interface: ExpressionResultFactory::class)]
@@ -395,11 +396,27 @@ final class ExpressionResult
 	 * consumers - isset/empty/?? chain folding and the stored-result read in
 	 * NodeScopeResolver - everything else reads getType()/getNativeType().
 	 */
-	public function getTypeOnScope(MutatingScope $scope, bool $useNativeTypes): Type
+	public function getTypeOnScope(MutatingScope $scope, bool $useNativeTypes, bool $repriceVariables = false): Type
 	{
 		$readScope = $useNativeTypes ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
 		if ($this->type === null && $this->hasTrackedExpressionType($readScope)) {
 			return $readScope->getTrackedExpressionType($this->expr);
+		}
+
+		// rule-facing asks re-price a variable from the given scope: it may
+		// carry narrowing this result's walk position predates (a rule asking
+		// about a synthetic comparison on an arm-narrowed scope). The walk's
+		// own consumers (stored-result reads, chain folds) keep the memoized
+		// walk-position type - their scopes can also be WIDER (merged, loop
+		// converged) than the position the value flowed from.
+		if (
+			$repriceVariables
+			&& $this->type === null
+			&& $this->expr instanceof Expr\Variable
+			&& is_string($this->expr->name)
+			&& !$readScope->hasVariableType($this->expr->name)->no()
+		) {
+			return $readScope->getVariableType($this->expr->name);
 		}
 
 		return $this->resolveOwnType($useNativeTypes);

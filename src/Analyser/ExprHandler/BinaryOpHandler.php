@@ -122,14 +122,26 @@ final class BinaryOpHandler implements ExprHandler
 			// Synthetic nodes the resolver builds (e.g. getDivType's Mod) are
 			// priced on demand by the same helper.
 			$getType = static function (Expr $e) use ($expr, $leftResult, $rightResult, $nativeTypesPromoted, $beforeScope, $nodeScopeResolver): Type {
+				// getTypeOnScope re-prices narrowable operands against this
+				// result's OWN beforeScope: for the main walk that is the walk
+				// position (identical to getType()), but for an on-demand walk
+				// of a synthetic (a rule asking about Identical($x, ...) on an
+				// arm-narrowed scope) it is the asking scope, whose tracked
+				// narrowing the stored operand results predate
+				$flavouredScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+				// operands are re-priced from this result's own beforeScope
+				// (with variables opted in): for the main walk that is the walk
+				// position, but for an on-demand walk of a synthetic (a rule
+				// asking about Identical($x, ...) on an arm-narrowed scope) it
+				// carries narrowing the stored operand results predate
 				if ($e === $expr->left) {
-					return ($nativeTypesPromoted ? $leftResult->getNativeType() : $leftResult->getType());
+					return $leftResult->getTypeOnScope($flavouredScope, $nativeTypesPromoted, true);
 				}
 				if ($e === $expr->right) {
-					return ($nativeTypesPromoted ? $rightResult->getNativeType() : $rightResult->getType());
+					return $rightResult->getTypeOnScope($flavouredScope, $nativeTypesPromoted, true);
 				}
 
-				return $nodeScopeResolver->readTypeOfMaybeStored($e, $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope);
+				return $nodeScopeResolver->readTypeOfMaybeStored($e, $flavouredScope);
 			};
 
 			if ($expr instanceof BinaryOp\Smaller) {

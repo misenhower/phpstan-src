@@ -342,11 +342,13 @@ final class MatchHandler implements ExprHandler
 				$armCondExpr = new BinaryOp\Identical($expr->cond, $armCond);
 				$armCondResultScope = $armCondResult->getScope();
 				// the `subject === cond` verdict and both narrowing contexts,
-				// composed from the subject's and the condition's walk results -
-				// no synthetic Identical walk (mirrors BinaryOpHandler's seam)
+				// composed from the subject's THREADED per-arm state (carrying
+				// the previous arms' subtractions) and the condition's walk
+				// result - no synthetic Identical walk
+				$armSubjectType = $armCondResultScope->getStateType($expr->cond);
 				$armCondType = $this->treatPhpDocTypesAsCertain
-					? $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope, $armCondExpr, $nodeScopeResolver, $condResult->getType(), $armCondResult->getType())->type
-					: $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope->doNotTreatPhpDocTypesAsCertain(), $armCondExpr, $nodeScopeResolver, $condResult->getNativeType(), $armCondResult->getNativeType())->type;
+					? $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope, $armCondExpr, $nodeScopeResolver, $armSubjectType, $armCondResult->getType())->type
+					: $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope->doNotTreatPhpDocTypesAsCertain(), $armCondExpr, $nodeScopeResolver, $armCondResultScope->doNotTreatPhpDocTypesAsCertain()->getStateType($expr->cond), $armCondResult->getNativeType())->type;
 				if ($armCondType->isTrue()->yes()) {
 					$hasAlwaysTrueCond = true;
 				}
@@ -361,7 +363,7 @@ final class MatchHandler implements ExprHandler
 					$armCondResultScope,
 					$condArgResult,
 					$armCondArgResult,
-					fn (): Type => $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope, $armCondExpr, $nodeScopeResolver, $condResult->getType(), $armCondResult->getType())->type,
+					fn (): Type => $this->richerScopeGetTypeHelper->getIdenticalResult($armCondResultScope, $armCondExpr, $nodeScopeResolver, $armCondResultScope->getStateType($expr->cond), $armCondResult->getType())->type,
 				) ?? $this->defaultNarrowingHelper->specifyDefaultTypes($armCondExpr, $specifyContext))->setRootExpr($armCondExpr);
 				$armCondScope = $armCondResultScope->applySpecifiedTypes($specifyArmCond(TypeSpecifierContext::createFalsey()));
 				$armCondTruthyScope = $armCondResultScope->applySpecifiedTypes($specifyArmCond(TypeSpecifierContext::createTruthy()));
@@ -385,7 +387,7 @@ final class MatchHandler implements ExprHandler
 				}
 				[$filteringCond, $filteringCondResult] = $filteringCondData[0];
 				$filteringIdentical = new BinaryOp\Identical($expr->cond, $filteringCond);
-				$filteringExprType = $this->richerScopeGetTypeHelper->getIdenticalResult($matchScope, $filteringIdentical, $nodeScopeResolver, $condResult->getType(), $filteringCondResult->getType())->type;
+				$filteringExprType = $this->richerScopeGetTypeHelper->getIdenticalResult($matchScope, $filteringIdentical, $nodeScopeResolver, $matchScope->getStateType($expr->cond), $filteringCondResult->getType())->type;
 				// the falsey narrowing stays a synthetic walk: the walk re-prices
 				// the subject on the arm-narrowed scope, and that progressive
 				// narrowing (each arm sees the subject minus the previous arms'
