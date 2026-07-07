@@ -208,10 +208,21 @@ final class MethodCallHandler implements ExprHandler
 		// MethodCall purity gate + tail entry. An impure call narrows to nothing.
 		$createTypesCallback = function (Type $type, TypeSpecifierContext $createContext, bool $nativeTypesPromoted) use ($expr, $varResult, $beforeScope): SpecifiedTypes {
 			$s = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+			if (!$this->isMethodCallNarrowable($s, $expr, $varResult)) {
+				return new SpecifiedTypes([], []);
+			}
 
-			return $this->isMethodCallNarrowable($s, $expr, $varResult)
-				? $this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $createContext)
-				: new SpecifiedTypes([], []);
+			// delegate with this call's own stored result (looked up at ask time,
+			// never captured) so a nullsafe receiver chain fans "not null" through
+			// the containsNullsafe state - the FromResultState variant skips the
+			// createTypesCallback consult that would re-enter this closure
+			return $this->defaultNarrowingHelper->createSubjectTypesFromResultState(
+				$s,
+				$expr,
+				$s->getCurrentExpressionResultStorage()?->findExpressionResult($expr),
+				$type,
+				$createContext,
+			);
 		};
 
 		// Store a preliminary result carrying the type/specify callbacks before the

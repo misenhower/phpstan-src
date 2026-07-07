@@ -167,6 +167,17 @@ final class DefaultNarrowingHelper
 			}
 		}
 
+		return $this->createSubjectTypesFromResultState($s, $subject, $subjectResult, $type, $context);
+	}
+
+	/**
+	 * The fallback entry building - createSubjectTypes() without consulting the
+	 * result's createTypesCallback. A handler's OWN createTypesCallback delegates
+	 * here with its stored result so the impure gate and the nullsafe-chain fan
+	 * still read the result state without re-entering itself.
+	 */
+	public function createSubjectTypesFromResultState(MutatingScope $s, Expr $subject, ?ExpressionResult $subjectResult, Type $type, TypeSpecifierContext $context): SpecifiedTypes
+	{
 		if ($subject instanceof Expr\Instanceof_ || $subject instanceof Expr\List_) {
 			return new SpecifiedTypes([], []);
 		}
@@ -209,6 +220,11 @@ final class DefaultNarrowingHelper
 
 				if ($nullRuledOut) {
 					$exprToSpecify = NullsafeOperatorHelper::getNullsafeShortcircuitedExpr($subject);
+					// a plain fetch/call wrapped AROUND a nullsafe chain has no
+					// createTypesCallback of its own - fan "the chain did not
+					// short-circuit" through the first nullsafe below it, like
+					// the old create()'s createNullsafeTypes() union
+					$nullsafeFanTypes = $this->createFirstNullsafeReceiverTypes($s, $subject);
 				}
 			}
 		}
@@ -227,7 +243,44 @@ final class DefaultNarrowingHelper
 			}
 		}
 
-		return new SpecifiedTypes($sureTypes, $sureNotTypes);
+		$result = new SpecifiedTypes($sureTypes, $sureNotTypes);
+		if (isset($nullsafeFanTypes)) {
+			$result = $result->unionWith($nullsafeFanTypes);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Narrows the first nullsafe link below a plain fetch/call wrapper to
+	 * "not null" (composing through its stored result, so its own receiver
+	 * chain fans too) - the wrapper spine itself contributes nothing.
+	 */
+	private function createFirstNullsafeReceiverTypes(MutatingScope $s, Expr $expr): ?SpecifiedTypes
+	{
+		while (true) {
+			if ($expr instanceof Expr\NullsafePropertyFetch || $expr instanceof Expr\NullsafeMethodCall) {
+				return $this->createSubjectTypes(
+					$s,
+					$expr,
+					$s->getCurrentExpressionResultStorage()?->findExpressionResult($expr),
+					new NullType(),
+					TypeSpecifierContext::createFalse(),
+				);
+			}
+
+			if ($expr instanceof PropertyFetch || $expr instanceof MethodCall || $expr instanceof Expr\ArrayDimFetch) {
+				$expr = $expr->var;
+				continue;
+			}
+
+			if (($expr instanceof Expr\StaticPropertyFetch || $expr instanceof Expr\StaticCall) && $expr->class instanceof Expr) {
+				$expr = $expr->class;
+				continue;
+			}
+
+			return null;
+		}
 	}
 
 	/**

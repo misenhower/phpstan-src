@@ -179,7 +179,7 @@ final class NullsafeMethodCallHandler implements ExprHandler
 			// Inside-out copy of TypeSpecifier::createForExpr()'s `?->` handling.
 			// The short-circuit's null surfaces here, never by walking the chain:
 			// a receiver that is itself a ?-> composes through the parent handler.
-			createTypesCallback: function (Type $type, TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $methodCall, $exprResult, $nullsafeTypeCallback, $beforeScope): SpecifiedTypes {
+			createTypesCallback: function (Type $type, TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $methodCall, $exprResult, $receiverResult, $nullsafeTypeCallback, $beforeScope): SpecifiedTypes {
 				// null() context: createForExpr never computes $containsNull and
 				// emits no entry for the subject - behave the same.
 				if ($context->null()) {
@@ -204,9 +204,11 @@ final class NullsafeMethodCallHandler implements ExprHandler
 				// !containsNull: the plain inner methodCall narrowed by $type
 				// (createNullsafeTypes), the original ?-> key (createForExpr's
 				// double-key), and "receiver is not null".
+				// the receiver composes through its own result so a nullsafe
+				// receiver fans "not null" down its whole chain
 				return $this->defaultNarrowingHelper->createSubjectTypes($s, $methodCall, $exprResult, $type, $context)
 					->unionWith($this->defaultNarrowingHelper->createSubjectTypes($s, $expr, null, $type, $context))
-					->unionWith($this->defaultNarrowingHelper->createSubjectTypes($s, $expr->var, null, new NullType(), TypeSpecifierContext::createFalse()))
+					->unionWith($this->defaultNarrowingHelper->createSubjectTypes($s, $expr->var, $receiverResult, new NullType(), TypeSpecifierContext::createFalse()))
 					->setRootExpr($expr);
 			},
 		);
