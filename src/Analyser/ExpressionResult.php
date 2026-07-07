@@ -454,6 +454,26 @@ final class ExpressionResult
 	}
 
 	/**
+	 * Whether getTypeOnScope() gives the correct answer at the given (foreign)
+	 * position without re-pricing the expression there: the answer is
+	 * position-independent (eager type), the scope owns it (tracked variable or
+	 * expression - including narrowing and invalidation of this very
+	 * expression), or nothing the expression reads changed since the walk.
+	 * When this is false, the caller must reprocess the expression on the
+	 * asking scope.
+	 */
+	public function answersOnScope(MutatingScope $scope, bool $useNativeTypes): bool
+	{
+		if ($this->type !== null) {
+			return true;
+		}
+
+		$readScope = $useNativeTypes ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
+
+		return $this->isScopeAuthoritative($readScope) || $this->askScopeVariableStateMatches($scope, $useNativeTypes);
+	}
+
+	/**
 	 * Whether the given scope, not this result, owns the answer to "what is
 	 * this expression here": narrowable expressions the scope knows (variables
 	 * including $this and parameters, tracked fetches) and any expression the

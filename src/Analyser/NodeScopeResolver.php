@@ -1688,11 +1688,17 @@ class NodeScopeResolver
 
 				$originalScope = $this->polluteScopeWithAlwaysIterableForeach ? $this->narrowScopeWithCondition($scope, $arrayComparisonExpr, TypeSpecifierContext::createTruthy()) : $scope;
 				// $originalScope may narrow the iteratee to a non-empty array - a genuinely
-				// different scope than its own - so reprocess it there rather than re-running
-				// its result on a foreign scope.
-				$iterateeResult = $this->processExprOnDemand($stmt->expr, $originalScope, new ExpressionResultStorage());
-				$foreachIterateeType = $iterateeResult->getType();
-				$foreachNativeIterateeType = $iterateeResult->getNativeType();
+				// different scope than its own. The narrowing is tracked by the scope
+				// (getTypeOnScope's authoritative read), so the iteratee only needs
+				// reprocessing there when the scope neither owns nor matches its state.
+				if ($condResult->answersOnScope($originalScope, false) && $condResult->answersOnScope($originalScope, true)) {
+					$foreachIterateeType = $condResult->getTypeOnScope($originalScope, false);
+					$foreachNativeIterateeType = $condResult->getTypeOnScope($originalScope, true);
+				} else {
+					$iterateeResult = $this->processExprOnDemand($stmt->expr, $originalScope, new ExpressionResultStorage());
+					$foreachIterateeType = $iterateeResult->getType();
+					$foreachNativeIterateeType = $iterateeResult->getNativeType();
+				}
 				$unrolledResult = $this->tryProcessUnrolledConstantArrayForeach($stmt, $originalScope, $originalStorage, $context, $foreachIterateeType, $foreachNativeIterateeType);
 				if ($unrolledResult !== null) {
 					$bodyScope = $unrolledResult['bodyScope'];
@@ -1776,10 +1782,17 @@ class NodeScopeResolver
 			}
 
 			// $scope is the post-loop scope; the body may have modified the iteratee
-			// (e.g. $arr[] = ...), a genuinely different scope than the iteratee's own,
-			// so reprocess it there to observe the modified type.
-			$iterateeResult = $this->processExprOnDemand($stmt->expr, $scope, new ExpressionResultStorage());
-			$exprType = $iterateeResult->getType();
+			// (e.g. $arr[] = ...). A tracked iteratee reads the modified type off the
+			// scope (getTypeOnScope's authoritative read); only an untracked one whose
+			// inputs the body changed needs reprocessing there to observe it.
+			if ($condResult->answersOnScope($scope, false) && $condResult->answersOnScope($scope, true)) {
+				$exprType = $condResult->getTypeOnScope($scope, false);
+				$exprNativeType = $condResult->getTypeOnScope($scope, true);
+			} else {
+				$postLoopIterateeResult = $this->processExprOnDemand($stmt->expr, $scope, new ExpressionResultStorage());
+				$exprType = $postLoopIterateeResult->getType();
+				$exprNativeType = $postLoopIterateeResult->getNativeType();
+			}
 			$hasExpr = $scope->hasExpressionType($stmt->expr);
 			if (
 				count($breakExitPoints) === 0
@@ -1842,7 +1855,7 @@ class NodeScopeResolver
 				$valueTypeChanged = !$arrayDimFetchLoopType->equals($exprType->getIterableValueType());
 				$keyTypeChanged = false;
 				$keyLoopType = $exprType->getIterableKeyType();
-				$keyLoopNativeType = $iterateeResult->getNativeType()->getIterableKeyType();
+				$keyLoopNativeType = $exprNativeType->getIterableKeyType();
 				if ($keyVarExpr !== null) {
 					$keyLoopType = TypeCombinator::union(...$keyLoopTypes);
 					$keyLoopNativeType = TypeCombinator::union(...$keyLoopNativeTypes);
@@ -1858,7 +1871,7 @@ class NodeScopeResolver
 						$newExprType = $newExprType->mapKeyType(static fn (Type $type): Type => $keyLoopType);
 					}
 
-					$nativeExprType = $iterateeResult->getNativeType();
+					$nativeExprType = $exprNativeType;
 					$newExprNativeType = $nativeExprType;
 					if ($valueTypeChanged) {
 						$newExprNativeType = $newExprNativeType->mapValueType(static fn (Type $type): Type => $arrayDimFetchLoopNativeType);
@@ -3185,6 +3198,7 @@ class NodeScopeResolver
 		ExpressionContext $context,
 	): ExpressionResult
 	{
+
 
 		if ($expr instanceof Expr\CallLike && $expr->isFirstClassCallable()) {
 			if ($expr instanceof FuncCall) {
