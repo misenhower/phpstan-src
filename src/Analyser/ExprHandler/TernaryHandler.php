@@ -150,9 +150,13 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 				$booleanConditionType = ($nativeTypesPromoted ? $ternaryCondResult->getNativeType() : $ternaryCondResult->getType())->toBoolean();
 				$elseType = $elseResult->getTypeOnScope($elseProcessingScope, $nativeTypesPromoted);
 				if ($expr->if === null || $ifResult === null) {
-					// short-ternary truthy value: the condition read on its own truthy scope
-					// is a different scope than its own, so reprocess it there.
-					$condTruthyType = $nodeScopeResolver->processExprOnDemand($expr->cond, $ifProcessingScope, new ExpressionResultStorage())->getType();
+					// short-ternary truthy value: the condition read on its own truthy
+					// scope. The truthy narrowing is tracked by the scope
+					// (getTypeOnScope's authoritative read); only an untracked
+					// condition needs reprocessing there.
+					$condTruthyType = $ternaryCondResult->answersOnScope($ifProcessingScope, false)
+						? $ternaryCondResult->getTypeOnScope($ifProcessingScope, false)
+						: $nodeScopeResolver->processExprOnDemand($expr->cond, $ifProcessingScope, new ExpressionResultStorage())->getType();
 					if ($booleanConditionType->isTrue()->yes()) {
 						return $condTruthyType;
 					}
