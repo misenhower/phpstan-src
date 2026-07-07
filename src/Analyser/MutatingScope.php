@@ -57,6 +57,7 @@ use PHPStan\Reflection\InitializerExprContext;
 use PHPStan\Reflection\InitializerExprTypeResolver;
 use PHPStan\Reflection\MethodReflection;
 use PHPStan\Reflection\ParameterReflection;
+use PHPStan\Reflection\ParametersAcceptorSelector;
 use PHPStan\Reflection\Php\PhpFunctionFromParserNodeReflection;
 use PHPStan\Reflection\Php\PhpMethodFromParserNodeReflection;
 use PHPStan\Reflection\PropertyReflection;
@@ -1250,6 +1251,10 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			|| $expr instanceof PropertyFetch
 			|| $expr instanceof Expr\ArrayDimFetch
 			|| $expr instanceof Expr\StaticPropertyFetch
+			// argument-less instance calls: the shape @phpstan-assert subjects
+			// take (synthetic per-build nodes, never stored - a walk per
+			// application otherwise)
+			|| ($expr instanceof Expr\MethodCall && $expr->name instanceof Identifier && !$expr->isFirstClassCallable() && $expr->getArgs() === [])
 		) {
 			return [
 				$this->resolveScopeStateType($expr, $this->nativeTypesPromoted),
@@ -3175,6 +3180,29 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			}
 
 			return $propertyReflection->getReadableType();
+		}
+
+		// an argument-less instance call - the shape @phpstan-assert subjects
+		// take (synthetic nodes built fresh from the assert tag, never stored):
+		// its declared return type on the receiver's state is the narrowing
+		// base, derived from reflection instead of walking the synthetic node
+		if (
+			$expr instanceof Expr\MethodCall
+			&& $expr->name instanceof Identifier
+			&& !$expr->isFirstClassCallable()
+			&& $expr->getArgs() === []
+		) {
+			$methodReflection = $this->getMethodReflection(
+				$this->resolveScopeStateType($expr->var, $native),
+				$expr->name->toString(),
+			);
+			if ($methodReflection === null) {
+				return new ErrorType();
+			}
+
+			$variant = ParametersAcceptorSelector::combineAcceptors($methodReflection->getVariants());
+
+			return $native ? $variant->getNativeReturnType() : $variant->getReturnType();
 		}
 
 		// genuinely non-narrowed expressions (constants, calls, ...) have no

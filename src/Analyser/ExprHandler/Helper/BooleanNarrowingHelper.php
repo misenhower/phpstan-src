@@ -107,13 +107,7 @@ final class BooleanNarrowingHelper
 						$rightCondTypes = new SpecifiedTypes($truthyRightTypes->getSureNotTypes(), $truthyRightTypes->getSureTypes());
 					}
 				}
-				$result = (new SpecifiedTypes(
-					$types->getSureTypes(),
-					$types->getSureNotTypes(),
-				))->withAlternativeTypesOf($types)->setDeferredAugments($types->getDeferredAugments());
-				if ($types->shouldOverwrite()) {
-					$result = $result->setAlwaysOverwriteTypes();
-				}
+				$result = $types->withoutConditionalExpressionHolders();
 				$recipes = [
 					$this->conditionalExpressionHolderHelper->buildConditionalHolderRecipe($leftCondTypes, $rightHolderTypes, false, true, $rightScope, $rightExpr),
 					$this->conditionalExpressionHolderHelper->buildConditionalHolderRecipe($rightCondTypes, $leftHolderTypes, false, true, null, $leftExpr),
@@ -200,13 +194,7 @@ final class BooleanNarrowingHelper
 			}
 
 			if ($context->true()) {
-				$result = (new SpecifiedTypes(
-					$types->getSureTypes(),
-					$types->getSureNotTypes(),
-				))->withAlternativeTypesOf($types)->setDeferredAugments($types->getDeferredAugments());
-				if ($types->shouldOverwrite()) {
-					$result = $result->setAlwaysOverwriteTypes();
-				}
+				$result = $types->withoutConditionalExpressionHolders();
 				$recipes = [
 					$this->conditionalExpressionHolderHelper->buildConditionalHolderRecipe($leftTypes, $rightTypes, false, false, $rightScope, $rightExpr),
 					$this->conditionalExpressionHolderHelper->buildConditionalHolderRecipe($rightTypes, $leftTypes, false, false, null, $leftExpr),

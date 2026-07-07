@@ -167,17 +167,6 @@ final class SpecifiedTypes
 	}
 
 	/**
-	 * @param list<DeferredSpecifiedTypesAugment> $augments
-	 */
-	public function setDeferredAugments(array $augments): self
-	{
-		$self = clone $this;
-		$self->deferredAugments = $augments;
-
-		return $self;
-	}
-
-	/**
 	 * @return list<DeferredSpecifiedTypesAugment>
 	 */
 	public function getDeferredAugments(): array
@@ -234,6 +223,21 @@ final class SpecifiedTypes
 	 * an ExpressionResult carries itself into the narrowing its own callbacks
 	 * produced, without a printer.
 	 */
+	/**
+	 * A copy without conditional-expression holders and holder recipes - for
+	 * the boolean-decomposition tails that replace them with freshly built
+	 * recipes while keeping everything else (entries, alternatives, augments,
+	 * carried subject results) intact.
+	 */
+	public function withoutConditionalExpressionHolders(): self
+	{
+		$self = clone $this;
+		$self->newConditionalExpressionHolders = [];
+		$self->conditionalExpressionHolderRecipes = [];
+
+		return $self;
+	}
+
 	public function withSubjectResultForExprNode(Expr $expr, ExpressionResult $result): self
 	{
 		$self = null;
@@ -249,19 +253,6 @@ final class SpecifiedTypes
 		}
 
 		return $self ?? $this;
-	}
-
-	/**
-	 * A copy of this with the other's alternative-form entries - for the
-	 * composition tails that rebuild a SpecifiedTypes from the sure/sure-not
-	 * slots and must not drop the merged alternatives.
-	 */
-	public function withAlternativeTypesOf(self $other): self
-	{
-		$self = clone $this;
-		$self->alternativeTypes = $other->alternativeTypes;
-
-		return $self;
 	}
 
 	public function shouldOverwrite(): bool
