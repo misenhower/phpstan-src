@@ -24,6 +24,7 @@ use PHPStan\Analyser\ExprHandler\Helper\IdenticalNarrowingHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\PerFileAnalysisResettable;
 use PHPStan\Analyser\RicherScopeGetTypeHelper;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
@@ -54,11 +55,16 @@ use const SORT_NUMERIC;
  * @implements ExprHandler<Match_>
  */
 #[AutowiredService]
-final class MatchHandler implements ExprHandler
+final class MatchHandler implements ExprHandler, PerFileAnalysisResettable
 {
 
 	/** @var WeakMap<Match_, list<array{ExpressionResult, MutatingScope, Expr}>> */
 	private WeakMap $capturedArmResults;
+
+	public function resetFileAnalysisState(): void
+	{
+		$this->capturedArmResults = new WeakMap();
+	}
 
 	public function __construct(
 		#[AutowiredParameter]

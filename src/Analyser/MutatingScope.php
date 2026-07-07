@@ -150,12 +150,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	/** @var array<string, array{Type, Type}> */
 	private array $pricedSpecifiedExprTypePairs = [];
 
-	/** @var array<string, static> */
-	private array $truthyScopes = [];
-
-	/** @var array<string, static> */
-	private array $falseyScopes = [];
-
 	private ?self $fiberScope = null;
 
 	/** @var non-empty-string|null */
@@ -2762,8 +2756,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$this->nativeTypesPromoted,
 		);
 		$scope->resolvedTypes = $this->resolvedTypes;
-		$scope->truthyScopes = $this->truthyScopes;
-		$scope->falseyScopes = $this->falseyScopes;
 
 		return $scope;
 	}
@@ -2793,8 +2785,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$this->nativeTypesPromoted,
 		);
 		$scope->resolvedTypes = $this->resolvedTypes;
-		$scope->truthyScopes = $this->truthyScopes;
-		$scope->falseyScopes = $this->falseyScopes;
 
 		return $scope;
 	}
@@ -2854,8 +2844,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$this->nativeTypesPromoted,
 		);
 		$scope->resolvedTypes = $this->resolvedTypes;
-		$scope->truthyScopes = $this->truthyScopes;
-		$scope->falseyScopes = $this->falseyScopes;
 
 		return $scope;
 	}
@@ -2885,8 +2873,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$this->nativeTypesPromoted,
 		);
 		$scope->resolvedTypes = $this->resolvedTypes;
-		$scope->truthyScopes = $this->truthyScopes;
-		$scope->falseyScopes = $this->falseyScopes;
 
 		return $scope;
 	}
@@ -3509,16 +3495,9 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 */
 	public function filterByTruthyValue(Expr $expr): self
 	{
-		$exprString = $this->getNodeKey($expr);
-		if (array_key_exists($exprString, $this->truthyScopes)) {
-			return $this->truthyScopes[$exprString];
-		}
-
 		$specifiedTypes = $this->typeSpecifier->specifyTypesInCondition($this, $expr, TypeSpecifierContext::createTruthy());
-		$scope = $this->applySpecifiedTypes($specifiedTypes);
-		$this->truthyScopes[$exprString] = $scope;
 
-		return $scope;
+		return $this->applySpecifiedTypes($specifiedTypes);
 	}
 
 	/**
@@ -3526,16 +3505,9 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 */
 	public function filterByFalseyValue(Expr $expr): self
 	{
-		$exprString = $this->getNodeKey($expr);
-		if (array_key_exists($exprString, $this->falseyScopes)) {
-			return $this->falseyScopes[$exprString];
-		}
-
 		$specifiedTypes = $this->typeSpecifier->specifyTypesInCondition($this, $expr, TypeSpecifierContext::createFalsey());
-		$scope = $this->applySpecifiedTypes($specifiedTypes);
-		$this->falseyScopes[$exprString] = $scope;
 
-		return $scope;
+		return $this->applySpecifiedTypes($specifiedTypes);
 	}
 
 	/**
@@ -3874,8 +3846,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			$this->afterExtractCall,
 		);
 		$scope->resolvedTypes = $this->resolvedTypes;
-		$scope->truthyScopes = $this->truthyScopes;
-		$scope->falseyScopes = $this->falseyScopes;
 		$this->scopeOutOfFirstLevelStatement = $scope;
 
 		return $scope;

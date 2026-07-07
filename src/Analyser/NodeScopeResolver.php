@@ -292,6 +292,22 @@ class NodeScopeResolver
 	}
 
 	/**
+	 * Releases the previous file's node-keyed captures: the parser cache
+	 * retains ASTs, so WeakMap entries keyed by their nodes never die on
+	 * their own and would hold that file's whole result graph alive.
+	 */
+	public function resetPerFileAnalysisState(): void
+	{
+		foreach ($this->container->getServicesByTag(ExprHandler::EXTENSION_TAG) as $exprHandlerService) {
+			if (!$exprHandlerService instanceof PerFileAnalysisResettable) {
+				continue;
+			}
+
+			$exprHandlerService->resetFileAnalysisState();
+		}
+	}
+
+	/**
 	 * @api
 	 * @param Node[] $nodes
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
@@ -309,6 +325,8 @@ class NodeScopeResolver
 				self::$guardRealExprIds[spl_object_id($realExpr)] = true;
 			}
 		}
+
+		$this->resetPerFileAnalysisState();
 
 		$expressionResultStorage = new ExpressionResultStorage();
 		$scope->pushExpressionResultStorage($expressionResultStorage);

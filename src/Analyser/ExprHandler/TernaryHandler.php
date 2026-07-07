@@ -16,6 +16,7 @@ use PHPStan\Analyser\ExprHandler\Helper\BooleanNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\PerFileAnalysisResettable;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
@@ -31,11 +32,16 @@ use function array_merge;
  * @implements ExprHandler<Ternary>
  */
 #[AutowiredService]
-final class TernaryHandler implements ExprHandler
+final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 {
 
 	/** @var WeakMap<Ternary, array{ExpressionResult, ExpressionResult, ExpressionResult}> */
 	private WeakMap $capturedResults;
+
+	public function resetFileAnalysisState(): void
+	{
+		$this->capturedResults = new WeakMap();
+	}
 
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
