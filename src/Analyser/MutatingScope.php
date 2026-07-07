@@ -986,8 +986,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	{
 		if (
 			NodeScopeResolver::$guardNewWorld
-			&& !NodeScopeResolver::isInSanctionedGuardRead()
-			&& !NodeScopeResolver::isGuardExemptNode($node)
 			&& isset(NodeScopeResolver::$guardRealExprIds[spl_object_id($node)])
 			&& !isset(NodeScopeResolver::$guardProcessedExprIds[spl_object_id($node)])
 		) {
@@ -1331,8 +1329,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		if (
 			NodeScopeResolver::$guardNewWorld
-			&& !NodeScopeResolver::isInSanctionedGuardRead()
-			&& !NodeScopeResolver::isGuardExemptNode($node)
 			&& isset(NodeScopeResolver::$guardRealExprIds[spl_object_id($node)])
 			&& !isset(NodeScopeResolver::$guardProcessedExprIds[spl_object_id($node)])
 		) {

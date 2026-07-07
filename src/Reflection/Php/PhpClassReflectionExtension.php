@@ -1223,10 +1223,7 @@ final class PhpClassReflectionExtension
 				continue;
 			}
 
-			// lazy inference prices constructor-assignment values outside any
-			// walk, on a scope of its own - a sanctioned before-the-walk read
-			// (the parser cache shares these nodes with the main analysis)
-			$propertyType = NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $methodScope->getType($expr->expr));
+			$propertyType = $methodScope->getType($expr->expr);
 			if ($propertyType instanceof ErrorType || $propertyType instanceof NeverType) {
 				continue;
 			}

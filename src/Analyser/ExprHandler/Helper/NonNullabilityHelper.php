@@ -11,7 +11,6 @@ use PhpParser\Node\Expr\StaticPropertyFetch;
 use PHPStan\Analyser\EnsuredNonNullabilityResult;
 use PHPStan\Analyser\EnsuredNonNullabilityResultExpression;
 use PHPStan\Analyser\MutatingScope;
-use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\TrinaryLogic;
@@ -84,10 +83,8 @@ final class NonNullabilityHelper
 	{
 		// the expression has not been processed into the storage yet (this runs
 		// before processExprNode) - derive its current type from the scope's
-		// tracked state. A non-narrowable subject (a call, a fresh fetch) has no
-		// tracked state and must be priced before its walk BY DESIGN: the device
-		// this ensure writes is what the walk runs on - a sanctioned read.
-		$exprType = NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $scope->getStateType($exprToSpecify));
+		// tracked state instead of pricing the node on demand.
+		$exprType = $scope->getStateType($exprToSpecify);
 		$isNull = $exprType->isNull();
 		if ($isNull->yes()) {
 			return new EnsuredNonNullabilityResult($scope, []);
@@ -97,9 +94,9 @@ final class NonNullabilityHelper
 
 		$exprTypeWithoutNull = TypeCombinator::removeNull($exprType);
 		if ($exprType->equals($exprTypeWithoutNull)) {
-			$originalExprType = NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $originalScope->getStateType($exprToSpecify));
+			$originalExprType = $originalScope->getStateType($exprToSpecify);
 			if (!$originalExprType->equals($exprTypeWithoutNull)) {
-				$originalNativeType = NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $originalScope->doNotTreatPhpDocTypesAsCertain()->getStateType($exprToSpecify));
+				$originalNativeType = $originalScope->doNotTreatPhpDocTypesAsCertain()->getStateType($exprToSpecify);
 
 				return new EnsuredNonNullabilityResult($scope, [
 					new EnsuredNonNullabilityResultExpression($exprToSpecify, $originalExprType, $originalNativeType, $hasExpressionType),
@@ -117,8 +114,8 @@ final class NonNullabilityHelper
 			$parentExpr = $exprToSpecify->var;
 			$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression(
 				$parentExpr,
-				NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $scope->getStateType($parentExpr)),
-				NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $scope->doNotTreatPhpDocTypesAsCertain()->getStateType($parentExpr)),
+				$scope->getStateType($parentExpr),
+				$scope->doNotTreatPhpDocTypesAsCertain()->getStateType($parentExpr),
 				$originalScope->hasExpressionType($parentExpr),
 			);
 		}
@@ -129,7 +126,7 @@ final class NonNullabilityHelper
 			$certainty = $hasExpressionType;
 		}
 
-		$nativeType = NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $scope->doNotTreatPhpDocTypesAsCertain()->getStateType($exprToSpecify));
+		$nativeType = $scope->doNotTreatPhpDocTypesAsCertain()->getStateType($exprToSpecify);
 		$specifiedExpressions[] = new EnsuredNonNullabilityResultExpression($exprToSpecify, $exprType, $nativeType, $certainty);
 		$scope = $scope->specifyExpressionType(
 			$exprToSpecify,

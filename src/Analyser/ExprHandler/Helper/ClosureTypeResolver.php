@@ -681,10 +681,7 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 					? PassedByReference::createCreatesNewVariable()
 					: PassedByReference::createNo(),
 				$param->variadic,
-				// a parameter default is a constant expression (PHP requires it) -
-				// pricing it during signature construction, possibly before the
-				// closure's walk, is position-independent and sanctioned
-				$param->default !== null ? NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $scope->getType($param->default)) : null,
+				$param->default !== null ? $scope->getType($param->default) : null,
 			);
 		}
 
@@ -696,11 +693,8 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 			$callableParameters = [];
 			$nativeCallableParameters = [];
 			foreach ($arrayMapArgs as $funcCallArg) {
-				// the closure's parameter types derive from a SIBLING call argument
-				// that is processed after the closure - a deliberate
-				// before-the-walk read (the acceptor-selection floor)
-				$callableParameters[] = new DummyParameter('item', NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $scope->getType($funcCallArg->value))->getIterableValueType(), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
-				$nativeCallableParameters[] = new DummyParameter('item', NodeScopeResolver::sanctionedGuardRead(static fn (): Type => $scope->getNativeType($funcCallArg->value))->getIterableValueType(), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+				$callableParameters[] = new DummyParameter('item', $scope->getType($funcCallArg->value)->getIterableValueType(), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
+				$nativeCallableParameters[] = new DummyParameter('item', $scope->getNativeType($funcCallArg->value)->getIterableValueType(), optional: false, passedByReference: PassedByReference::createNo(), variadic: false, defaultValue: null);
 			}
 		} elseif ($immediatelyInvokedArgs !== null) {
 			foreach ($immediatelyInvokedArgs as $immediatelyInvokedArg) {
