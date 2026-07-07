@@ -4,7 +4,6 @@ namespace PHPStan\Analyser;
 
 use Closure;
 use PhpParser\Node\Expr;
-use WeakReference;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
@@ -53,20 +52,6 @@ final class SpecifiedTypes
 	 * @var array<string, array{Expr, list<array{?Type, ?Type}>}>
 	 */
 	private array $alternativeTypes = [];
-
-	/**
-	 * The narrowing subjects' ExpressionResults, captured where the narrowing
-	 * was composed - applySpecifiedTypes() reads a subject's current type pair
-	 * through its result instead of pricing the node on demand when the
-	 * applying scope's storage no longer sees it. Weakly referenced: a result
-	 * attaches ITSELF to its own narrowing (getSpecifiedTypes memoizes that
-	 * narrowing on the result), so a strong reference would be a refcount
-	 * self-cycle that gc_disable() never collects - and a subject released
-	 * with its body simply falls back to the on-demand pricing.
-	 *
-	 * @var array<string, WeakReference<ExpressionResult>>
-	 */
-	private array $subjectResults = [];
 
 	/**
 	 * @api
@@ -200,34 +185,11 @@ final class SpecifiedTypes
 		return $this->alternativeTypes;
 	}
 
-	/** The narrowing subject's ExpressionResult captured at compose time. */
-	public function getSubjectResult(string $exprString): ?ExpressionResult
-	{
-		if (!isset($this->subjectResults[$exprString])) {
-			return null;
-		}
-
-		return $this->subjectResults[$exprString]->get();
-	}
-
-	public function withSubjectResult(string $exprString, ExpressionResult $result): self
-	{
-		$self = clone $this;
-		$self->subjectResults[$exprString] = WeakReference::create($result);
-
-		return $self;
-	}
-
-	/**
-	 * Attaches the result to every entry whose subject IS the given node - how
-	 * an ExpressionResult carries itself into the narrowing its own callbacks
-	 * produced, without a printer.
-	 */
 	/**
 	 * A copy without conditional-expression holders and holder recipes - for
 	 * the boolean-decomposition tails that replace them with freshly built
-	 * recipes while keeping everything else (entries, alternatives, augments,
-	 * carried subject results) intact.
+	 * recipes while keeping everything else (entries, alternatives, augments)
+	 * intact.
 	 */
 	public function withoutConditionalExpressionHolders(): self
 	{
@@ -236,23 +198,6 @@ final class SpecifiedTypes
 		$self->conditionalExpressionHolderRecipes = [];
 
 		return $self;
-	}
-
-	public function withSubjectResultForExprNode(Expr $expr, ExpressionResult $result): self
-	{
-		$self = null;
-		foreach ([$this->sureTypes, $this->sureNotTypes, $this->alternativeTypes] as $entries) {
-			foreach ($entries as $exprString => $entry) {
-				if ($entry[0] !== $expr || isset($this->subjectResults[$exprString])) {
-					continue;
-				}
-
-				$self ??= clone $this;
-				$self->subjectResults[$exprString] = WeakReference::create($result);
-			}
-		}
-
-		return $self ?? $this;
 	}
 
 	public function shouldOverwrite(): bool
@@ -279,7 +224,6 @@ final class SpecifiedTypes
 		unset($self->sureTypes[$exprString]);
 		unset($self->sureNotTypes[$exprString]);
 		unset($self->alternativeTypes[$exprString]);
-		unset($self->subjectResults[$exprString]);
 
 		return $self;
 	}
@@ -355,7 +299,6 @@ final class SpecifiedTypes
 
 		$result = new self($sureTypeUnion, $sureNotTypeUnion);
 		$result->alternativeTypes = $alternativeUnion;
-		$result->subjectResults = $this->subjectResults + $other->subjectResults;
 		if ($this->overwrite && $other->overwrite) {
 			$result = $result->setAlwaysOverwriteTypes();
 		}
@@ -436,7 +379,6 @@ final class SpecifiedTypes
 
 		$result = new self($sureTypeUnion, $sureNotTypeUnion);
 		$result->alternativeTypes = $this->alternativeTypes + $other->alternativeTypes;
-		$result->subjectResults = $this->subjectResults + $other->subjectResults;
 		if ($this->overwrite || $other->overwrite) {
 			$result = $result->setAlwaysOverwriteTypes();
 		}
