@@ -59,8 +59,12 @@ final class NullsafeMethodCallHandler implements ExprHandler
 		// the receiver's real (possibly null) type, captured before it is ensured
 		// non-null below: the short-circuit decision needs to know it can be null,
 		// which reading the ensured-non-null result would hide.
-		$receiverType = $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope);
-		$receiverNativeType = $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope->doNotTreatPhpDocTypesAsCertain());
+		// an enclosing isset/empty/?? ensure may have deviced the receiver
+		// non-null in scope state so nested fetches walk quietly; the
+		// short-circuit decision needs the receiver's REAL type from before
+		// that device
+		$receiverType = $this->nonNullabilityHelper->getActiveEnsuredOriginalType($expr->var, false) ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope);
+		$receiverNativeType = $this->nonNullabilityHelper->getActiveEnsuredOriginalType($expr->var, true) ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope->doNotTreatPhpDocTypesAsCertain());
 		// carry the receiver type to NullsafeMethodCallRule so it reads it from here
 		// instead of asking the scope for the unprocessed receiver.
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new NullsafeMethodCallExpressionNode($expr, $receiverType, $receiverNativeType), $beforeScope, $storage, $context);
