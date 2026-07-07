@@ -399,7 +399,11 @@ final class ExpressionResult
 	{
 		$key = (spl_object_id($context) << 1) | ($nativeTypesPromoted ? 1 : 0);
 
-		return $this->specifiedTypes[$key] ??= ($this->specifyTypesCallback)($context, $nativeTypesPromoted);
+		// entries keyed by this very node carry this result, so
+		// applySpecifiedTypes() reads the subject's current pair through it
+		// instead of pricing the node on demand
+		return $this->specifiedTypes[$key] ??= ($this->specifyTypesCallback)($context, $nativeTypesPromoted)
+			->withSubjectResultForExprNode($this->expr, $this);
 	}
 
 	/**
@@ -428,7 +432,9 @@ final class ExpressionResult
 			return null;
 		}
 
-		return ($this->createTypesCallback)($type, $context, $nativeTypesPromoted);
+		// see getSpecifiedTypes() - the subject carries itself
+		return ($this->createTypesCallback)($type, $context, $nativeTypesPromoted)
+			->withSubjectResultForExprNode($this->expr, $this);
 	}
 
 	/**

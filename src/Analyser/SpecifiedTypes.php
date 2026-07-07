@@ -4,6 +4,7 @@ namespace PHPStan\Analyser;
 
 use Closure;
 use PhpParser\Node\Expr;
+use WeakReference;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
@@ -57,9 +58,13 @@ final class SpecifiedTypes
 	 * The narrowing subjects' ExpressionResults, captured where the narrowing
 	 * was composed - applySpecifiedTypes() reads a subject's current type pair
 	 * through its result instead of pricing the node on demand when the
-	 * applying scope's storage no longer sees it.
+	 * applying scope's storage no longer sees it. Weakly referenced: a result
+	 * attaches ITSELF to its own narrowing (getSpecifiedTypes memoizes that
+	 * narrowing on the result), so a strong reference would be a refcount
+	 * self-cycle that gc_disable() never collects - and a subject released
+	 * with its body simply falls back to the on-demand pricing.
 	 *
-	 * @var array<string, ExpressionResult>
+	 * @var array<string, WeakReference<ExpressionResult>>
 	 */
 	private array $subjectResults = [];
 
@@ -209,15 +214,41 @@ final class SpecifiedTypes
 	/** The narrowing subject's ExpressionResult captured at compose time. */
 	public function getSubjectResult(string $exprString): ?ExpressionResult
 	{
-		return $this->subjectResults[$exprString] ?? null;
+		if (!isset($this->subjectResults[$exprString])) {
+			return null;
+		}
+
+		return $this->subjectResults[$exprString]->get();
 	}
 
 	public function withSubjectResult(string $exprString, ExpressionResult $result): self
 	{
 		$self = clone $this;
-		$self->subjectResults[$exprString] = $result;
+		$self->subjectResults[$exprString] = WeakReference::create($result);
 
 		return $self;
+	}
+
+	/**
+	 * Attaches the result to every entry whose subject IS the given node - how
+	 * an ExpressionResult carries itself into the narrowing its own callbacks
+	 * produced, without a printer.
+	 */
+	public function withSubjectResultForExprNode(Expr $expr, ExpressionResult $result): self
+	{
+		$self = null;
+		foreach ([$this->sureTypes, $this->sureNotTypes, $this->alternativeTypes] as $entries) {
+			foreach ($entries as $exprString => $entry) {
+				if ($entry[0] !== $expr || isset($this->subjectResults[$exprString])) {
+					continue;
+				}
+
+				$self ??= clone $this;
+				$self->subjectResults[$exprString] = WeakReference::create($result);
+			}
+		}
+
+		return $self ?? $this;
 	}
 
 	/**
