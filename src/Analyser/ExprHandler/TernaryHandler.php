@@ -93,7 +93,7 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 			$impurePoints = array_merge($impurePoints, $ifResult->getImpurePoints());
 			$hasYield = $hasYield || $ifResult->hasYield();
 			$ifTrueScope = $ifResult->getScope();
-			$ifTrueType = $ifResult->getType();
+			$ifTrueType = $ifResult->getTypeOnScope($ifProcessingScope, false);
 
 			$elseResult = $nodeScopeResolver->processExprNode($stmt, $expr->else, $ifFalseScope, $storage, $nodeCallback, $context);
 			$throwPoints = array_merge($throwPoints, $elseResult->getThrowPoints());
@@ -115,7 +115,7 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 			if ($ifTrueType instanceof NeverType && $ifTrueType->isExplicit()) {
 				$finalScope = $ifFalseScope;
 			} else {
-				$ifFalseType = $elseResult->getType();
+				$ifFalseType = $elseResult->getTypeOnScope($elseProcessingScope, false);
 
 				if ($ifFalseType instanceof NeverType && $ifFalseType->isExplicit()) {
 					$finalScope = $ifTrueScope;
@@ -138,13 +138,17 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 			impurePoints: $impurePoints,
 			// the branches were processed on the cond-truthy/cond-falsey scopes
 			// including the condition's side effects - those captured scopes
-			// are the evaluation points, no re-walk needed
-			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $ifProcessingScope, $nodeScopeResolver): Type {
+			// are the evaluation points, no re-walk needed. Reading the branch
+			// results ON those scopes matters when processExprNode answered a
+			// branch from a stored result (an on-demand ternary whose branches
+			// are already-walked real nodes): the stored walk-position type
+			// predates the condition's narrowing the branch scope carries.
+			typeCallback: static function (bool $nativeTypesPromoted) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $ifProcessingScope, $elseProcessingScope, $nodeScopeResolver): Type {
 				if ($nativeTypesPromoted) {
 					$ifProcessingScope = $ifProcessingScope->doNotTreatPhpDocTypesAsCertain();
 				}
 				$booleanConditionType = ($nativeTypesPromoted ? $ternaryCondResult->getNativeType() : $ternaryCondResult->getType())->toBoolean();
-				$elseType = ($nativeTypesPromoted ? $elseResult->getNativeType() : $elseResult->getType());
+				$elseType = $elseResult->getTypeOnScope($elseProcessingScope, $nativeTypesPromoted);
 				if ($expr->if === null || $ifResult === null) {
 					// short-ternary truthy value: the condition read on its own truthy scope
 					// is a different scope than its own, so reprocess it there.
@@ -163,7 +167,7 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 					);
 				}
 
-				$ifType = ($nativeTypesPromoted ? $ifResult->getNativeType() : $ifResult->getType());
+				$ifType = $ifResult->getTypeOnScope($ifProcessingScope, $nativeTypesPromoted);
 				if ($booleanConditionType->isTrue()->yes()) {
 					return $ifType;
 				}
@@ -177,7 +181,7 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 					$elseType,
 				);
 			},
-			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $nodeScopeResolver, $scope, &$aFalseyScope): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $ternaryCondResult, $ifResult, $elseResult, $ifProcessingScope, $elseProcessingScope, $nodeScopeResolver, $scope, &$aFalseyScope): SpecifiedTypes {
 				$s = $nativeTypesPromoted ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
 				if ($expr->cond instanceof Ternary || $context->null()) {
 					return $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
@@ -217,7 +221,7 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 					};
 				};
 				$elseTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $elseResult->getSpecifiedTypesForScope($scope, $ctx);
-				$elseType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $elseResult->getNativeType() : $elseResult->getType();
+				$elseType = static fn (bool $nativeTypesPromoted): Type => $elseResult->getTypeOnScope($elseProcessingScope, $nativeTypesPromoted);
 
 				// the decomposition's branch scopes are the operand walks' own
 				// memoized branch scopes (the evaluation points), not ask-derived;
@@ -248,7 +252,7 @@ final class TernaryHandler implements ExprHandler, PerFileAnalysisResettable
 					// left disjunct: cond && if
 					$aNode = new BooleanAnd($expr->cond, $expr->if);
 					$ifTypes = static fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $ifResult->getSpecifiedTypesForScope($scope, $ctx);
-					$ifType = static fn (bool $nativeTypesPromoted): Type => $nativeTypesPromoted ? $ifResult->getNativeType() : $ifResult->getType();
+					$ifType = static fn (bool $nativeTypesPromoted): Type => $ifResult->getTypeOnScope($ifProcessingScope, $nativeTypesPromoted);
 					$ifFalseyOnCondTruthyScope = static fn (): MutatingScope => $ifResult->getFalseyScope();
 					$aTypes = fn (MutatingScope $scope, TypeSpecifierContext $ctx): SpecifiedTypes => $this->booleanNarrowingHelper->specifyConjunction(
 						$nodeScopeResolver,
