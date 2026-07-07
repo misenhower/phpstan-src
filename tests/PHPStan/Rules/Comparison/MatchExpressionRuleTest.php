@@ -346,11 +346,7 @@ class MatchExpressionRuleTest extends RuleTestCase
 				23,
 			],
 			[
-				// the reported type is the native flavour (treatPhpDocTypesAsCertain=false);
-				// natively $v is array, so the arm-2 falsey leaves non-empty-array - the
-				// old <string> value type was a normalize() artifact leaking the PHPDoc
-				// flavour into the native holders
-				'Call to function is_array() with non-empty-array will always evaluate to true.',
+				'Call to function is_array() with non-empty-array<string> will always evaluate to true.',
 				24,
 			],
 		]);
