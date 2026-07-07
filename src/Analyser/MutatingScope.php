@@ -986,10 +986,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	{
 		if (
 			NodeScopeResolver::$guardNewWorld
-			// closures/arrow functions are priced compute-direct (getClosureType)
-			// by design - asking about one before its walk is not a violation
-			&& !$node instanceof Expr\Closure
-			&& !$node instanceof Expr\ArrowFunction
+			&& !NodeScopeResolver::isGuardExemptNode($node)
 			&& isset(NodeScopeResolver::$guardRealExprIds[spl_object_id($node)])
 			&& !isset(NodeScopeResolver::$guardProcessedExprIds[spl_object_id($node)])
 		) {
@@ -1333,8 +1330,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		if (
 			NodeScopeResolver::$guardNewWorld
-			&& !$node instanceof Expr\Closure
-			&& !$node instanceof Expr\ArrowFunction
+			&& !NodeScopeResolver::isGuardExemptNode($node)
 			&& isset(NodeScopeResolver::$guardRealExprIds[spl_object_id($node)])
 			&& !isset(NodeScopeResolver::$guardProcessedExprIds[spl_object_id($node)])
 		) {

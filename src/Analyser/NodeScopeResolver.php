@@ -237,6 +237,25 @@ class NodeScopeResolver
 	/** Whether the PHPSTAN_GUARD_NW diagnostic is enabled (cached from the env). */
 	public static bool $guardNewWorld = false;
 
+	/**
+	 * Nodes the PHPSTAN_GUARD_NW diagnostic never fires for: closures/arrow
+	 * functions are priced compute-direct (getClosureType) by design, and
+	 * constant shapes (scalars, constant fetches, class constants on a named
+	 * class) are position-independent - pricing them before their walk cannot
+	 * read stale state.
+	 */
+	public static function isGuardExemptNode(Expr $expr): bool
+	{
+		return $expr instanceof Expr\Closure
+			|| $expr instanceof Expr\ArrowFunction
+			|| $expr instanceof Node\Scalar
+			|| $expr instanceof Expr\ConstFetch
+			|| ($expr instanceof Expr\ClassConstFetch && $expr->class instanceof Name)
+			// a variable read answers from scope state (getVariableType) - it is
+			// correct at any position, before or after the node's own walk
+			|| ($expr instanceof Expr\Variable && is_string($expr->name));
+	}
+
 	  /**
 	 * spl_object_id => true of every Expr in the file's parsed AST. Populated
 	 * only when the PHPSTAN_GUARD_NW diagnostic is enabled, so the guards can
@@ -3042,10 +3061,7 @@ class NodeScopeResolver
 	{
 		if (
 			!self::$guardNewWorld
-			// closures/arrow functions are priced compute-direct (getClosureType)
-			// by design - asking about one before its walk is not a violation
-			|| $expr instanceof Expr\Closure
-			|| $expr instanceof Expr\ArrowFunction
+			|| self::isGuardExemptNode($expr)
 			|| !isset(self::$guardRealExprIds[spl_object_id($expr)])
 			|| isset(self::$guardProcessedExprIds[spl_object_id($expr)])
 		) {
