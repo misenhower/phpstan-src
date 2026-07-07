@@ -19,13 +19,11 @@ enum Role: string
             self::cases()
         );
 
-		// per-constant-array-item closure reanalysis is not done, so the property
-		// fetch is resolved once over the unioned element type rather than per item.
-		assertType("array{'ADMIN'|'EDITOR'|'OWNER', 'ADMIN'|'EDITOR'|'OWNER', 'ADMIN'|'EDITOR'|'OWNER'}", $map);
+		assertType("array{'OWNER', 'ADMIN', 'EDITOR'}", $map);
 
         $hierarchy = array_flip($map);
 
-		assertType("non-empty-array{ADMIN?: 0|1|2, EDITOR?: 0|1|2, OWNER?: 0|1|2}", $hierarchy);
+		assertType("array{OWNER: 0, ADMIN: 1, EDITOR: 2}", $hierarchy);
 
         return $hierarchy[$this->value] <= $hierarchy[$role->value];
     }
@@ -71,16 +69,12 @@ function testIntBackedEnum(): void
 		static fn (IntEnum $e): int => $e->value,
 		IntEnum::cases()
 	);
-	// per-constant-array-item closure reanalysis is not done, so the property
-	// fetch is resolved once over the unioned element type rather than per item.
-	assertType("array{10|20, 10|20}", $result);
+	assertType("array{10, 20}", $result);
 }
 
 function testClosureWithStringKeys(): void
 {
 	$arr = ['x' => 1, 'y' => 2];
 	$result = array_map(fn(int $v): string => (string)$v, $arr);
-	// per-constant-array-item closure reanalysis is not done, so the cast is
-	// resolved once over the unioned element type rather than per item.
-	assertType("array{x: '1'|'2', y: '1'|'2'}", $result);
+	assertType("array{x: '1', y: '2'}", $result);
 }
