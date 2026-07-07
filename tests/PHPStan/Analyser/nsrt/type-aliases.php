@@ -36,8 +36,8 @@ namespace TypeAliasesDataset {
 
 		public function circularAlias()
 		{
-			assertType('mixed', $this->baz);
-			assertType('mixed', $this->qux);
+			assertType('*ERROR*', $this->baz);
+			assertType('*ERROR*', $this->qux);
 		}
 
 	}

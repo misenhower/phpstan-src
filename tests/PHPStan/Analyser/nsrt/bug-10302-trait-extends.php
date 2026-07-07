@@ -13,7 +13,7 @@ trait myTrait
 	{
 		assertType('int', $this->x);
 		assertType('string', $this->y);
-		assertType('mixed', $this->z);
+		assertType('*ERROR*', $this->z);
 	}
 }
 

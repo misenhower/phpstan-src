@@ -93,6 +93,10 @@ class MethodAssertRuleTest extends RuleTestCase
 				105,
 			],
 			[
+				'Assert references unknown $this->barProp.',
+				105,
+			],
+			[
 				'Assert references unknown parameter $this.',
 				113,
 			],

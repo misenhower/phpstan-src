@@ -66,7 +66,6 @@ use PHPStan\ShouldNotHappenException;
 use PHPStan\TrinaryLogic;
 use PHPStan\Type\Accessory\AccessoryArrayListType;
 use PHPStan\Type\Accessory\HasOffsetValueType;
-use PHPStan\Type\Accessory\HasPropertyType;
 use PHPStan\Type\Accessory\NonEmptyArrayType;
 use PHPStan\Type\Accessory\OversizedArrayType;
 use PHPStan\Type\ArrayType;
@@ -4904,13 +4903,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		if ($typeWithProperty instanceof UnionType) {
 			$typeWithProperty = $typeWithProperty->filterTypes(static fn (Type $innerType) => $innerType->hasInstanceProperty($propertyName)->yes());
 		}
-		if ($typeWithProperty->hasInstanceProperty($propertyName)->maybe()) {
-			// an optional property (e.g. object{foo?: int}) only maybe exists, so its
-			// reflection is not directly queryable. Asserting its existence via
-			// HasPropertyType makes it yes and exposes the declared type - which is the
-			// only useful type for `$object->foo`; whether it exists is a separate check.
-			$typeWithProperty = TypeCombinator::intersect($typeWithProperty, new HasPropertyType($propertyName));
-		}
 		if (!$typeWithProperty->hasInstanceProperty($propertyName)->yes()) {
 			return null;
 		}
@@ -4923,11 +4915,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	{
 		if ($typeWithProperty instanceof UnionType) {
 			$typeWithProperty = $typeWithProperty->filterTypes(static fn (Type $innerType) => $innerType->hasStaticProperty($propertyName)->yes());
-		}
-		if ($typeWithProperty->hasStaticProperty($propertyName)->maybe()) {
-			// mirror getInstancePropertyReflection(): assert a maybe-existing property
-			// so its declared type becomes queryable
-			$typeWithProperty = TypeCombinator::intersect($typeWithProperty, new HasPropertyType($propertyName));
 		}
 		if (!$typeWithProperty->hasStaticProperty($propertyName)->yes()) {
 			return null;
