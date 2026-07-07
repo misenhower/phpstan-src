@@ -2666,9 +2666,13 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		// ($type = 'foo' invalidates this expression, same as OriginalForeachKeyExpr).
 		$scope = $scope->assignExpression(new OriginalForeachValueExpr($valueName), $valueType, $nativeValueType);
 		if ($valueByRef && $iterateeType->isArray()->yes() && $iterateeType->isConstantArray()->no()) {
+			// the write-through rebuilds the iteratee AT FOREACH ENTRY with the
+			// value variable's latest type - captured here, not read live: a
+			// live read would union the transient mid-iteration value states
+			// into the array (the loop convergence owns cross-iteration merging)
 			$scope = $scope->assignExpression(
 				new IntertwinedVariableByReferenceWithExpr($valueName, $iteratee, new SetExistingOffsetValueTypeExpr(
-					$iteratee,
+					new NativeTypeExpr($iterateeType, $nativeIterateeType),
 					new NativeTypeExpr(
 						$originalScope->getIterableKeyType($iterateeType),
 						$originalScope->getIterableKeyType($nativeIterateeType),

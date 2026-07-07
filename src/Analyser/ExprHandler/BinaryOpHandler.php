@@ -129,16 +129,16 @@ final class BinaryOpHandler implements ExprHandler
 				// arm-narrowed scope) it is the asking scope, whose tracked
 				// narrowing the stored operand results predate
 				$flavouredScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
-				// operands are re-priced from this result's own beforeScope
-				// (with variables opted in): for the main walk that is the walk
-				// position, but for an on-demand walk of a synthetic (a rule
-				// asking about Identical($x, ...) on an arm-narrowed scope) it
-				// carries narrowing the stored operand results predate
+				// operands are re-priced from this result's own beforeScope:
+				// for the main walk that is the walk position, but for an
+				// on-demand walk of a synthetic (a rule asking about
+				// Identical($x, ...) on an arm-narrowed scope) it carries
+				// narrowing the stored operand results predate
 				if ($e === $expr->left) {
-					return $leftResult->getTypeOnScope($flavouredScope, $nativeTypesPromoted, true);
+					return $leftResult->getTypeOnScope($flavouredScope, $nativeTypesPromoted);
 				}
 				if ($e === $expr->right) {
-					return $rightResult->getTypeOnScope($flavouredScope, $nativeTypesPromoted, true);
+					return $rightResult->getTypeOnScope($flavouredScope, $nativeTypesPromoted);
 				}
 
 				return $nodeScopeResolver->readTypeOfMaybeStored($e, $flavouredScope);

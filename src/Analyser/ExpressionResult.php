@@ -396,30 +396,34 @@ final class ExpressionResult
 	 * consumers - isset/empty/?? chain folding and the stored-result read in
 	 * NodeScopeResolver - everything else reads getType()/getNativeType().
 	 */
-	public function getTypeOnScope(MutatingScope $scope, bool $useNativeTypes, bool $repriceVariables = false): Type
+	public function getTypeOnScope(MutatingScope $scope, bool $useNativeTypes): Type
 	{
 		$readScope = $useNativeTypes ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
-		if ($this->type === null && $this->hasTrackedExpressionType($readScope)) {
-			return $readScope->getTrackedExpressionType($this->expr);
-		}
-
-		// rule-facing asks re-price a variable from the given scope: it may
-		// carry narrowing this result's walk position predates (a rule asking
-		// about a synthetic comparison on an arm-narrowed scope). The walk's
-		// own consumers (stored-result reads, chain folds) keep the memoized
-		// walk-position type - their scopes can also be WIDER (merged, loop
-		// converged) than the position the value flowed from.
-		if (
-			$repriceVariables
-			&& $this->type === null
-			&& $this->expr instanceof Expr\Variable
-			&& is_string($this->expr->name)
-			&& !$readScope->hasVariableType($this->expr->name)->no()
-		) {
-			return $readScope->getVariableType($this->expr->name);
+		if ($this->type === null && $this->isScopeAuthoritative($readScope)) {
+			return $readScope->getStateType($this->expr);
 		}
 
 		return $this->resolveOwnType($useNativeTypes);
+	}
+
+	/**
+	 * Whether the given scope, not this result, owns the answer to "what is
+	 * this expression here": narrowable expressions the scope knows (variables
+	 * including $this and parameters, tracked fetches) and any expression the
+	 * scope tracks a holder for (ensured non-nullability, remembered values).
+	 * Evaluating this result's expression at a foreign position must read
+	 * those from that position's state - the memoized walk-position type
+	 * predates whatever narrowing or invalidation the scope carries.
+	 */
+	private function isScopeAuthoritative(MutatingScope $scope): bool
+	{
+		if ($this->expr instanceof Expr\Variable) {
+			return is_string($this->expr->name) && !$scope->hasVariableType($this->expr->name)->no();
+		}
+
+		return !$this->expr instanceof Expr\Closure
+			&& !$this->expr instanceof Expr\ArrowFunction
+			&& $scope->hasExpressionType($this->expr)->yes();
 	}
 
 }
