@@ -54,6 +54,16 @@ final class SpecifiedTypes
 	private array $alternativeTypes = [];
 
 	/**
+	 * The narrowing subjects' ExpressionResults, captured where the narrowing
+	 * was composed - applySpecifiedTypes() reads a subject's current type pair
+	 * through its result instead of pricing the node on demand when the
+	 * applying scope's storage no longer sees it.
+	 *
+	 * @var array<string, ExpressionResult>
+	 */
+	private array $subjectResults = [];
+
+	/**
 	 * @api
 	 * @param array<string, array{Expr, Type}> $sureTypes
 	 * @param array<string, array{Expr, Type}> $sureNotTypes
@@ -96,13 +106,8 @@ final class SpecifiedTypes
 	 */
 	public function setAlwaysOverwriteTypes(): self
 	{
-		$self = new self($this->sureTypes, $this->sureNotTypes);
-		$self->alternativeTypes = $this->alternativeTypes;
+		$self = clone $this;
 		$self->overwrite = true;
-		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
-		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
-		$self->deferredAugments = $this->deferredAugments;
-		$self->rootExpr = $this->rootExpr;
 
 		return $self;
 	}
@@ -112,12 +117,7 @@ final class SpecifiedTypes
 	 */
 	public function setRootExpr(?Expr $rootExpr): self
 	{
-		$self = new self($this->sureTypes, $this->sureNotTypes);
-		$self->alternativeTypes = $this->alternativeTypes;
-		$self->overwrite = $this->overwrite;
-		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
-		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
-		$self->deferredAugments = $this->deferredAugments;
+		$self = clone $this;
 		$self->rootExpr = $rootExpr;
 
 		return $self;
@@ -128,13 +128,8 @@ final class SpecifiedTypes
 	 */
 	public function setNewConditionalExpressionHolders(array $newConditionalExpressionHolders): self
 	{
-		$self = new self($this->sureTypes, $this->sureNotTypes);
-		$self->alternativeTypes = $this->alternativeTypes;
-		$self->overwrite = $this->overwrite;
+		$self = clone $this;
 		$self->newConditionalExpressionHolders = $newConditionalExpressionHolders;
-		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
-		$self->deferredAugments = $this->deferredAugments;
-		$self->rootExpr = $this->rootExpr;
 
 		return $self;
 	}
@@ -144,13 +139,8 @@ final class SpecifiedTypes
 	 */
 	public function setConditionalExpressionHolderRecipes(array $recipes): self
 	{
-		$self = new self($this->sureTypes, $this->sureNotTypes);
-		$self->alternativeTypes = $this->alternativeTypes;
-		$self->overwrite = $this->overwrite;
-		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
+		$self = clone $this;
 		$self->conditionalExpressionHolderRecipes = $recipes;
-		$self->deferredAugments = $this->deferredAugments;
-		$self->rootExpr = $this->rootExpr;
 
 		return $self;
 	}
@@ -165,13 +155,8 @@ final class SpecifiedTypes
 
 	public function withDeferredAugment(DeferredSpecifiedTypesAugment $augment): self
 	{
-		$self = new self($this->sureTypes, $this->sureNotTypes);
-		$self->alternativeTypes = $this->alternativeTypes;
-		$self->overwrite = $this->overwrite;
-		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
-		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self = clone $this;
 		$self->deferredAugments = [...$this->deferredAugments, $augment];
-		$self->rootExpr = $this->rootExpr;
 
 		return $self;
 	}
@@ -181,13 +166,8 @@ final class SpecifiedTypes
 	 */
 	public function setDeferredAugments(array $augments): self
 	{
-		$self = new self($this->sureTypes, $this->sureNotTypes);
-		$self->alternativeTypes = $this->alternativeTypes;
-		$self->overwrite = $this->overwrite;
-		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
-		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
+		$self = clone $this;
 		$self->deferredAugments = $augments;
-		$self->rootExpr = $this->rootExpr;
 
 		return $self;
 	}
@@ -226,6 +206,20 @@ final class SpecifiedTypes
 		return $this->alternativeTypes;
 	}
 
+	/** The narrowing subject's ExpressionResult captured at compose time. */
+	public function getSubjectResult(string $exprString): ?ExpressionResult
+	{
+		return $this->subjectResults[$exprString] ?? null;
+	}
+
+	public function withSubjectResult(string $exprString, ExpressionResult $result): self
+	{
+		$self = clone $this;
+		$self->subjectResults[$exprString] = $result;
+
+		return $self;
+	}
+
 	/**
 	 * A copy of this with the other's alternative-form entries - for the
 	 * composition tails that rebuild a SpecifiedTypes from the sure/sure-not
@@ -233,13 +227,8 @@ final class SpecifiedTypes
 	 */
 	public function withAlternativeTypesOf(self $other): self
 	{
-		$self = new self($this->sureTypes, $this->sureNotTypes);
+		$self = clone $this;
 		$self->alternativeTypes = $other->alternativeTypes;
-		$self->overwrite = $this->overwrite;
-		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
-		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
-		$self->deferredAugments = $this->deferredAugments;
-		$self->rootExpr = $this->rootExpr;
 
 		return $self;
 	}
@@ -264,20 +253,11 @@ final class SpecifiedTypes
 
 	public function removeExpr(string $exprString): self
 	{
-		$sureTypes = $this->sureTypes;
-		$sureNotTypes = $this->sureNotTypes;
-		$alternativeTypes = $this->alternativeTypes;
-		unset($sureTypes[$exprString]);
-		unset($sureNotTypes[$exprString]);
-		unset($alternativeTypes[$exprString]);
-
-		$self = new self($sureTypes, $sureNotTypes);
-		$self->alternativeTypes = $alternativeTypes;
-		$self->overwrite = $this->overwrite;
-		$self->newConditionalExpressionHolders = $this->newConditionalExpressionHolders;
-		$self->conditionalExpressionHolderRecipes = $this->conditionalExpressionHolderRecipes;
-		$self->deferredAugments = $this->deferredAugments;
-		$self->rootExpr = $this->rootExpr;
+		$self = clone $this;
+		unset($self->sureTypes[$exprString]);
+		unset($self->sureNotTypes[$exprString]);
+		unset($self->alternativeTypes[$exprString]);
+		unset($self->subjectResults[$exprString]);
 
 		return $self;
 	}
@@ -353,6 +333,7 @@ final class SpecifiedTypes
 
 		$result = new self($sureTypeUnion, $sureNotTypeUnion);
 		$result->alternativeTypes = $alternativeUnion;
+		$result->subjectResults = $this->subjectResults + $other->subjectResults;
 		if ($this->overwrite && $other->overwrite) {
 			$result = $result->setAlwaysOverwriteTypes();
 		}
@@ -433,6 +414,7 @@ final class SpecifiedTypes
 
 		$result = new self($sureTypeUnion, $sureNotTypeUnion);
 		$result->alternativeTypes = $this->alternativeTypes + $other->alternativeTypes;
+		$result->subjectResults = $this->subjectResults + $other->subjectResults;
 		if ($this->overwrite || $other->overwrite) {
 			$result = $result->setAlwaysOverwriteTypes();
 		}

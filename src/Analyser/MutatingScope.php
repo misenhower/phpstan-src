@@ -1232,7 +1232,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 *
 	 * @return array{Type, Type}|null
 	 */
-	private function getCurrentTypesOfSpecifiedExpr(Expr $expr): ?array
+	private function getCurrentTypesOfSpecifiedExpr(Expr $expr, ?ExpressionResult $subjectResult = null): ?array
 	{
 		$storage = $this->expressionResultStorageStack->getCurrent();
 		if ($storage === null) {
@@ -1259,6 +1259,14 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		$result = $storage->findExpressionResult($expr);
 		if ($result === null) {
+			// a subject result captured where the narrowing was composed answers
+			// like a storage hit would - no walk
+			if ($subjectResult !== null) {
+				return [
+					$subjectResult->getTypeOnScope($this, $this->nativeTypesPromoted),
+					$subjectResult->getTypeOnScope($this, true),
+				];
+			}
 
 			// a call subject (or a synthetic plain-chain variant) is priced on
 			// demand once per scope: one walk answers both flavours, and the
@@ -3641,7 +3649,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				$trackedNativeType = $scope->nativeExpressionTypes[$exprString]->getType();
 			}
 			if ($trackedType === null) {
-				$currentTypes = $scope->getCurrentTypesOfSpecifiedExpr($expr);
+				$currentTypes = $scope->getCurrentTypesOfSpecifiedExpr($expr, $specifiedTypes->getSubjectResult($exprString));
 				if ($currentTypes !== null) {
 					if ($scope->isComplexUnionType($currentTypes[0])) {
 						continue;

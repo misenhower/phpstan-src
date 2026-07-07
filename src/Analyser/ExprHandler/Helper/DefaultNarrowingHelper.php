@@ -244,6 +244,12 @@ final class DefaultNarrowingHelper
 		}
 
 		$result = new SpecifiedTypes($sureTypes, $sureNotTypes);
+		if ($subjectResult !== null && ($sureTypes !== [] || $sureNotTypes !== [])) {
+			// carry the subject's result so applySpecifiedTypes() reads its
+			// current type pair through it instead of pricing the node on
+			// demand when the applying scope's storage no longer sees it
+			$result = $result->withSubjectResult($this->exprPrinter->printExpr($subject), $subjectResult);
+		}
 		if (isset($nullsafeFanTypes)) {
 			$result = $result->unionWith($nullsafeFanTypes);
 		}
