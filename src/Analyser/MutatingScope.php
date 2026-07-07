@@ -1174,10 +1174,18 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		// a fiber
 		$scope = $this->toMutatingScope();
 		$storage = $this->expressionResultStorageStack->getCurrent();
+		$counterfactualAsk = false;
 		if ($storage !== null) {
 			$result = $storage->findExpressionResult($node);
 			if ($result !== null && $result->canResolveOwnType()) {
-				return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+				// a counterfactual ask (the asking scope re-binds a variable the
+				// expression reads, e.g. array_filter pricing its callback body
+				// per constant element) must re-price the node on that scope -
+				// the memoized walk-position type answers a different question
+				$counterfactualAsk = !$result->askScopeVariableStateMatches($scope, $scope->nativeTypesPromoted);
+				if (!$counterfactualAsk) {
+					return $result->getTypeOnScope($scope, $scope->nativeTypesPromoted);
+				}
 			}
 		}
 
@@ -1193,7 +1201,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			return $this->container->getByType(ClosureTypeResolver::class)->getClosureType($scope, $node);
 		}
 
-		if ($storage !== null && $storage->findExpressionResult($node) !== null) {
+		if (!$counterfactualAsk && $storage !== null && $storage->findExpressionResult($node) !== null) {
 			throw new ShouldNotHappenException(sprintf(
 				'ExpressionResult of %s cannot resolve its own type (no eager type, no typeCallback).',
 				get_class($node),

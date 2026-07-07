@@ -3057,8 +3057,18 @@ class NodeScopeResolver
 	{
 		if ($this->returnStoredExpressionResults) {
 			$storedResult = $storage->findExpressionResult($expr);
-			if ($storedResult !== null) {
-				return $storedResult;
+			// a stored result only answers when the current scope agrees with its
+			// evaluation position on the variables the expression reads - a
+			// counterfactual walk (an extension re-binding a variable and pricing
+			// a real subtree, e.g. array_filter's per-element callback evaluation)
+			// re-processes the node on its own scope instead
+			if ($storedResult !== null && $storedResult->askScopeVariableStateMatches($scope, $scope->nativeTypesPromoted)) {
+				// a foreign-position answer must not thread its original walk
+				// scopes into THIS walk - re-anchor it to the asking position so
+				// subsequent operands keep evaluating on the asking scope
+				return $storedResult->getBeforeScope() === $scope
+					? $storedResult
+					: $storedResult->atAskPosition($scope);
 			}
 		}
 

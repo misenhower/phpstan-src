@@ -3,6 +3,7 @@
 namespace PHPStan\Analyser;
 
 use PhpParser\Node\Expr;
+use PhpParser\NodeFinder;
 use PHPStan\DependencyInjection\GenerateFactory;
 use PHPStan\DependencyInjection\Type\ExpressionTypeResolverExtensionRegistryProvider;
 use PHPStan\ShouldNotHappenException;
@@ -11,6 +12,7 @@ use PHPStan\Type\Type;
 use PHPStan\Type\TypeTraverser;
 use PHPStan\Type\TypeUtils;
 use PHPStan\Type\UnionType;
+use function array_keys;
 use function is_string;
 use function spl_object_id;
 
@@ -45,6 +47,9 @@ final class ExpressionResult
 	private ?Type $projectedType = null;
 
 	private ?Type $projectedNativeType = null;
+
+	/** @var list<string>|null */
+	private ?array $readVariableNames = null;
 
 	/**
 	 * @param InternalThrowPoint[] $throwPoints
@@ -461,6 +466,91 @@ final class ExpressionResult
 		return !$this->expr instanceof Expr\Closure
 			&& !$this->expr instanceof Expr\ArrowFunction
 			&& $scope->hasExpressionType($this->expr)->yes();
+	}
+
+	/**
+	 * Whether the asking scope agrees with this result's evaluation position on
+	 * every variable the expression reads. A counterfactual ask - an extension
+	 * re-binding a variable (e.g. array_filter evaluating its callback body per
+	 * constant element) and pricing a real node - must not be answered from the
+	 * memoized walk-position type; the caller re-prices the node on the asking
+	 * scope instead.
+	 */
+	public function askScopeVariableStateMatches(MutatingScope $scope, bool $useNativeTypes): bool
+	{
+		// same unpromoted position implies same promoted position - skip the
+		// flavour derivation for the common same-position ask
+		if ($scope === $this->beforeScope) {
+			return true;
+		}
+		$names = $this->getReadVariableNames();
+		if ($names === []) {
+			return true;
+		}
+
+		$readScope = $useNativeTypes ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
+		$positionScope = $useNativeTypes ? $this->beforeScope->doNotTreatPhpDocTypesAsCertain() : $this->beforeScope;
+		if ($readScope === $positionScope) {
+			return true;
+		}
+
+		foreach ($names as $name) {
+			$askKnows = $readScope->hasVariableType($name);
+			$positionKnows = $positionScope->hasVariableType($name);
+			if ($askKnows->no() && $positionKnows->no()) {
+				continue;
+			}
+			if (!$askKnows->equals($positionKnows)) {
+				return false;
+			}
+			if (!$readScope->getVariableType($name)->equals($positionScope->getVariableType($name))) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * A copy of this result answering at a foreign ask position: the scopes are
+	 * re-anchored to the asking scope so an on-demand walk consuming this
+	 * answer threads ITS position onward, not the original walk's. The
+	 * position-dependent branch-scope memos and overrides are dropped - they
+	 * belong to the original position and derive from the ask scope on demand.
+	 */
+	public function atAskPosition(MutatingScope $scope): self
+	{
+		$clone = clone $this;
+		$clone->scope = $scope;
+		$clone->beforeScope = $scope;
+		$clone->truthyScope = null;
+		$clone->falseyScope = null;
+		$clone->truthyScopeOverride = null;
+		$clone->falseyScopeOverride = null;
+		$clone->cachedType = null;
+		$clone->cachedNativeType = null;
+
+		return $clone;
+	}
+
+	/**
+	 * @return list<string>
+	 */
+	private function getReadVariableNames(): array
+	{
+		if ($this->readVariableNames !== null) {
+			return $this->readVariableNames;
+		}
+
+		$names = [];
+		foreach ((new NodeFinder())->findInstanceOf([$this->expr], Expr\Variable::class) as $variable) {
+			if (!is_string($variable->name) || $variable->name === 'this') {
+				continue;
+			}
+			$names[$variable->name] = true;
+		}
+
+		return $this->readVariableNames = array_keys($names);
 	}
 
 }
