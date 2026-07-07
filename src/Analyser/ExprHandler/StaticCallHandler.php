@@ -46,12 +46,15 @@ use PHPStan\Type\Generic\TemplateTypeVarianceMap;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\NeverType;
 use PHPStan\Type\ObjectType;
+use PHPStan\Type\StaticType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
+use PHPStan\Type\TypeWithClassName;
 use ReflectionProperty;
 use function array_map;
 use function array_merge;
 use function count;
+use function in_array;
 use function sprintf;
 use function strtolower;
 
@@ -121,7 +124,10 @@ final class StaticCallHandler implements ExprHandler
 		$closureBindScopeFactory = null;
 		if ($expr->name instanceof Identifier) {
 			if ($expr->class instanceof Name) {
-				$classType = $scope->resolveTypeByName($expr->class);
+				// the acceptor selected here feeds the call's return type - a
+				// STATIC method called through an explicit class name binds
+				// `static` to that class, so select from the demoted type
+				$classType = $this->resolveTypeByNameWithLateStaticBinding($scope, $expr->class, $expr->name->name);
 				$methodName = $expr->name->name;
 				if ($classType->hasMethod($methodName)->yes()) {
 					$methodReflection = $classType->getMethod($methodName, $scope);
@@ -443,7 +449,7 @@ final class StaticCallHandler implements ExprHandler
 		$resolveStaticMethod = function (string $methodName, StaticCall $staticCall) use ($reflectionScope, $nativeTypesPromoted, $classType, $nodeScopeResolver, $expr, $preResolvedAcceptor, $argsResult): Type {
 			if ($nativeTypesPromoted) {
 				if ($expr->class instanceof Name) {
-					$staticMethodCalledOnType = $reflectionScope->resolveTypeByName($expr->class);
+					$staticMethodCalledOnType = $this->resolveTypeByNameWithLateStaticBinding($reflectionScope, $expr->class, $methodName);
 				} else {
 					$staticMethodCalledOnType = $classType ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $reflectionScope->doNotTreatPhpDocTypesAsCertain());
 				}
@@ -456,7 +462,7 @@ final class StaticCallHandler implements ExprHandler
 			}
 
 			if ($expr->class instanceof Name) {
-				$staticMethodCalledOnType = $reflectionScope->resolveTypeByName($expr->class);
+				$staticMethodCalledOnType = $this->resolveTypeByNameWithLateStaticBinding($reflectionScope, $expr->class, $methodName);
 			} else {
 				$resolvedClassType = $classType ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->class, $reflectionScope);
 				$staticMethodCalledOnType = TypeCombinator::removeNull($resolvedClassType)->getObjectTypeOrClassStringObjectType();
@@ -620,6 +626,32 @@ final class StaticCallHandler implements ExprHandler
 		}
 
 		return $this->rememberPossiblyImpureFunctionValues || $hasSideEffects->no();
+	}
+
+	/**
+	 * An explicit class name within the current hierarchy resolves to a
+	 * StaticType, but calling a STATIC method through it binds `static` to the
+	 * named class - demote to the plain object type so `A::retStatic()` is `A`,
+	 * not `static(self)`. self/static/parent keep late static binding.
+	 */
+	private function resolveTypeByNameWithLateStaticBinding(MutatingScope $scope, Name $class, string $methodName): TypeWithClassName
+	{
+		$classType = $scope->resolveTypeByName($class);
+
+		if (
+			$classType instanceof StaticType
+			&& !in_array($class->toLowerString(), ['self', 'static', 'parent'], true)
+		) {
+			$methodReflectionCandidate = $scope->getMethodReflection(
+				$classType,
+				$methodName,
+			);
+			if ($methodReflectionCandidate !== null && $methodReflectionCandidate->isStatic()) {
+				$classType = $classType->getStaticObjectType();
+			}
+		}
+
+		return $classType;
 	}
 
 }
