@@ -75,10 +75,11 @@ final class CoalesceCompositionHelper
 			return !$isNull->yes();
 		});
 
-		// the left side's type when it is set: the left re-processed on the
-		// left-is-set narrowed scope (a genuinely different scope than the
-		// left's own - offsets resolve against the HasOffset-narrowed parent)
-		$leftIsSetType = function () use ($leftExpr, $nodeScopeResolver, $evaluationScope, $chainResults, $rootExpr): Type {
+		// the left side's type when it is set: the left read on the left-is-set
+		// narrowed scope (offsets resolve against the HasOffset-narrowed parent).
+		// The narrowing is tracked by the scope (getTypeOnScope's authoritative
+		// read); only an untracked left side needs reprocessing there.
+		$leftIsSetType = function () use ($leftExpr, $leftResult, $nodeScopeResolver, $evaluationScope, $chainResults, $rootExpr): Type {
 			$leftIssetTypes = $this->defaultNarrowingHelper->createIssetTruthyChainTypes(
 				$evaluationScope,
 				$leftExpr,
@@ -86,8 +87,12 @@ final class CoalesceCompositionHelper
 				$rootExpr,
 				TypeSpecifierContext::createTruthy(),
 			);
+			$leftIsSetScope = $evaluationScope->applySpecifiedTypes($leftIssetTypes);
+			$leftType = $leftResult->answersOnScope($leftIsSetScope, false)
+				? $leftResult->getTypeOnScope($leftIsSetScope, false)
+				: $nodeScopeResolver->processExprOnDemand($leftExpr, $leftIsSetScope, new ExpressionResultStorage())->getType();
 
-			return TypeCombinator::removeNull($nodeScopeResolver->processExprOnDemand($leftExpr, $evaluationScope->applySpecifiedTypes($leftIssetTypes), new ExpressionResultStorage())->getType());
+			return TypeCombinator::removeNull($leftType);
 		};
 
 		if ($result !== null && $result !== false) {
