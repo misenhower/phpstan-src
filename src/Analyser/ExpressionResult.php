@@ -442,7 +442,9 @@ final class ExpressionResult
 	{
 		$readScope = $useNativeTypes ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope;
 		if ($this->type === null && $this->isScopeAuthoritative($readScope)) {
-			return $readScope->getStateType($this->expr);
+			// the state read is a value read: resolve late-resolvable types and
+			// project void to null exactly like resolveOwnType() does
+			return $this->projectVoidToNull(TypeUtils::resolveLateResolvableTypes($readScope->getStateType($this->expr)));
 		}
 
 		return $this->resolveOwnType($useNativeTypes);
@@ -529,6 +531,19 @@ final class ExpressionResult
 		$clone->falseyScopeOverride = null;
 		$clone->cachedType = null;
 		$clone->cachedNativeType = null;
+		// a scope-authoritative expression's type is pinned eagerly from the ask
+		// position's state - the original callbacks capture the original
+		// position's scopes and would answer stale types (e.g. a variable
+		// receiver consumed on an ensured-non-null scope)
+		if ($this->type === null && $this->isScopeAuthoritative($scope)) {
+			$clone->type = $scope->getStateType($this->expr);
+			$clone->nativeType = $scope->doNotTreatPhpDocTypesAsCertain()->getStateType($this->expr);
+			$clone->typeCallback = null;
+			$clone->resolvedType = null;
+			$clone->resolvedNativeType = null;
+			$clone->projectedType = null;
+			$clone->projectedNativeType = null;
+		}
 
 		return $clone;
 	}

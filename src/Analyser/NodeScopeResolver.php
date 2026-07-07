@@ -217,6 +217,14 @@ class NodeScopeResolver
 	protected bool $returnStoredExpressionResults = false;
 
 	/**
+	 * Consume-stored mode: a walk that deliberately re-enters an
+	 * already-walked subtree (the nullsafe plain twin re-walking its
+	 * receiver) consumes stored results unconditionally instead of
+	 * re-processing - node callbacks fired during the original walk.
+	 */
+	private bool $consumeStoredExpressionResults = false;
+
+	/**
 	 * spl_object_id => recursion depth of the expressions currently being
 	 * processed by processExprNode. A fiber pending on one of them must not be
 	 * flushed at a nested statement-list boundary inside that expression - it
@@ -229,7 +237,7 @@ class NodeScopeResolver
 	/** Whether the PHPSTAN_GUARD_NW diagnostic is enabled (cached from the env). */
 	public static bool $guardNewWorld = false;
 
-	/**
+  /**
 	 * spl_object_id => true of every Expr in the file's parsed AST. Populated
 	 * only when the PHPSTAN_GUARD_NW diagnostic is enabled, so the guards can
 	 * tell a real AST node from a node a rule built during analysis (which
@@ -2919,6 +2927,26 @@ class NodeScopeResolver
 	 * their already-stored results instead of being processed again. New results
 	 * are stored into the given storage - pass a duplicate to keep them isolated.
 	 */
+	/**
+	 * Processes an expression whose already-walked subtrees must be CONSUMED
+	 * from their stored results instead of re-walked: the nullsafe handlers
+	 * process the receiver once (real callbacks) and then walk the plain twin,
+	 * whose receiver subtree answers from storage, re-anchored to the twin's
+	 * (ensured) scope.
+	 *
+	 * @param callable(Node $node, Scope $scope): void $nodeCallback
+	 */
+	public function processExprNodeConsumingStored(Node\Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
+	{
+		$previous = $this->consumeStoredExpressionResults;
+		$this->consumeStoredExpressionResults = true;
+		try {
+			return $this->processExprNode($stmt, $expr, $scope, $storage, $nodeCallback, $context);
+		} finally {
+			$this->consumeStoredExpressionResults = $previous;
+		}
+	}
+
 	public function processExprOnDemand(Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage): ExpressionResult
 	{
 		$this->returnStoredExpressionResults = true;
@@ -3055,20 +3083,34 @@ class NodeScopeResolver
 		ExpressionContext $context,
 	): ExpressionResult
 	{
-		if ($this->returnStoredExpressionResults) {
+		if ($this->returnStoredExpressionResults || $this->consumeStoredExpressionResults) {
 			$storedResult = $storage->findExpressionResult($expr);
 			// a stored result only answers when the current scope agrees with its
 			// evaluation position on the variables the expression reads - a
 			// counterfactual walk (an extension re-binding a variable and pricing
 			// a real subtree, e.g. array_filter's per-element callback evaluation)
-			// re-processes the node on its own scope instead
-			if ($storedResult !== null && $storedResult->askScopeVariableStateMatches($scope, $scope->nativeTypesPromoted)) {
+			// re-processes the node on its own scope instead. In CONSUME mode the
+			// divergence is intentional (an ensured-non-null device) and the
+			// stored result is consumed unconditionally, re-anchored below.
+			if ($storedResult !== null && ($this->consumeStoredExpressionResults || $storedResult->askScopeVariableStateMatches($scope, $scope->nativeTypesPromoted))) {
 				// a foreign-position answer must not thread its original walk
 				// scopes into THIS walk - re-anchor it to the asking position so
 				// subsequent operands keep evaluating on the asking scope
-				return $storedResult->getBeforeScope() === $scope
-					? $storedResult
-					: $storedResult->atAskPosition($scope);
+				if ($storedResult->getBeforeScope() === $scope) {
+					return $storedResult;
+				}
+
+				$reanchored = $storedResult->atAskPosition($scope);
+				if ($this->consumeStoredExpressionResults) {
+					// the re-anchored view IS this walk's result for the node
+					// (the nullsafe twin's receiver at the ensured position) -
+					// store it so later asks (rules' fiber reads) see the same
+					// result the twin walk itself consumed, exactly like the
+					// receiver walked inside the twin used to be stored
+					$this->storeExpressionResult($storage, $expr, $reanchored);
+				}
+
+				return $reanchored;
 			}
 		}
 
@@ -3101,6 +3143,7 @@ class NodeScopeResolver
 		ExpressionContext $context,
 	): ExpressionResult
 	{
+
 		if ($expr instanceof Expr\CallLike && $expr->isFirstClassCallable()) {
 			if ($expr instanceof FuncCall) {
 				$newExpr = new FunctionCallableNode($expr->name, $expr);

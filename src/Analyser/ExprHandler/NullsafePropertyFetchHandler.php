@@ -54,19 +54,27 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 	public function processExpr(NodeScopeResolver $nodeScopeResolver, Stmt $stmt, Expr $expr, MutatingScope $scope, ExpressionResultStorage $storage, callable $nodeCallback, ExpressionContext $context): ExpressionResult
 	{
 		$beforeScope = $scope;
-		// the receiver's real (possibly null) type, captured before it is ensured
-		// non-null below: the short-circuit decision needs to know it can be null,
-		// which reading the ensured-non-null result would hide.
-		// an enclosing isset/empty/?? ensure may have deviced the receiver
-		// non-null in scope state so nested fetches walk quietly; the
-		// short-circuit decision needs the receiver's REAL type from before
-		// that device
-		$receiverType = $this->nonNullabilityHelper->getActiveEnsuredOriginalType($expr->var, false) ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope);
-		$receiverNativeType = $this->nonNullabilityHelper->getActiveEnsuredOriginalType($expr->var, true) ?? $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $scope->doNotTreatPhpDocTypesAsCertain());
+		// the receiver is processed ONCE here, on the pre-ensure scope; the
+		// plain-twin walk below CONSUMES its stored result instead of re-walking
+		// it. Its result carries the receiver's real (possibly null) type - the
+		// short-circuit decision needs to know it can be null, which reading the
+		// ensured-non-null state would hide. An enclosing isset/empty/?? ensure
+		// may have deviced the receiver in scope state, so the ensure stack's
+		// original type still wins.
+		$processedReceiverResult = $nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, $nodeCallback, $context->enterDeep());
+		$scope = $processedReceiverResult->getScope();
+		$receiverType = $this->nonNullabilityHelper->getActiveEnsuredOriginalType($expr->var, false) ?? $processedReceiverResult->getType();
+		$receiverNativeType = $this->nonNullabilityHelper->getActiveEnsuredOriginalType($expr->var, true) ?? $processedReceiverResult->getNativeType();
 		// carry the receiver type to NullsafePropertyFetchRule so it reads it from
 		// here instead of asking the scope for the unprocessed receiver.
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new NullsafePropertyFetchExpressionNode($expr, $receiverType, $receiverNativeType), $beforeScope, $storage, $context);
 		$nonNullabilityResult = $this->nonNullabilityHelper->ensureShallowNonNullability($scope, $scope, $expr->var);
+		// pre-store the receiver's ensured-position view: rules suspended at the
+		// plain twin's callback ask about the receiver BEFORE the twin walk
+		// consumes it, and must see the same (deviced non-null) answer the twin
+		// walk itself will consume - exactly what storing the receiver walked
+		// inside the twin used to produce
+		$nodeScopeResolver->storeExpressionResult($storage, $expr->var, $processedReceiverResult->atAskPosition($nonNullabilityResult->getScope()));
 		$attributes = array_merge($expr->getAttributes(), ['virtualNullsafePropertyFetch' => true]);
 		unset($attributes[ExprPrinter::ATTRIBUTE_CACHE_KEY]);
 		$propertyFetch = new PropertyFetch(
@@ -74,7 +82,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 			$expr->name,
 			$attributes,
 		);
-		$exprResult = $nodeScopeResolver->processExprNode($stmt, $propertyFetch, $nonNullabilityResult->getScope(), $storage, $nodeCallback, $context);
+		$exprResult = $nodeScopeResolver->processExprNodeConsumingStored($stmt, $propertyFetch, $nonNullabilityResult->getScope(), $storage, $nodeCallback, $context);
 		$scope = $this->nonNullabilityHelper->revertNonNullability($exprResult->getScope(), $nonNullabilityResult->getSpecifiedExpressions());
 
 		// The `?->`'s own type on the asking scope. $receiverType is the receiver's
@@ -100,7 +108,7 @@ final class NullsafePropertyFetchHandler implements ExprHandler
 
 		// the receiver's stored result, for composing the receiver-not-null
 		// narrowing without re-walking the chain
-		$receiverResult = $storage->findExpressionResult($expr->var);
+		$receiverResult = $processedReceiverResult;
 		// lazily memoized receiver-is-null branch scope of the decomposition
 		$leftFalseyScope = null;
 
