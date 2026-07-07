@@ -12,6 +12,7 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\IncDecTypeHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
@@ -29,6 +30,7 @@ final class PostIncHandler implements ExprHandler
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private IncDecTypeHelper $incDecTypeHelper,
 	)
 	{
 	}
@@ -42,13 +44,29 @@ final class PostIncHandler implements ExprHandler
 	{
 		$varResult = $nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, $nodeCallback, $context->enterDeep());
 
+		// the virtual assign writes the incremented value; store the synthetic's
+		// result up front so processAssignVar composes off it instead of pricing
+		// the unprocessed synthetic (and sentinel comparisons against it) on demand
+		$virtualExpr = new PreInc($expr->var);
+		$nodeScopeResolver->storeExpressionResult($storage, $virtualExpr, $this->expressionResultFactory->create(
+			$varResult->getScope(),
+			beforeScope: $scope,
+			expr: $virtualExpr,
+			hasYield: false,
+			isAlwaysTerminating: false,
+			throwPoints: [],
+			impurePoints: [],
+			typeCallback: $this->incDecTypeHelper->getTypeCallback($expr->var, $varResult, true),
+			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($virtualExpr, $context),
+		));
+
 		return $this->expressionResultFactory->create(
 			$nodeScopeResolver->processVirtualAssign(
 				$varResult->getScope(),
 				$storage,
 				$stmt,
 				$expr->var,
-				new PreInc($expr->var),
+				$virtualExpr,
 				$nodeCallback,
 			)->getScope(),
 			beforeScope: $scope,

@@ -4,7 +4,6 @@ namespace PHPStan\Analyser\ExprHandler;
 
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\PreInc;
-use PhpParser\Node\Scalar\Int_;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
@@ -12,30 +11,13 @@ use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\IncDecTypeHelper;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\SpecifiedTypes;
 use PHPStan\Analyser\TypeSpecifierContext;
 use PHPStan\DependencyInjection\AutowiredService;
-use PHPStan\Reflection\InitializerExprTypeResolver;
-use PHPStan\ShouldNotHappenException;
-use PHPStan\Type\Accessory\AccessoryLiteralStringType;
-use PHPStan\Type\BenevolentUnionType;
-use PHPStan\Type\Constant\ConstantIntegerType;
-use PHPStan\Type\ConstantTypeHelper;
-use PHPStan\Type\FloatType;
-use PHPStan\Type\IntegerType;
-use PHPStan\Type\IntersectionType;
-use PHPStan\Type\NeverType;
-use PHPStan\Type\StringType;
 use PHPStan\Type\Type;
-use PHPStan\Type\TypeCombinator;
-use ValueError;
-use function count;
-use function is_bool;
-use function is_numeric;
-use function is_string;
-use function str_increment;
 
 /**
  * @implements ExprHandler<PreInc>
@@ -46,7 +28,7 @@ final class PreIncHandler implements ExprHandler
 
 	public function __construct(
 		private ExpressionResultFactory $expressionResultFactory,
-		private InitializerExprTypeResolver $initializerExprTypeResolver,
+		private IncDecTypeHelper $incDecTypeHelper,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 	)
 	{
@@ -61,69 +43,14 @@ final class PreIncHandler implements ExprHandler
 	{
 		$varResult = $nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, $nodeCallback, $context->enterDeep());
 
-		$typeCallback = function (bool $nativeTypesPromoted) use ($expr, $varResult): Type {
-			$varType = ($nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType());
-			$varScalars = $varType->getConstantScalarValues();
-
-			if (count($varScalars) > 0) {
-				$newTypes = [];
-
-				foreach ($varScalars as $varValue) {
-					if ($varValue === '') {
-						$varValue = '1';
-					} elseif (is_string($varValue) && !is_numeric($varValue)) {
-						try {
-							$varValue = str_increment($varValue);
-						} catch (ValueError) {
-							return new NeverType();
-						}
-					} elseif (!is_bool($varValue)) {
-						++$varValue;
-					}
-
-					$newTypes[] = ConstantTypeHelper::getTypeFromValue($varValue);
-				}
-				return TypeCombinator::union(...$newTypes);
-			} elseif ($varType->isString()->yes()) {
-				if ($varType->isLiteralString()->yes()) {
-					return new IntersectionType([
-						new StringType(),
-						new AccessoryLiteralStringType(),
-					]);
-				}
-
-				if ($varType->isNumericString()->yes()) {
-					return new BenevolentUnionType([
-						new IntegerType(),
-						new FloatType(),
-					]);
-				}
-
-				return new BenevolentUnionType([
-					new StringType(),
-					new IntegerType(),
-					new FloatType(),
-				]);
-			}
-
-			$one = new Int_(1);
-			return $this->initializerExprTypeResolver->getPlusType($expr->var, $one, static function (Expr $e) use ($nativeTypesPromoted, $expr, $varResult, $one): Type {
-				if ($e === $expr->var) {
-					return ($nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType());
-				}
-				if ($e === $one) {
-					return new ConstantIntegerType(1);
-				}
-
-				throw new ShouldNotHappenException();
-			});
-		};
+		$typeCallback = $this->incDecTypeHelper->getTypeCallback($expr->var, $varResult, true);
 		$specifyTypesCallback = fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($expr, $context);
 
 		// processVirtualAssign asks getType($expr) for the value to assign; store
 		// this result first so that resolves from the typeCallback below rather
-		// than re-processing the node on demand (which would recurse).
-		$nodeScopeResolver->storeExpressionResult($storage, $expr, $this->expressionResultFactory->create(
+		// than re-processing the node on demand (which would recurse). Provisional:
+		// rule fibers resume on the final store at the end of processExprNode.
+		$nodeScopeResolver->storeProvisionalExpressionResult($storage, $expr, $this->expressionResultFactory->create(
 			$varResult->getScope(),
 			beforeScope: $scope,
 			expr: $expr,

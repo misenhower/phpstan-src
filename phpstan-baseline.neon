@@ -52,7 +52,7 @@ parameters:
 			rawMessage: 'Only numeric types are allowed in pre-increment, float|int|string|null given.'
 			identifier: preInc.nonNumeric
 			count: 1
-			path: src/Analyser/ExprHandler/PreIncHandler.php
+			path: src/Analyser/ExprHandler/Helper/IncDecTypeHelper.php
 
 		-
 			rawMessage: Casting to string something that's already string.
