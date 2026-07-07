@@ -6,17 +6,16 @@ use DivisionByZeroError;
 use PHPStan\Type\MixedType;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\AssignOp;
-use PhpParser\Node\Expr\BinaryOp;
-use PhpParser\Node\Expr\ConstFetch;
-use PhpParser\Node\Name;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
+use PHPStan\Analyser\ExprHandler\Helper\CoalesceCompositionHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
+use PHPStan\Analyser\ExprHandler\Helper\NonNullabilityHelper;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
@@ -48,6 +47,8 @@ final class AssignOpHandler implements ExprHandler
 		private ImplicitToStringCallHelper $implicitToStringCallHelper,
 		private ExpressionResultFactory $expressionResultFactory,
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
+		private NonNullabilityHelper $nonNullabilityHelper,
+		private CoalesceCompositionHelper $coalesceCompositionHelper,
 	)
 	{
 	}
@@ -61,11 +62,24 @@ final class AssignOpHandler implements ExprHandler
 	{
 		$beforeScope = $scope;
 
-		if (
-			!$expr instanceof Expr\AssignOp\Coalesce
-			&& ($expr->var instanceof Expr\Variable
-				|| $expr->var instanceof Expr\PropertyFetch
-				|| $expr->var instanceof Expr\StaticPropertyFetch)
+		$condResult = null;
+		$chainResults = [];
+		$rightResult = null;
+		if ($expr instanceof Expr\AssignOp\Coalesce) {
+			// `$lvalue ??= ...` is `$lvalue = $lvalue ?? ...`: price the left side
+			// once as a read (mirroring CoalesceHandler's left-side processing, with
+			// the isset descriptor - bug-13623) and compose everything off that
+			// result. The NoopNodeCallback avoids duplicate reports and the read's
+			// scope is discarded: processAssignVar() walks the target itself.
+			$nonNullabilityResult = $this->nonNullabilityHelper->ensureNonNullability($scope, $expr->var);
+			$condScope = $nodeScopeResolver->lookForSetAllowedUndefinedExpressions($nonNullabilityResult->getScope(), $expr->var);
+			$condResult = $nodeScopeResolver->processExprNode($stmt, $expr->var, $condScope, $storage, new NoopNodeCallback(), $context->enterDeep());
+			$this->nonNullabilityHelper->revertNonNullability($condResult->getScope(), $nonNullabilityResult->getSpecifiedExpressions());
+			$this->defaultNarrowingHelper->captureChainResults($expr->var, $storage, $chainResults);
+		} elseif (
+			$expr->var instanceof Expr\Variable
+			|| $expr->var instanceof Expr\PropertyFetch
+			|| $expr->var instanceof Expr\StaticPropertyFetch
 		) {
 			// `$lvalue OP= ...` reads the old value of `$lvalue`; processAssignVar()
 			// processes a Variable/property target only as an assignment target, never
@@ -79,27 +93,63 @@ final class AssignOpHandler implements ExprHandler
 			$nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, new NoopNodeCallback(), $context->enterDeep());
 		}
 
-		$typeCallback = function (bool $nativeTypesPromoted) use ($expr, $nodeScopeResolver, $beforeScope): Type {
+		$processValueExpr = function (MutatingScope $scope) use ($stmt, $expr, $nodeCallback, $context, $storage, $nodeScopeResolver, $condResult, &$rightResult): ExpressionResult {
+			$originalScope = $scope;
+			if ($expr instanceof Expr\AssignOp\Coalesce) {
+				// the value expr only evaluates when the left side is null - the
+				// falsey narrowing of the coalesce, composed from the left read
+				$scope = $scope->applySpecifiedTypes($this->coalesceCompositionHelper->getFalseySpecifiedTypes($scope, $scope, $expr->var, $condResult, $expr, TypeSpecifierContext::createFalsey()));
+
+				if ($expr->var instanceof Expr\Variable && is_string($expr->var->name)) {
+					$context = $context->enterRightSideAssign(
+						$expr->var->name,
+						$expr->expr,
+					);
+				}
+			}
+
+			$exprResult = $nodeScopeResolver->processExprNode($stmt, $expr->expr, $scope, $storage, $nodeCallback, $context->enterDeep());
+			if ($expr instanceof Expr\AssignOp\Coalesce) {
+				$rightResult = $exprResult;
+				$isAlwaysTerminating = $exprResult->isAlwaysTerminating() && $condResult->getType()->isNull()->yes();
+				return $this->expressionResultFactory->create(
+					$exprResult->getScope()->mergeWith($originalScope),
+					$originalScope,
+					$expr->expr,
+					$exprResult->hasYield(),
+					$isAlwaysTerminating,
+					$exprResult->getThrowPoints(),
+					$exprResult->getImpurePoints(),
+					typeCallback: static fn () => new MixedType(),
+					specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
+				);
+			}
+
+			return $exprResult;
+		};
+
+		$typeCallback = function (bool $nativeTypesPromoted) use ($expr, $nodeScopeResolver, $beforeScope, $condResult, $chainResults, &$rightResult): Type {
 			// $expr->var and $expr->expr were processed during this handler's
 			// processExpr (the var as the assignment target, the value expr by the
-			// inner closure below), so their ExpressionResults are stored - read
-			// them instead of re-walking via Scope::getType().
+			// $processValueExpr closure above), so their ExpressionResults are
+			// stored - read them instead of re-walking via Scope::getType().
 			$getType = static fn (Expr $e): Type => $nodeScopeResolver->readTypeOfMaybeStored($e, $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope);
 
 			if ($expr instanceof Expr\AssignOp\Coalesce) {
-				// The coalesce is synthetic; price it on demand. The ??= left is stored
-				// as an assignment target (no isset descriptor), so inject a read result
-				// of it (with the descriptor) - otherwise the coalesce resolves a
-				// descriptor-less leaf that reads as definitely-set and drops the `??`
-				// branch, losing the optional offset natively (bug-13623).
-				$coalesce = new BinaryOp\Coalesce($expr->var, $expr->expr, $expr->getAttributes());
-				$varReadResult = $nodeScopeResolver->processExprOnDemand($expr->var, $beforeScope, new ExpressionResultStorage());
-				$coalesceStorage = ($beforeScope->getCurrentExpressionResultStorage() ?? new ExpressionResultStorage())->duplicate();
-				$nodeScopeResolver->storeExpressionResult($coalesceStorage, $expr->var, $varReadResult);
+				if ($rightResult === null) {
+					throw new ShouldNotHappenException();
+				}
 
-				$coalesceResult = $nodeScopeResolver->processExprOnDemand($coalesce, $beforeScope, $coalesceStorage);
-
-				return $nativeTypesPromoted ? $coalesceResult->getNativeType() : $coalesceResult->getType();
+				return $this->coalesceCompositionHelper->composeType(
+					$nodeScopeResolver,
+					$expr->var,
+					$condResult,
+					$rightResult,
+					$beforeScope,
+					$chainResults,
+					$expr,
+					$nativeTypesPromoted,
+				);
 			}
 
 			if ($expr instanceof Expr\AssignOp\Concat) {
@@ -157,17 +207,18 @@ final class AssignOpHandler implements ExprHandler
 		if ($expr instanceof Expr\AssignOp\Coalesce) {
 			// a type constraint on `$x ??= y` constrains the assigned variable -
 			// what TypeSpecifier::create() recovered by its AssignOp\Coalesce arm
-			$createTypesCallback = function (Type $constraintType, TypeSpecifierContext $cctx, bool $nativeTypesPromoted) use ($expr, $nodeScopeResolver, $beforeScope): SpecifiedTypes {
+			$createTypesCallback = function (Type $constraintType, TypeSpecifierContext $cctx, bool $nativeTypesPromoted) use ($expr, $condResult, $beforeScope): SpecifiedTypes {
 				$cs = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
 
-				return $this->defaultNarrowingHelper->createSubjectTypes($cs, $expr->var, $nodeScopeResolver->findStoredResult($expr->var, $cs), $constraintType, $cctx);
+				return $this->defaultNarrowingHelper->createSubjectTypes($cs, $expr->var, $condResult, $constraintType, $cctx);
 			};
 		}
 
 		// processAssignVar asks getType($expr) for the value to assign; store this
 		// result first so it resolves from the typeCallback above rather than
-		// re-processing the node on demand (which would recurse).
-		$nodeScopeResolver->storeExpressionResult($storage, $expr, $this->expressionResultFactory->create(
+		// re-processing the node on demand (which would recurse). Provisional:
+		// the typeCallback is only complete once the value expr is processed.
+		$nodeScopeResolver->storeProvisionalExpressionResult($storage, $expr, $this->expressionResultFactory->create(
 			$scope,
 			beforeScope: $beforeScope,
 			expr: $expr,
@@ -189,37 +240,7 @@ final class AssignOpHandler implements ExprHandler
 			$expr,
 			$nodeCallback,
 			$context,
-			function (MutatingScope $scope) use ($stmt, $expr, $nodeCallback, $context, $storage, $nodeScopeResolver): ExpressionResult {
-				$originalScope = $scope;
-				if ($expr instanceof Expr\AssignOp\Coalesce) {
-					$scope = $scope->applySpecifiedTypes($nodeScopeResolver->processExprOnDemand(new BinaryOp\NotIdentical($expr->var, new ConstFetch(new Name('null'))), $scope, new ExpressionResultStorage())->getSpecifiedTypesForScope($scope, TypeSpecifierContext::createFalsey()));
-
-					if ($expr->var instanceof Expr\Variable && is_string($expr->var->name)) {
-						$context = $context->enterRightSideAssign(
-							$expr->var->name,
-							$expr->expr,
-						);
-					}
-				}
-
-				$exprResult = $nodeScopeResolver->processExprNode($stmt, $expr->expr, $scope, $storage, $nodeCallback, $context->enterDeep());
-				if ($expr instanceof Expr\AssignOp\Coalesce) {
-					$isAlwaysTerminating = $exprResult->isAlwaysTerminating() && $nodeScopeResolver->readTypeOfMaybeStored($expr->var, $originalScope)->isNull()->yes();
-					return $this->expressionResultFactory->create(
-						$exprResult->getScope()->mergeWith($originalScope),
-						$originalScope,
-						$expr->expr,
-						$exprResult->hasYield(),
-						$isAlwaysTerminating,
-						$exprResult->getThrowPoints(),
-						$exprResult->getImpurePoints(),
-						typeCallback: static fn () => new MixedType(),
-						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
-					);
-				}
-
-				return $exprResult;
-			},
+			$processValueExpr,
 			$expr instanceof Expr\AssignOp\Coalesce,
 		);
 		$scope = $assignResult->getScope();
@@ -237,12 +258,8 @@ final class AssignOpHandler implements ExprHandler
 			$impurePoints = array_merge($impurePoints, $toStringResult->getImpurePoints());
 		}
 
-		if ($expr instanceof Expr\AssignOp\Coalesce) {
-			// the ??= left side is processed as an assignment target, not a read, so
-			// it carries no isset descriptor; read it on demand so NullCoalesceRule
-			// gets the chain's IssetabilityResolution off the carried result
-			$varReadResult = $nodeScopeResolver->processExprOnDemand($expr->var, $beforeScope, new ExpressionResultStorage());
-			$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new CoalesceExpressionNode($expr, $varReadResult, 'on left side of ??='), $beforeScope, $storage, $context);
+		if ($expr instanceof Expr\AssignOp\Coalesce && $condResult !== null) {
+			$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new CoalesceExpressionNode($expr, $condResult, 'on left side of ??='), $beforeScope, $storage, $context);
 		}
 
 		return $this->expressionResultFactory->create(

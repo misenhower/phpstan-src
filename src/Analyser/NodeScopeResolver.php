@@ -234,6 +234,14 @@ class NodeScopeResolver
 	 */
 	protected array $processingExprIds = [];
 
+	/**
+	 * Expressions whose currently stored result is a handler's mid-processing
+	 * pre-store - see storeProvisionalExpressionResult().
+	 *
+	 * @var array<int, true>
+	 */
+	protected array $provisionalExprIds = [];
+
 	/** Whether the PHPSTAN_GUARD_NW diagnostic is enabled (cached from the env). */
 	public static bool $guardNewWorld = false;
 
@@ -438,8 +446,26 @@ class NodeScopeResolver
 		if (self::$guardNewWorld) {
 			self::$guardProcessedExprIds[spl_object_id($expr)] = true;
 		}
+		unset($this->provisionalExprIds[spl_object_id($expr)]);
 		// handlers are answered from stored results in both worlds - storing must
 		// not depend on fibers
+		$storage->storeExpressionResult($expr, $expressionResult);
+	}
+
+	/**
+	 * Stores a handler's mid-processing result for its own expression - consumed
+	 * synchronously (processAssignVar reading the value to assign) but incomplete
+	 * for outside askers (e.g. the ??= composition needs the value expr's result,
+	 * which is only processed later in the same processExpr). Rule fibers waiting
+	 * on the expression are not resumed by this store; they resume when the final
+	 * result lands via storeExpressionResult().
+	 */
+	public function storeProvisionalExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
+	{
+		if (self::$guardNewWorld) {
+			self::$guardProcessedExprIds[spl_object_id($expr)] = true;
+		}
+		$this->provisionalExprIds[spl_object_id($expr)] = true;
 		$storage->storeExpressionResult($expr, $expressionResult);
 	}
 

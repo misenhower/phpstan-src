@@ -76,7 +76,11 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 	{
 		while (!$fiber->isTerminated()) {
 			if ($request instanceof ExpressionResultRequest) {
-				$expressionResult = $storage->findExpressionResult($request->expr);
+				// a provisional pre-store is not an answer for outside askers -
+				// park until the handler stores the final result
+				$expressionResult = isset($this->provisionalExprIds[spl_object_id($request->expr)])
+					? null
+					: $storage->findExpressionResult($request->expr);
 				if ($expressionResult !== null) {
 					$request = $fiber->resume($expressionResult);
 					continue;
