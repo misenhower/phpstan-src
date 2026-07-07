@@ -59,6 +59,18 @@ final class ConditionalExpressionHolderHelper
 		foreach ($rightTypes->getSureTypes() as $exprString => [$exprNode, $type]) {
 			$candidateExprs[$exprString] = $exprNode;
 		}
+		// sureNot entries constrain their branch too - the old normalize()
+		// converted them to sure entries before candidates were collected, so a
+		// sureNot-only narrowing (e.g. the truthy of a bool variable) must also
+		// contribute its subject. The branch-scope reads below price the subject
+		// on each filtered scope, where an impossible branch (a holder-fixpoint
+		// contradiction) collapses to never and drops out of the union.
+		foreach ($leftTypes->getSureNotTypes() as $exprString => [$exprNode, $type]) {
+			$candidateExprs[$exprString] = $exprNode;
+		}
+		foreach ($rightTypes->getSureNotTypes() as $exprString => [$exprNode, $type]) {
+			$candidateExprs[$exprString] = $exprNode;
+		}
 
 		$existingSureTypes = $types->getSureTypes();
 		$existingAlternativeTypes = $types->getAlternativeTypes();

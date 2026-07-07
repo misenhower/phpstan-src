@@ -6,6 +6,7 @@ use PhpParser\Node\Expr;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
+use PHPStan\Type\TypeUtils;
 
 /**
  * The either-branch union recovery: an expression the exact merge left
@@ -39,6 +40,13 @@ final class DisjunctionBranchUnionAugment implements DeferredSpecifiedTypesAugme
 			}
 
 			$originalType = $this->nodeScopeResolver->readTypeOfMaybeStored($targetExpr, $scope);
+			// re-pinning eagerly priced branch forms of a template-typed subject
+			// stacks the template inside its own bound (`T of T of ...` - the
+			// pin intersects with the declared template); its narrowing already
+			// flows through the operands' exact merge
+			if (TypeUtils::containsTemplateType($originalType)) {
+				continue;
+			}
 			if ($leftType->equals($originalType) || !$originalType->isSuperTypeOf($leftType)->yes()) {
 				continue;
 			}
@@ -48,7 +56,10 @@ final class DisjunctionBranchUnionAugment implements DeferredSpecifiedTypesAugme
 			}
 
 			$unionType = TypeCombinator::union($leftType, $rightType);
-			if ($unionType->equals($originalType)) {
+			// a union that covers the whole original type gains no narrowing -
+			// pinning it would only stack a redundant intersection on the
+			// expression (e.g. re-wrapping a template type in its own bound)
+			if ($unionType->isSuperTypeOf($originalType)->yes()) {
 				continue;
 			}
 
