@@ -2,19 +2,17 @@
 
 namespace PHPStan\Analyser\ExprHandler\Virtual;
 
-use PHPStan\Analyser\SpecifiedTypes;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Stmt;
 use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
-use PHPStan\Analyser\ExpressionResultFactory;
+use PHPStan\Analyser\ExprHandler\Helper\VirtualExprResultHelper;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\Node\Expr\UnsetOffsetExpr;
-use PHPStan\Type\Type;
 
 /**
  * @implements ExprHandler<UnsetOffsetExpr>
@@ -23,7 +21,7 @@ use PHPStan\Type\Type;
 final class UnsetOffsetExprHandler implements ExprHandler
 {
 
-	public function __construct(private ExpressionResultFactory $expressionResultFactory)
+	public function __construct(private VirtualExprResultHelper $virtualExprResultHelper)
 	{
 	}
 
@@ -43,17 +41,7 @@ final class UnsetOffsetExprHandler implements ExprHandler
 		$varResult = $nodeScopeResolver->processExprNode($stmt, $expr->getVar(), $scope, $storage, $nodeCallback, $context);
 		$dimResult = $nodeScopeResolver->processExprNode($stmt, $expr->getDim(), $scope, $storage, $nodeCallback, $context);
 
-		return $this->expressionResultFactory->create(
-			$scope,
-			beforeScope: $scope,
-			expr: $expr,
-			hasYield: false,
-			isAlwaysTerminating: false,
-			throwPoints: [],
-			impurePoints: [],
-			typeCallback: static fn (bool $nativeTypesPromoted): Type => ($nativeTypesPromoted ? $varResult->getNativeType() : $varResult->getType())->unsetOffset(($nativeTypesPromoted ? $dimResult->getNativeType() : $dimResult->getType())),
-			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
-		);
+		return $this->virtualExprResultHelper->createUnsetOffsetExprResult($scope, $expr, $varResult, $dimResult);
 	}
 
 }

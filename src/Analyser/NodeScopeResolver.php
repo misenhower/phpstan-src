@@ -53,6 +53,7 @@ use PhpParser\NodeVisitorAbstract;
 use PHPStan\Analyser\ExprHandler\AssignHandler;
 use PHPStan\Analyser\ExprHandler\Helper\ClosureTypeResolver;
 use PHPStan\Analyser\ExprHandler\Helper\ImplicitToStringCallHelper;
+use PHPStan\Analyser\ExprHandler\Helper\VirtualExprResultHelper;
 use PHPStan\BetterReflection\Reflection\Adapter\ReflectionClass;
 use PHPStan\BetterReflection\Reflection\ReflectionEnum;
 use PHPStan\BetterReflection\Reflector\Reflector;
@@ -2610,7 +2611,22 @@ class NodeScopeResolver
 
 					/** @var Expr $clonedVar */
 					[$clonedVar] = $traverser->traverse([$clonedVar]);
-					$scope = $this->processVirtualAssign($scope, $storage, $stmt, $clonedVar, new UnsetOffsetExpr($var->var, $var->dim), $nodeCallback)->getScope();
+					$unsetOffsetExpr = new UnsetOffsetExpr($var->var, $var->dim);
+				$scope = $this->processVirtualAssign(
+					$scope,
+					$storage,
+					$stmt,
+					$clonedVar,
+					$unsetOffsetExpr,
+					$nodeCallback,
+					// composed from the chain results the unset target's walk just stored
+					$this->container->getByType(VirtualExprResultHelper::class)->createUnsetOffsetExprResult(
+						$scope,
+						$unsetOffsetExpr,
+						$this->readStoredResult($var->var, $storage),
+						$this->readStoredResult($var->dim, $storage),
+					),
+				)->getScope();
 				} elseif ($var instanceof PropertyFetch) {
 					$scope = $scope->invalidateExpression($var);
 					$impurePoints[] = new ImpurePoint(
@@ -4948,8 +4964,24 @@ class NodeScopeResolver
 	/**
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
 	 */
-	public function processVirtualAssign(MutatingScope $scope, ExpressionResultStorage $storage, Node\Stmt $stmt, Expr $var, Expr $assignedExpr, callable $nodeCallback): ExpressionResult
+	public function processVirtualAssign(MutatingScope $scope, ExpressionResultStorage $storage, Node\Stmt $stmt, Expr $var, Expr $assignedExpr, callable $nodeCallback, ?ExpressionResult $assignedExprResult = null): ExpressionResult
 	{
+		// work off an available result for the assigned expr: passed by the
+		// caller, stored by natural processing, or fabricated from a
+		// type-carrying virtual node - so processAssignVar's stored-result reads
+		// compose instead of falling back to on-demand pricing of the type, the
+		// truthy/falsey narrowing, and the synthetic sentinel comparisons
+		if (
+			$assignedExprResult === null
+			&& ($assignedExpr instanceof TypeExpr || $assignedExpr instanceof NativeTypeExpr)
+			&& $storage->findExpressionResult($assignedExpr) === null
+		) {
+			$assignedExprResult = $this->container->getByType(VirtualExprResultHelper::class)->createTypeExprResult($scope, $assignedExpr);
+		}
+		if ($assignedExprResult !== null) {
+			$this->storeExpressionResult($storage, $assignedExpr, $assignedExprResult);
+		}
+
 		return $this->container->getByType(AssignHandler::class)->processAssignVar(
 			$this,
 			$scope,

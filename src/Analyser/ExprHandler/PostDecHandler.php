@@ -44,11 +44,11 @@ final class PostDecHandler implements ExprHandler
 	{
 		$varResult = $nodeScopeResolver->processExprNode($stmt, $expr->var, $scope, $storage, $nodeCallback, $context->enterDeep());
 
-		// the virtual assign writes the decremented value; store the synthetic's
-		// result up front so processAssignVar composes off it instead of pricing
-		// the unprocessed synthetic (and sentinel comparisons against it) on demand
+		// the virtual assign writes the decremented value - hand it the synthetic's
+		// result so processAssignVar composes off it instead of pricing the
+		// unprocessed synthetic (and sentinel comparisons against it) on demand
 		$virtualExpr = new PreDec($expr->var);
-		$nodeScopeResolver->storeExpressionResult($storage, $virtualExpr, $this->expressionResultFactory->create(
+		$virtualExprResult = $this->expressionResultFactory->create(
 			$varResult->getScope(),
 			beforeScope: $scope,
 			expr: $virtualExpr,
@@ -58,7 +58,7 @@ final class PostDecHandler implements ExprHandler
 			impurePoints: [],
 			typeCallback: $this->incDecTypeHelper->getTypeCallback($expr->var, $varResult, false),
 			specifyTypesCallback: fn (TypeSpecifierContext $context, bool $nativeTypesPromoted): SpecifiedTypes => $this->defaultNarrowingHelper->specifyDefaultTypes($virtualExpr, $context),
-		));
+		);
 
 		return $this->expressionResultFactory->create(
 			$nodeScopeResolver->processVirtualAssign(
@@ -68,6 +68,7 @@ final class PostDecHandler implements ExprHandler
 				$expr->var,
 				$virtualExpr,
 				$nodeCallback,
+				$virtualExprResult,
 			)->getScope(),
 			beforeScope: $scope,
 			expr: $expr,

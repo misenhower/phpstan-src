@@ -31,6 +31,7 @@ use PHPStan\Analyser\ExpressionTypeHolder;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\IdenticalNarrowingHelper;
+use PHPStan\Analyser\ExprHandler\Helper\VirtualExprResultHelper;
 use PHPStan\Analyser\ImpurePoint;
 use PHPStan\Analyser\InternalThrowPoint;
 use PHPStan\Analyser\MutatingScope;
@@ -102,6 +103,7 @@ final class AssignHandler implements ExprHandler
 		private DefaultNarrowingHelper $defaultNarrowingHelper,
 		private IdenticalNarrowingHelper $identicalNarrowingHelper,
 		private PropertyReflectionFinder $propertyReflectionFinder,
+		private VirtualExprResultHelper $virtualExprResultHelper,
 	)
 	{
 	}
@@ -1058,6 +1060,9 @@ final class AssignHandler implements ExprHandler
 					$dimExpr = $arrayItem->key;
 				}
 				$getOffsetValueTypeExpr = new TypeExpr($nodeScopeResolver->readTypeOfMaybeStored($assignedExpr, $scope)->getOffsetValueType($nodeScopeResolver->readTypeOfMaybeStored($dimExpr, $scope)));
+				// store the fabricated result so the recursion's stored-result reads
+				// compose instead of falling back to on-demand pricing
+				$nodeScopeResolver->storeExpressionResult($storage, $getOffsetValueTypeExpr, $this->virtualExprResultHelper->createTypeExprResult($scope, $getOffsetValueTypeExpr));
 				$result = $this->processAssignVar(
 					$nodeScopeResolver,
 					$scope,
