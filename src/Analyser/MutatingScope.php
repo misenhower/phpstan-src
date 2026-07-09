@@ -3214,14 +3214,49 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 	public function specifyExpressionType(Expr $expr, Type $type, Type $nativeType, TrinaryLogic $certainty): self
 	{
-		if ($expr instanceof Scalar) {
+		if ($this->isSpecifyExpressionTypeNoop($expr, $type)) {
 			return $this;
+		}
+
+		$scope = $this->openSpecificationScope();
+		$scope->specifyExpressionTypeInPlace($expr, $type, $nativeType, $certainty);
+
+		return $scope;
+	}
+
+	/** An unpublished copy of this scope that in-place specification may mutate. */
+	private function openSpecificationScope(): self
+	{
+		return $this->scopeFactory->create(
+			$this->context,
+			$this->isDeclareStrictTypes(),
+			$this->getFunction(),
+			$this->getNamespace(),
+			$this->expressionTypes,
+			$this->nativeExpressionTypes,
+			$this->conditionalExpressions,
+			$this->inClosureBindScopeClasses,
+			$this->anonymousFunctionReflection,
+			$this->inFirstLevelStatement,
+			$this->currentlyAssignedExpressions,
+			$this->currentlyAllowedUndefinedExpressions,
+			$this->inFunctionCallsStack,
+			$this->afterExtractCall,
+			$this->parentScope,
+			$this->nativeTypesPromoted,
+		);
+	}
+
+	private function isSpecifyExpressionTypeNoop(Expr $expr, Type $type): bool
+	{
+		if ($expr instanceof Scalar) {
+			return true;
 		}
 
 		if ($expr instanceof ConstFetch) {
 			$loweredConstName = strtolower($expr->name->toString());
 			if (in_array($loweredConstName, ['true', 'false', 'null'], true)) {
-				return $this;
+				return true;
 			}
 		}
 
@@ -3232,11 +3267,25 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				'is_file',
 				'file_exists',
 			], true)) {
-				return $this;
+				return true;
 			}
 		}
 
-		$scope = $this;
+		return false;
+	}
+
+	/**
+	 * The body of specifyExpressionType() writing straight into this scope's
+	 * holder maps - only to be called on an unpublished scope (see
+	 * openSpecificationScope()). Batching callers avoid one whole-map copy and
+	 * scope construction per specification (and per array-dim level).
+	 */
+	private function specifyExpressionTypeInPlace(Expr $expr, Type $type, Type $nativeType, TrinaryLogic $certainty): void
+	{
+		if ($this->isSpecifyExpressionTypeNoop($expr, $type)) {
+			return;
+		}
+
 		if (
 			$expr instanceof Expr\ArrayDimFetch
 			&& $expr->dim !== null
@@ -3245,9 +3294,9 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			&& !$expr->dim instanceof Expr\PostDec
 			&& !$expr->dim instanceof Expr\PostInc
 		) {
-			$dimType = $scope->getScopeStateType($expr->dim)->toArrayKey();
+			$dimType = $this->getScopeStateType($expr->dim)->toArrayKey();
 			if ($dimType->isInteger()->yes() || $dimType->isString()->yes()) {
-				$exprVarType = $scope->getScopeStateType($expr->var);
+				$exprVarType = $this->getScopeStateType($expr->var);
 				$isArray = $exprVarType->isArray();
 				if (!$exprVarType instanceof MixedType && !$isArray->no()) {
 					$varType = $exprVarType;
@@ -3268,10 +3317,10 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 						}
 					}
 
-					$scope = $scope->specifyExpressionType(
+					$this->specifyExpressionTypeInPlace(
 						$expr->var,
 						$varType,
-						$scope->getScopeStateNativeType($expr->var),
+						$this->getScopeStateNativeType($expr->var),
 						$certainty,
 					);
 				}
@@ -3283,30 +3332,14 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		}
 
 		$exprString = $this->getNodeKey($expr);
-		$expressionTypes = $scope->expressionTypes;
-		$expressionTypes[$exprString] = new ExpressionTypeHolder($expr, $type, $certainty);
-		$nativeTypes = $scope->nativeExpressionTypes;
-		$nativeTypes[$exprString] = new ExpressionTypeHolder($expr, $nativeType, $certainty);
-
-		/** @var static $scope */
-		$scope = ScopeOps::scopeWith(
-			$this,
-			$expressionTypes,
-			$nativeTypes,
-			$this->conditionalExpressions,
-			$this->currentlyAssignedExpressions,
-			$this->currentlyAllowedUndefinedExpressions,
-			$this->inFunctionCallsStack,
-			$this->inFirstLevelStatement,
-			$this->afterExtractCall,
-		);
+		$this->expressionTypes[$exprString] = new ExpressionTypeHolder($expr, $type, $certainty);
+		$this->nativeExpressionTypes[$exprString] = new ExpressionTypeHolder($expr, $nativeType, $certainty);
 
 		if ($expr instanceof AlwaysRememberedExpr) {
-			return $scope->specifyExpressionType($expr->expr, $type, $nativeType, $certainty);
+			$this->specifyExpressionTypeInPlace($expr->expr, $type, $nativeType, $certainty);
 		}
-
-		return $scope;
 	}
+
 
 	public function assignExpression(Expr $expr, Type $type, Type $nativeType): self
 	{
@@ -3774,6 +3807,10 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		});
 
 		$scope = $this;
+		// one unpublished working copy takes all in-place specifications of the
+		// batch; operations that go through other scope derivations publish it
+		// and a fresh copy opens on the next specification
+		$scopeIsWorkingCopy = false;
 		$specifiedExpressions = [];
 		foreach ($typeSpecifications as $typeSpecification) {
 			$expr = $typeSpecification['expr'];
@@ -3791,6 +3828,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 				} else {
 					$scope = $scope->unsetExpression($expr);
 				}
+				$scopeIsWorkingCopy = false;
 
 				continue;
 			}
@@ -3863,7 +3901,13 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 				$newType = $trackedType !== null ? TypeCombinator::intersect($evaluated, $trackedType) : $evaluated;
 				$newNativeType = $trackedNativeType !== null ? TypeCombinator::intersect($evaluatedNative, $trackedNativeType) : $evaluatedNative;
-				$scope = $scope->specifyExpressionType($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+				if (!$this->isSpecifyExpressionTypeNoop($expr, $newType)) {
+					if (!$scopeIsWorkingCopy) {
+						$scope = $scope->openSpecificationScope();
+						$scopeIsWorkingCopy = true;
+					}
+					$scope->specifyExpressionTypeInPlace($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+				}
 
 				$holderType = array_key_exists($exprString, $scope->expressionTypes)
 					? $scope->expressionTypes[$exprString]->getType()
@@ -3876,10 +3920,17 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 			if ($typeSpecification['sure']) {
 				if ($specifiedTypes->shouldOverwrite()) {
 					$scope = $scope->assignExpression($expr, $type, $type);
+					$scopeIsWorkingCopy = false;
 				} else {
 					$newType = $trackedType !== null ? TypeCombinator::intersect($type, $trackedType) : $type;
 					$newNativeType = $trackedNativeType !== null ? TypeCombinator::intersect($type, $trackedNativeType) : $type;
-					$scope = $scope->specifyExpressionType($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+					if (!$this->isSpecifyExpressionTypeNoop($expr, $newType)) {
+						if (!$scopeIsWorkingCopy) {
+							$scope = $scope->openSpecificationScope();
+							$scopeIsWorkingCopy = true;
+						}
+						$scope->specifyExpressionTypeInPlace($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+					}
 				}
 			} else {
 				if ($type instanceof NeverType || $trackedType instanceof NeverType) {
@@ -3891,7 +3942,13 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 					continue;
 				}
 				$newNativeType = $trackedNativeType !== null ? TypeCombinator::remove($trackedNativeType, $type) : $newType;
-				$scope = $scope->specifyExpressionType($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+				if (!$this->isSpecifyExpressionTypeNoop($expr, $newType)) {
+					if (!$scopeIsWorkingCopy) {
+						$scope = $scope->openSpecificationScope();
+						$scopeIsWorkingCopy = true;
+					}
+					$scope->specifyExpressionTypeInPlace($expr, $newType, $newNativeType, TrinaryLogic::createYes());
+				}
 			}
 
 			$holderType = array_key_exists($exprString, $scope->expressionTypes)
