@@ -1377,6 +1377,17 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 	 *
 	 * @internal
 	 */
+	/** The settled stored result of the current storage - FiberScope's no-switch fast path. */
+	protected function findSettledStoredResult(Expr $node): ?ExpressionResult
+	{
+		$storage = $this->expressionResultStorageStack->getCurrent();
+		if ($storage === null) {
+			return null;
+		}
+
+		return $this->container->getByType(NodeScopeResolver::class)->findSettledExpressionResult($storage, $node);
+	}
+
 	public function getCurrentExpressionResultStorage(): ?ExpressionResultStorage
 	{
 		return $this->expressionResultStorageStack->getCurrent();

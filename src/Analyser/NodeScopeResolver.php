@@ -446,6 +446,20 @@ class NodeScopeResolver
 		$this->processPendingFibers($expressionResultStorage);
 	}
 
+	/**
+	 * The stored result an outside asker may consume: a handler's provisional
+	 * mid-processing pre-store is not an answer (see
+	 * storeProvisionalExpressionResult()).
+	 */
+	public function findSettledExpressionResult(ExpressionResultStorage $storage, Expr $expr): ?ExpressionResult
+	{
+		if (isset($this->provisionalExprIds[spl_object_id($expr)])) {
+			return null;
+		}
+
+		return $storage->findExpressionResult($expr);
+	}
+
 	public function storeExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
 		if (self::$guardNewWorld) {

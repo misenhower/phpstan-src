@@ -59,6 +59,19 @@ final class FiberScope extends MutatingScope
 	/** @api */
 	public function getType(Expr $node): Type
 	{
+		if (
+			!$this->nativeTypesPromoted
+			&& count($this->truthyValueExprs) === 0
+			&& count($this->falseyValueExprs) === 0
+		) {
+			// the same settled result the suspend round-trip's find path would
+			// hand back - skip the two fiber switches for the stored ask
+			$storedResult = $this->findSettledStoredResult($node);
+			if ($storedResult !== null) {
+				return $storedResult->getType();
+			}
+		}
+
 		/** @var ExpressionResult $expressionResult */
 		$expressionResult = Fiber::suspend(
 			new ExpressionResultRequest($node, $this),
@@ -89,6 +102,17 @@ final class FiberScope extends MutatingScope
 	/** @api */
 	public function getNativeType(Expr $expr): Type
 	{
+		if (
+			!$this->nativeTypesPromoted
+			&& count($this->truthyValueExprs) === 0
+			&& count($this->falseyValueExprs) === 0
+		) {
+			$storedResult = $this->findSettledStoredResult($expr);
+			if ($storedResult !== null) {
+				return $storedResult->getNativeType();
+			}
+		}
+
 		/** @var ExpressionResult $expressionResult */
 		$expressionResult = Fiber::suspend(
 			new ExpressionResultRequest($expr, $this),
