@@ -533,6 +533,26 @@ final class DefaultNarrowingHelper
 			return $exprType;
 		}
 
+		// A maybe verdict on a native-typed property whose inner chain is fully
+		// set can only mean "nullable value" or "maybe uninitialized". Reading an
+		// uninitialized typed property throws instead of yielding a value, so in
+		// the !isset() branch any read that completes yields null - the null pin
+		// is sound for both.
+		if ($isset === null && $isNullable) {
+			$resolution = $varResult->getIssetabilityResolution($s, false);
+			$link = $resolution->getLink();
+			$inner = $resolution->getInner();
+			if (
+				$link->isProperty()
+				&& $link->isReflectionNative()
+				&& $link->hasNativeType()
+				&& !$link->isVirtual()->yes()
+				&& ($inner === null || $inner->isSet(static fn (): bool => true) === true)
+			) {
+				return $exprType;
+			}
+		}
+
 		if (
 			$issetExpr instanceof ArrayDimFetch
 			&& $issetExpr->dim !== null

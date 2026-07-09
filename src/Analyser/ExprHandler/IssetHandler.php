@@ -132,6 +132,14 @@ final class IssetHandler implements ExprHandler
 
 		$nodeScopeResolver->callNodeCallbackWithExpression($nodeCallback, new IssetExpressionNode($expr, $varResults), $beforeScope, $storage, $context);
 
+		// The verdict and narrowing evaluate on the post-revert scope, not
+		// $beforeScope: revertNonNullability() leaves an originally-untracked
+		// nullable subject tracked at its original type (certainty yes), and the
+		// isSet() gate reads that as "the subject's value state is known" -
+		// !isset($this->prop) may then pin the property to null. Evaluating on
+		// $beforeScope would hide the device's holders from the gate.
+		$afterScope = $scope;
+
 		// lazily memoized multi-subject conjunction fold (ask-independent)
 		$foldAccTypes = null;
 
@@ -143,10 +151,10 @@ final class IssetHandler implements ExprHandler
 			isAlwaysTerminating: $isAlwaysTerminating,
 			throwPoints: $throwPoints,
 			impurePoints: $impurePoints,
-			typeCallback: static function (bool $nativeTypesPromoted) use ($varResults, $beforeScope): Type {
+			typeCallback: static function (bool $nativeTypesPromoted) use ($varResults, $afterScope): Type {
 				$issetResult = true;
 				foreach ($varResults as $varResult) {
-					$result = $varResult->getIssetabilityResolution($nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope, false)->isSet(static function (Type $type): ?bool {
+					$result = $varResult->getIssetabilityResolution($nativeTypesPromoted ? $afterScope->doNotTreatPhpDocTypesAsCertain() : $afterScope, false)->isSet(static function (Type $type): ?bool {
 						$isNull = $type->isNull();
 						if ($isNull->maybe()) {
 							return null;
@@ -171,10 +179,10 @@ final class IssetHandler implements ExprHandler
 
 				return new ConstantBooleanType($issetResult);
 			},
-			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $varResults, $chainResults, $nodeScopeResolver, $beforeScope, &$foldAccTypes): SpecifiedTypes {
+			specifyTypesCallback: function (TypeSpecifierContext $context, bool $nativeTypesPromoted) use ($expr, $varResults, $chainResults, $nodeScopeResolver, $afterScope, &$foldAccTypes): SpecifiedTypes {
 				// type of an already-processed chain link, read from its captured
 				// result on the evaluation point - never re-walked through the scope
-				$evaluationScope = $nativeTypesPromoted ? $beforeScope->doNotTreatPhpDocTypesAsCertain() : $beforeScope;
+				$evaluationScope = $nativeTypesPromoted ? $afterScope->doNotTreatPhpDocTypesAsCertain() : $afterScope;
 				$readType = $this->defaultNarrowingHelper->buildChainTypeReader($chainResults, $evaluationScope, $nodeScopeResolver);
 
 				if (count($expr->vars) === 0 || $context->null()) {
@@ -223,8 +231,8 @@ final class IssetHandler implements ExprHandler
 
 					$accExpr = new Isset_([$expr->vars[0]], $expr->getAttributes());
 					$accTypes = $makeSubjectTypes($expr->vars[0], $varResults[0]);
-					$accTruthyScope = $beforeScope->applySpecifiedTypes($accTypes($beforeScope, TypeSpecifierContext::createTruthy()));
-					$accFalseyScope = $beforeScope->applySpecifiedTypes($accTypes($beforeScope, TypeSpecifierContext::createFalsey()));
+					$accTruthyScope = $afterScope->applySpecifiedTypes($accTypes($afterScope, TypeSpecifierContext::createTruthy()));
+					$accFalseyScope = $afterScope->applySpecifiedTypes($accTypes($afterScope, TypeSpecifierContext::createFalsey()));
 
 					for ($i = 1, $varCount = count($expr->vars); $i < $varCount; $i++) {
 						$rightExprNode = new Isset_([$expr->vars[$i]], $expr->getAttributes());
@@ -250,7 +258,7 @@ final class IssetHandler implements ExprHandler
 						);
 						$accExpr = new BooleanAnd($leftExprNode, $rightExprNode);
 						$accTruthyScope = $accTruthyScope->applySpecifiedTypes($rightTypes($accTruthyScope, TypeSpecifierContext::createTruthy()));
-						$accFalseyScope = $beforeScope->applySpecifiedTypes($accTypes($beforeScope, TypeSpecifierContext::createFalsey()));
+						$accFalseyScope = $afterScope->applySpecifiedTypes($accTypes($afterScope, TypeSpecifierContext::createFalsey()));
 					}
 
 					$foldAccTypes = $accTypes;
