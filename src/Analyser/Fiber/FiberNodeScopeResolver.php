@@ -8,11 +8,14 @@ use PhpParser\Node\Expr;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultStorage;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\ReadVariableStateSnapshot;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\NoopNodeCallback;
 use PHPStan\Analyser\Scope;
 use PHPStan\DependencyInjection\AutowiredService;
 use PHPStan\ShouldNotHappenException;
+use PHPStan\Type\Type;
+use WeakMap;
 use function array_pop;
 use function count;
 use function get_class;
@@ -23,6 +26,13 @@ use function sprintf;
 #[AutowiredService(as: FiberNodeScopeResolver::class)]
 final class FiberNodeScopeResolver extends NodeScopeResolver
 {
+
+	/**
+	 * Last flush-priced answer per asked expression - see processPendingFibers().
+	 *
+	 * @var WeakMap<Expr, array{ReadVariableStateSnapshot, Type, Type}>|null
+	 */
+	private ?WeakMap $flushedOnDemandResults = null;
 
 	/**
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
@@ -145,13 +155,32 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 
 			$fiber = $pending['fiber'];
 
-			// Process the synthetic node with a duplicated storage so that the result
-			// computed from the asker's scope does not poison the real storage.
-			$expressionResult = $this->processExprOnDemand(
-				$request->expr,
-				$request->scope->toMutatingScope(),
-				$storage->duplicate(),
-			);
+			// Rules ask about the same (usually synthetic) node repeatedly across
+			// statement boundaries; the answer is reusable whenever nothing the
+			// expression reads changed since the walk. Only the state snapshot
+			// and the materialized types are retained - keeping the walk result
+			// would pin its scope and callback graphs for every parser-cached
+			// file. The hit is fabricated at the ask position, exactly where a
+			// fresh walk's result would sit.
+			$askScope = $request->scope->toMutatingScope();
+			$this->flushedOnDemandResults ??= new WeakMap();
+			$memoEntry = $this->flushedOnDemandResults[$request->expr] ?? null;
+			if ($memoEntry !== null && $memoEntry[0]->matches($askScope)) {
+				$expressionResult = $this->createEagerExpressionResult($askScope, $request->expr, $memoEntry[1], $memoEntry[2]);
+			} else {
+				// Process the node with a duplicated storage so that the result
+				// computed from the asker's scope does not poison the real storage.
+				$expressionResult = $this->processExprOnDemand(
+					$request->expr,
+					$askScope,
+					$storage->duplicate(),
+				);
+				$this->flushedOnDemandResults[$request->expr] = [
+					$expressionResult->takeReadVariableStateSnapshot(),
+					$expressionResult->getType(),
+					$expressionResult->getNativeType(),
+				];
+			}
 			$request = $fiber->resume($expressionResult);
 			$this->runFiberForNodeCallback($storage, $fiber, $request);
 

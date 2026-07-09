@@ -460,6 +460,24 @@ class NodeScopeResolver
 		return $storage->findExpressionResult($expr);
 	}
 
+	/** An effect-free result carrying eagerly known types, positioned at the given scope. */
+	protected function createEagerExpressionResult(MutatingScope $scope, Expr $expr, Type $type, Type $nativeType): ExpressionResult
+	{
+		return $this->expressionResultFactory->create(
+			$scope,
+			beforeScope: $scope,
+			expr: $expr,
+			hasYield: false,
+			isAlwaysTerminating: false,
+			throwPoints: [],
+			impurePoints: [],
+			typeCallback: null,
+			specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
+			type: $type,
+			nativeType: $nativeType,
+		);
+	}
+
 	public function storeExpressionResult(ExpressionResultStorage $storage, Expr $expr, ExpressionResult $expressionResult): void
 	{
 		if (self::$guardNewWorld) {
