@@ -22,6 +22,7 @@ use PHPStan\Type\Generic\TemplateTypeVarianceMap;
 use PHPStan\Type\MixedType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypehintHelper;
+use WeakMap;
 use function array_map;
 use function array_reverse;
 use function is_string;
@@ -32,6 +33,14 @@ use function strtolower;
  */
 class PhpFunctionFromParserNodeReflection implements FunctionReflection, ExtendedParametersAcceptor
 {
+
+	/**
+	 * The yield scan walks the whole body; reflections for the same node are
+	 * recreated per ask, so the answer is memoized on the AST node itself.
+	 *
+	 * @var WeakMap<FunctionLike, bool>|null
+	 */
+	private static ?WeakMap $generatorCache = null;
 
 	/** @var Function_|ClassMethod|Node\PropertyHook */
 	private Node\FunctionLike $functionLike;
@@ -277,17 +286,14 @@ class PhpFunctionFromParserNodeReflection implements FunctionReflection, Extende
 
 	public function isGenerator(): bool
 	{
-		return $this->nodeIsOrContainsYield($this->functionLike);
+		self::$generatorCache ??= new WeakMap();
+
+		return self::$generatorCache[$this->functionLike] ??= NodeScanner::nodeIsOrContainsYield($this->functionLike);
 	}
 
 	public function acceptsNamedArguments(): TrinaryLogic
 	{
 		return TrinaryLogic::createFromBoolean($this->acceptsNamedArguments);
-	}
-
-	private function nodeIsOrContainsYield(Node $node): bool
-	{
-		return NodeScanner::nodeIsOrContainsYield($node);
 	}
 
 	public function getAsserts(): Assertions
