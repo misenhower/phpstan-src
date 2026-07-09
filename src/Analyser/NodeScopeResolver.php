@@ -652,29 +652,14 @@ class NodeScopeResolver
 		StatementContext $context,
 	): InternalStatementResult
 	{
-		// make the storage this walk writes into scope-visible: loop-convergence
-		// passes thread a throwaway duplicate that would otherwise never reach
-		// the storage stack, so every in-pass ask (applySpecifiedTypes pricing,
-		// rules via Scope::getType) would miss the pass's own results and
-		// re-process real nodes on demand
-		$pushStorage = $scope->getCurrentExpressionResultStorage() !== $storage;
-		if ($pushStorage) {
-			$scope->pushExpressionResultStorage($storage);
-		}
-		try {
-			$statementResult = $this->processStmtNodesInternalWithoutFlushingPendingFibers(
-				$parentNode,
-				$stmts,
-				$scope,
-				$storage,
-				$nodeCallback,
-				$context,
-			);
-		} finally {
-			if ($pushStorage) {
-				$scope->popExpressionResultStorage();
-			}
-		}
+		$statementResult = $this->processStmtNodesInternalWithoutFlushingPendingFibers(
+			$parentNode,
+			$stmts,
+			$scope,
+			$storage,
+			$nodeCallback,
+			$context,
+		);
 		// Flush pending fibers only at a scope boundary - a function/method body,
 		// a class/trait body, a namespace. Nested control-flow statement lists
 		// (if/else branches, loop and switch/try bodies) must NOT flush: a rule
@@ -700,6 +685,38 @@ class NodeScopeResolver
 	 * @param callable(Node $node, Scope $scope): void $nodeCallback
 	 */
 	private function processStmtNodesInternalWithoutFlushingPendingFibers(
+		Node $parentNode,
+		array $stmts,
+		MutatingScope $scope,
+		ExpressionResultStorage $storage,
+		callable $nodeCallback,
+		StatementContext $context,
+	): InternalStatementResult
+	{
+		// make the storage this walk writes into scope-visible: loop-convergence
+		// passes (including the closure by-ref convergence, which calls this
+		// method directly) thread a throwaway duplicate that would otherwise
+		// never reach the storage stack, so every in-pass ask
+		// (applySpecifiedTypes pricing, rules via Scope::getType) would miss the
+		// pass's own results and re-process real nodes on demand
+		$pushStorage = $scope->getCurrentExpressionResultStorage() !== $storage;
+		if ($pushStorage) {
+			$scope->pushExpressionResultStorage($storage);
+		}
+		try {
+			return $this->doProcessStmtNodes($parentNode, $stmts, $scope, $storage, $nodeCallback, $context);
+		} finally {
+			if ($pushStorage) {
+				$scope->popExpressionResultStorage();
+			}
+		}
+	}
+
+	/**
+	 * @param Node\Stmt[] $stmts
+	 * @param callable(Node $node, Scope $scope): void $nodeCallback
+	 */
+	private function doProcessStmtNodes(
 		Node $parentNode,
 		array $stmts,
 		MutatingScope $scope,
@@ -1732,7 +1749,9 @@ class NodeScopeResolver
 					$foreachIterateeType = $condResult->getTypeOnScope($originalScope, false);
 					$foreachNativeIterateeType = $condResult->getTypeOnScope($originalScope, true);
 				} else {
-					$iterateeResult = $this->processExprOnDemand($stmt->expr, $originalScope, new ExpressionResultStorage());
+					// the duplicate lets subresults whose state matches answer from
+					// the already-processed iteratee instead of being re-priced
+					$iterateeResult = $this->processExprOnDemand($stmt->expr, $originalScope, $originalStorage->duplicate());
 					$foreachIterateeType = $iterateeResult->getType();
 					$foreachNativeIterateeType = $iterateeResult->getNativeType();
 				}
@@ -1742,17 +1761,27 @@ class NodeScopeResolver
 					$unrolledEndScope = $unrolledResult['endScope'];
 					$unrolledTotalKeys = $unrolledResult['totalKeys'];
 				} else {
-					$bodyScope = $this->enterForeach($originalScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
+					$scope->pushExpressionResultStorage($storage);
+					try {
+						$bodyScope = $this->enterForeach($originalScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
+					} finally {
+						$scope->popExpressionResultStorage();
+					}
 					$count = 0;
 					do {
 						$prevScope = $bodyScope;
 						$bodyScope = $bodyScope->mergeWith($nonEmptyIterateeScope);
 						$storage = $originalStorage->duplicate();
-						$bodyScope = $this->enterForeach($bodyScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
-						$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
-						$bodyScope = $bodyScopeResult->getScope();
-						foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
-							$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
+						$scope->pushExpressionResultStorage($storage);
+						try {
+							$bodyScope = $this->enterForeach($bodyScope, $storage, $originalScope, $stmt, $foreachIterateeType, $foreachNativeIterateeType, $nodeCallback);
+							$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
+							$bodyScope = $bodyScopeResult->getScope();
+							foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
+								$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
+							}
+						} finally {
+							$scope->popExpressionResultStorage();
 						}
 						if ($bodyScope->equals($prevScope)) {
 							break;
@@ -1975,24 +2004,32 @@ class NodeScopeResolver
 		} elseif ($stmt instanceof While_) {
 			$originalStorage = $storage;
 			$storage = $originalStorage->duplicate();
-			$condResult = $this->processExprNode($stmt, $stmt->cond, $scope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep());
-			$beforeCondBooleanType = ($this->treatPhpDocTypesAsCertain ? $condResult->getType() : $condResult->getNativeType())->toBoolean();
-			$condScope = $condResult->getFalseyScope();
-			if (!$context->isTopLevel() && $beforeCondBooleanType->isFalse()->yes()) {
-				if (!$this->polluteScopeWithLoopInitialAssignments) {
-					$scope = $condScope->mergeWith($scope);
-				}
+			// pass-local storages are pushed for the duration of each pass so
+			// in-pass asks (applySpecifiedTypes pricing, branch-scope derivation)
+			// read the pass's own results instead of re-pricing on demand
+			$scope->pushExpressionResultStorage($storage);
+			try {
+				$condResult = $this->processExprNode($stmt, $stmt->cond, $scope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep());
+				$beforeCondBooleanType = ($this->treatPhpDocTypesAsCertain ? $condResult->getType() : $condResult->getNativeType())->toBoolean();
+				$condScope = $condResult->getFalseyScope();
+				if (!$context->isTopLevel() && $beforeCondBooleanType->isFalse()->yes()) {
+					if (!$this->polluteScopeWithLoopInitialAssignments) {
+						$scope = $condScope->mergeWith($scope);
+					}
 
-				return new InternalStatementResult(
-					$scope,
-					$condResult->hasYield(),
-					false,
-					[],
-					$condResult->getThrowPoints(),
-					$condResult->getImpurePoints(),
-				);
+					return new InternalStatementResult(
+						$scope,
+						$condResult->hasYield(),
+						false,
+						[],
+						$condResult->getThrowPoints(),
+						$condResult->getImpurePoints(),
+					);
+				}
+				$bodyScope = $condResult->getTruthyScope();
+			} finally {
+				$scope->popExpressionResultStorage();
 			}
-			$bodyScope = $condResult->getTruthyScope();
 
 			if ($context->isTopLevel()) {
 				$count = 0;
@@ -2000,11 +2037,16 @@ class NodeScopeResolver
 					$prevScope = $bodyScope;
 					$bodyScope = $bodyScope->mergeWith($scope);
 					$storage = $originalStorage->duplicate();
-					$bodyScope = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep())->getTruthyScope();
-					$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
-					$bodyScope = $bodyScopeResult->getScope();
-					foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
-						$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
+					$scope->pushExpressionResultStorage($storage);
+					try {
+						$bodyScope = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep())->getTruthyScope();
+						$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
+						$bodyScope = $bodyScopeResult->getScope();
+						foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
+							$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
+						}
+					} finally {
+						$scope->popExpressionResultStorage();
 					}
 					if ($bodyScope->equals($prevScope)) {
 						break;
@@ -2027,7 +2069,9 @@ class NodeScopeResolver
 			// the loop condition narrows the post-loop scope to its falsey branch;
 			// $finalScope (after the body ran) is a different scope than the condition's
 			// own, so reprocess the condition there rather than re-running its result.
-			$finalScope = $finalScope->applySpecifiedTypes($this->processExprOnDemand($stmt->cond, $finalScope, new ExpressionResultStorage())->getSpecifiedTypesForScope($finalScope, TypeSpecifierContext::createFalsey()));
+			// The duplicate lets subresults whose state did not change in the body
+			// answer from the final pass instead of being re-priced.
+			$finalScope = $finalScope->applySpecifiedTypes($this->processExprOnDemand($stmt->cond, $finalScope, $storage->duplicate())->getSpecifiedTypesForScope($finalScope, TypeSpecifierContext::createFalsey()));
 
 			$alwaysIterates = false;
 			$neverIterates = false;
@@ -2097,17 +2141,22 @@ class NodeScopeResolver
 					$prevScope = $bodyScope;
 					$bodyScope = $bodyScope->mergeWith($scope);
 					$storage = $originalStorage->duplicate();
-					$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
-					$alwaysTerminating = $bodyScopeResult->isAlwaysTerminating();
-					$bodyScope = $bodyScopeResult->getScope();
-					foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
-						$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
+					$scope->pushExpressionResultStorage($storage);
+					try {
+						$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
+						$alwaysTerminating = $bodyScopeResult->isAlwaysTerminating();
+						$bodyScope = $bodyScopeResult->getScope();
+						foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
+							$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
+						}
+						$finalScope = $alwaysTerminating ? $finalScope : $bodyScope->mergeWith($finalScope);
+						foreach ($bodyScopeResult->getExitPointsByType(Break_::class) as $breakExitPoint) {
+							$finalScope = $breakExitPoint->getScope()->mergeWith($finalScope);
+						}
+						$bodyScope = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep())->getTruthyScope();
+					} finally {
+						$scope->popExpressionResultStorage();
 					}
-					$finalScope = $alwaysTerminating ? $finalScope : $bodyScope->mergeWith($finalScope);
-					foreach ($bodyScopeResult->getExitPointsByType(Break_::class) as $breakExitPoint) {
-						$finalScope = $breakExitPoint->getScope()->mergeWith($finalScope);
-					}
-					$bodyScope = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep())->getTruthyScope();
 					if ($bodyScope->equals($prevScope)) {
 						break;
 					}
@@ -2128,9 +2177,16 @@ class NodeScopeResolver
 				$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
 			}
 
+			// the condition is processed once on the post-body scope; its result
+			// answers both the always-iterates check below and the falsey post-loop
+			// scope - the previous scope-based read here was a guaranteed storage
+			// miss (the condition was only ever stored into discarded convergence
+			// duplicates) that re-priced the condition on demand before this walk
+			$condResult = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep());
+
 			$alwaysIterates = false;
 			if ($context->isTopLevel()) {
-				$condBooleanType = ($this->treatPhpDocTypesAsCertain ? $this->readTypeOfMaybeStored($stmt->cond, $bodyScope) : $this->readTypeOfMaybeStored($stmt->cond, $bodyScope->doNotTreatPhpDocTypesAsCertain()))->toBoolean();
+				$condBooleanType = ($this->treatPhpDocTypesAsCertain ? $condResult->getType() : $condResult->getNativeType())->toBoolean();
 				$alwaysIterates = $condBooleanType->isTrue()->yes();
 			}
 
@@ -2146,13 +2202,10 @@ class NodeScopeResolver
 				$finalScope = $scope;
 			}
 			if (!$alwaysTerminating) {
-				$condResult = $this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep());
 				$hasYield = $condResult->hasYield();
 				$throwPoints = $condResult->getThrowPoints();
 				$impurePoints = $condResult->getImpurePoints();
 				$finalScope = $condResult->getFalseyScope();
-			} else {
-				$this->processExprNode($stmt, $stmt->cond, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep());
 			}
 
 			$breakExitPoints = $bodyScopeResult->getExitPointsByType(Break_::class);
@@ -2192,23 +2245,27 @@ class NodeScopeResolver
 			$lastCondExpr = array_last($stmt->cond) ?? null;
 			if (count($stmt->cond) > 0) {
 				$storage = $originalStorage->duplicate();
+				$scope->pushExpressionResultStorage($storage);
+				try {
+					foreach ($stmt->cond as $condExpr) {
+						$condResult = $this->processExprNode($stmt, $condExpr, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep());
+						$initScope = $condResult->getScope();
+						$condResultScope = $condResult->getScope();
 
-				foreach ($stmt->cond as $condExpr) {
-					$condResult = $this->processExprNode($stmt, $condExpr, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep());
-					$initScope = $condResult->getScope();
-					$condResultScope = $condResult->getScope();
+						// only the last condition expression is relevant whether the loop continues
+						// see https://www.php.net/manual/en/control-structures.for.php
+						if ($condExpr === $lastCondExpr) {
+							$condTruthiness = ($this->treatPhpDocTypesAsCertain ? $condResult->getType() : $condResult->getNativeType())->toBoolean();
+							$isIterableAtLeastOnce = $isIterableAtLeastOnce->and($condTruthiness->isTrue());
+						}
 
-					// only the last condition expression is relevant whether the loop continues
-					// see https://www.php.net/manual/en/control-structures.for.php
-					if ($condExpr === $lastCondExpr) {
-						$condTruthiness = ($this->treatPhpDocTypesAsCertain ? $condResult->getType() : $condResult->getNativeType())->toBoolean();
-						$isIterableAtLeastOnce = $isIterableAtLeastOnce->and($condTruthiness->isTrue());
+						$hasYield = $hasYield || $condResult->hasYield();
+						$throwPoints = array_merge($throwPoints, $condResult->getThrowPoints());
+						$impurePoints = array_merge($impurePoints, $condResult->getImpurePoints());
+						$bodyScope = $condResult->getTruthyScope();
 					}
-
-					$hasYield = $hasYield || $condResult->hasYield();
-					$throwPoints = array_merge($throwPoints, $condResult->getThrowPoints());
-					$impurePoints = array_merge($impurePoints, $condResult->getImpurePoints());
-					$bodyScope = $condResult->getTruthyScope();
+				} finally {
+					$scope->popExpressionResultStorage();
 				}
 			}
 
@@ -2218,21 +2275,26 @@ class NodeScopeResolver
 					$prevScope = $bodyScope;
 					$storage = $originalStorage->duplicate();
 					$bodyScope = $bodyScope->mergeWith($initScope);
-					if ($lastCondExpr !== null) {
-						$bodyScope = $this->processExprNode($stmt, $lastCondExpr, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep())->getTruthyScope();
-					}
-					$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
-					$bodyScope = $bodyScopeResult->getScope();
-					foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
-						$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
-					}
+					$scope->pushExpressionResultStorage($storage);
+					try {
+						if ($lastCondExpr !== null) {
+							$bodyScope = $this->processExprNode($stmt, $lastCondExpr, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createDeep())->getTruthyScope();
+						}
+						$bodyScopeResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $bodyScope, $storage, new NoopNodeCallback(), $context->enterDeep())->filterOutLoopExitPoints();
+						$bodyScope = $bodyScopeResult->getScope();
+						foreach ($bodyScopeResult->getExitPointsByType(Continue_::class) as $continueExitPoint) {
+							$bodyScope = $bodyScope->mergeWith($continueExitPoint->getScope());
+						}
 
-					foreach ($stmt->loop as $loopExpr) {
-						$exprResult = $this->processExprNode($stmt, $loopExpr, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createTopLevel());
-						$bodyScope = $exprResult->getScope();
-						$hasYield = $hasYield || $exprResult->hasYield();
-						$throwPoints = array_merge($throwPoints, $exprResult->getThrowPoints());
-						$impurePoints = array_merge($impurePoints, $exprResult->getImpurePoints());
+						foreach ($stmt->loop as $loopExpr) {
+							$exprResult = $this->processExprNode($stmt, $loopExpr, $bodyScope, $storage, new NoopNodeCallback(), ExpressionContext::createTopLevel());
+							$bodyScope = $exprResult->getScope();
+							$hasYield = $hasYield || $exprResult->hasYield();
+							$throwPoints = array_merge($throwPoints, $exprResult->getThrowPoints());
+							$impurePoints = array_merge($impurePoints, $exprResult->getImpurePoints());
+						}
+					} finally {
+						$scope->popExpressionResultStorage();
 					}
 
 					if ($bodyScope->equals($prevScope)) {
@@ -2251,8 +2313,13 @@ class NodeScopeResolver
 
 			$alwaysIterates = TrinaryLogic::createFromBoolean($context->isTopLevel());
 			if ($lastCondExpr !== null) {
-				$alwaysIterates = $alwaysIterates->and($this->readTypeOfMaybeStored($lastCondExpr, $bodyScope)->toBoolean()->isTrue());
-				$bodyScope = $this->processExprNode($stmt, $lastCondExpr, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep())->getTruthyScope();
+				// process the condition once and read the always-iterates check off
+				// its result - the previous scope-based read was a guaranteed
+				// storage miss (the condition was only stored into discarded
+				// convergence duplicates) that re-priced it on demand
+				$condResult = $this->processExprNode($stmt, $lastCondExpr, $bodyScope, $storage, $nodeCallback, ExpressionContext::createDeep());
+				$alwaysIterates = $alwaysIterates->and($condResult->getType()->toBoolean()->isTrue());
+				$bodyScope = $condResult->getTruthyScope();
 				$bodyScope = $this->inferForLoopExpressions($stmt, $lastCondExpr, $bodyScope, $storage);
 			}
 
