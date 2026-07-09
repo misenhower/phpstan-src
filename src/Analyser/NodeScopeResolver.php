@@ -4225,6 +4225,16 @@ class NodeScopeResolver
 		// comes from the post-loop resolved acceptor.
 		$metadataAcceptor = $parametersAcceptors[0] ?? null;
 
+		// Whether selecting an acceptor is type-driven at all: multiple variants to
+		// choose between, templates or conditionals to resolve from the arg types,
+		// or named-argument variants. When it is not, the gathered arg types can
+		// never influence the selected acceptor, so the faithful-return gather walk
+		// of a closure/arrow argument (gatherClosureArgType()) would be pure waste -
+		// its signature-only shallow type keeps the count/name bookkeeping correct.
+		$typeDrivenAcceptorSelection = count($parametersAcceptors) > 1
+			|| $namedArgumentsVariants !== null
+			|| ($metadataAcceptor !== null && ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableType($metadataAcceptor));
+
 		$hasYield = false;
 		$throwPoints = [];
 		$impurePoints = [];
@@ -4275,7 +4285,9 @@ class NodeScopeResolver
 				// contribution (a TValue from its return) participates in the final
 				// resolution (see gatherClosureArgType()).
 				$originalArgForGather = $arg->getAttribute(ArgumentsNormalizer::ORIGINAL_ARG_ATTRIBUTE) ?? $arg;
-				$gatheredArgTypeByIndex[$i] = $this->gatherClosureArgType($parametersAcceptors, $i, $arg->value, $scope);
+				$gatheredArgTypeByIndex[$i] = $typeDrivenAcceptorSelection
+					? $this->gatherClosureArgType($parametersAcceptors, $i, $arg->value, $scope)
+					: $this->container->getByType(ClosureTypeResolver::class)->getClosureType($scope, $arg->value, shallow: true);
 				$this->addGatheredArgType($gatheredTypes, $gatheredUnpack, $gatheredHasName, $originalArgForGather, $i, $gatheredArgTypeByIndex[$i]);
 			}
 
@@ -4445,7 +4457,19 @@ class NodeScopeResolver
 							$closureResult->getClosureTypeImpurePoints(),
 							$closureResult->getInvalidateExpressions(),
 						),
-						nativeType: $closureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
+						// the native flavour reads the stored native types off the same
+						// single body walk - no second walk on the promoted scope
+						nativeType: $closureTypeResolver->buildClosureTypeForClosure(
+							$scopeToPass,
+							$arg->value,
+							$closureResult->getGatheredReturnStatements(),
+							$closureResult->getGatheredYieldStatements(),
+							$closureResult->getExecutionEnds(),
+							$closureResult->getThrowPoints(),
+							$closureResult->getClosureTypeImpurePoints(),
+							$closureResult->getInvalidateExpressions(),
+							native: true,
+						),
 						typeCallback: null,
 						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 					));
@@ -4541,14 +4565,20 @@ class NodeScopeResolver
 						$throwPoints = array_merge($throwPoints, array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->isExplicit() ? InternalThrowPoint::createExplicit($scope, $throwPoint->getType(), $arg->value, $throwPoint->canContainAnyThrowable()) : InternalThrowPoint::createImplicit($scope, $arg->value), $arrowFunctionExprResult->getThrowPoints()));
 						$impurePoints = array_merge($impurePoints, $arrowFunctionExprResult->getImpurePoints());
 					}
-					if ($this->shouldInvalidateCallbackExpressions($parameter)) {
-						$arrowFunctionType = $scope->getType($arg->value);
-						if ($arrowFunctionType instanceof ClosureType) {
-							$deferredInvalidateExpressions[] = [$arrowFunctionType->getInvalidateExpressions(), $arrowFunctionType->getUsedVariables()];
-						}
-					}
 					$arrowFunctionClosureTypeResolver = $this->container->getByType(ClosureTypeResolver::class);
 					$arrowFunctionScope = $arrowFunctionResult->getArrowFunctionScope();
+					// both flavours are built from the single body walk (see
+					// ArrowFunctionHandler); the built type also answers the
+					// invalidate-expressions read below without re-walking the
+					// still-unstored node through Scope::getType()
+					$arrowFunctionType = $arrowFunctionClosureTypeResolver->buildClosureTypeForArrowFunction(
+						$scopeToPass,
+						$arg->value,
+						$arrowFunctionScope,
+						$arrowFunctionResult->getClosureTypeThrowPoints(),
+						$arrowFunctionResult->getClosureTypeImpurePoints(),
+						$arrowFunctionResult->getInvalidateExpressions(),
+					);
 					$this->storeExpressionResult($storage, $arg->value, $this->expressionResultFactory->create(
 						$arrowFunctionExprResult->getScope(),
 						beforeScope: $scopeToPass,
@@ -4557,18 +4587,22 @@ class NodeScopeResolver
 						isAlwaysTerminating: $arrowFunctionExprResult->isAlwaysTerminating(),
 						throwPoints: $arrowFunctionExprResult->getThrowPoints(),
 						impurePoints: $arrowFunctionExprResult->getImpurePoints(),
-						type: $arrowFunctionClosureTypeResolver->buildClosureTypeForArrowFunction(
+						type: $arrowFunctionType,
+						nativeType: $arrowFunctionClosureTypeResolver->buildClosureTypeForArrowFunction(
 							$scopeToPass,
 							$arg->value,
 							$arrowFunctionScope,
 							$arrowFunctionResult->getClosureTypeThrowPoints(),
 							$arrowFunctionResult->getClosureTypeImpurePoints(),
 							$arrowFunctionResult->getInvalidateExpressions(),
+							native: true,
 						),
-						nativeType: $arrowFunctionClosureTypeResolver->getClosureType($scopeToPass->doNotTreatPhpDocTypesAsCertain(), $arg->value),
 						typeCallback: null,
 						specifyTypesCallback: SpecifiedTypes::emptySpecifyCallback(),
 					));
+					if ($this->shouldInvalidateCallbackExpressions($parameter)) {
+						$deferredInvalidateExpressions[] = [$arrowFunctionType->getInvalidateExpressions(), $arrowFunctionType->getUsedVariables()];
+					}
 	}
 			} else {
 				$enterExpressionAssignForByRef = $assignByReference && $arg->value instanceof ArrayDimFetch && $arg->value->dim === null;

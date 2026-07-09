@@ -275,13 +275,14 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 		array $throwPoints,
 		array $impurePoints,
 		array $invalidateExpressions,
+		bool $native = false,
 	): ClosureType
 	{
 		if ($this->bodyWalkHasOwnParameterTypes($expr)) {
-			return $this->getClosureType($scope, $expr);
+			return $this->getClosureType($native ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope, $expr);
 		}
 
-		[$parameters, $isVariadic] = $this->buildParametersAndAcceptors($scope, $expr);
+		[$parameters, $isVariadic, $callableParameters, $nativeCallableParameters] = $this->buildParametersAndAcceptors($scope, $expr);
 
 		return $this->buildClosureTypeFromClosureWalk(
 			$scope,
@@ -294,6 +295,16 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 			array_map(static fn (InternalThrowPoint $throwPoint) => $throwPoint->toPublic(), $throwPoints),
 			$impurePoints,
 			$invalidateExpressions,
+			// the flavour-correct key both keeps the native build from clobbering
+			// the phpdoc cache slot and lets a later getClosureType() ask on the
+			// promoted scope answer from this build instead of re-walking
+			$this->closureContextCacheKey(
+				$native ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope,
+				$expr,
+				$native ? $nativeCallableParameters : $callableParameters,
+				$parameters,
+			),
+			$native,
 		);
 	}
 
@@ -321,11 +332,19 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 			return $this->getClosureType($native ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope, $expr);
 		}
 
-		[$parameters, $isVariadic, $callableParameters] = $this->buildParametersAndAcceptors($scope, $expr);
+		[$parameters, $isVariadic, $callableParameters, $nativeCallableParameters] = $this->buildParametersAndAcceptors($scope, $expr);
 
 		$returnType = $this->resolveArrowFunctionReturnType($scope, $arrowScope, $expr, $native);
 
-		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, [], $this->closureContextCacheKey($scope, $expr, $callableParameters, $parameters));
+		// the flavour-correct key both keeps the native build from clobbering the
+		// phpdoc cache slot and lets a later getClosureType() ask on the promoted
+		// scope answer from this build instead of re-walking
+		return $this->assembleClosureType($scope, $expr, $parameters, $isVariadic, $returnType, $throwPoints, $impurePoints, $invalidateExpressions, [], $this->closureContextCacheKey(
+			$native ? $scope->doNotTreatPhpDocTypesAsCertain() : $scope,
+			$expr,
+			$native ? $nativeCallableParameters : $callableParameters,
+			$parameters,
+		));
 	}
 
 	/**
@@ -453,10 +472,14 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 		array $impurePoints,
 		array $invalidateExpressions,
 		?string $cacheKey = null,
+		bool $native = false,
 	): ClosureType
 	{
 		$onlyNeverExecutionEnds = $this->deriveOnlyNeverExecutionEnds($executionEnds);
 
+		// like resolveArrowFunctionReturnType(): the single walk stored both
+		// flavours on the gathered scopes, so the native flavour just reads the
+		// stored native types - no second body walk on the promoted scope
 		$returnTypes = [];
 		$hasNull = false;
 		foreach ($returnStatements as [$returnNode, $returnScope]) {
@@ -465,7 +488,11 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 				continue;
 			}
 
-			$returnTypes[] = $returnScope->toMutatingScope()->getType($returnNode->expr);
+			$readScope = $returnScope->toMutatingScope();
+			if ($native) {
+				$readScope = $readScope->doNotTreatPhpDocTypesAsCertain();
+			}
+			$returnTypes[] = $readScope->getType($returnNode->expr);
 		}
 
 		if (count($returnTypes) === 0) {
@@ -488,25 +515,29 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 			$keyTypes = [];
 			$valueTypes = [];
 			foreach ($yieldStatements as [$yieldNode, $yieldScope]) {
+				$readScope = $yieldScope->toMutatingScope();
+				if ($native) {
+					$readScope = $readScope->doNotTreatPhpDocTypesAsCertain();
+				}
 				if ($yieldNode instanceof Yield_) {
 					if ($yieldNode->key === null) {
 						$keyTypes[] = new IntegerType();
 					} else {
-						$keyTypes[] = $yieldScope->toMutatingScope()->getType($yieldNode->key);
+						$keyTypes[] = $readScope->getType($yieldNode->key);
 					}
 
 					if ($yieldNode->value === null) {
 						$valueTypes[] = new NullType();
 					} else {
-						$valueTypes[] = $yieldScope->toMutatingScope()->getType($yieldNode->value);
+						$valueTypes[] = $readScope->getType($yieldNode->value);
 					}
 
 					continue;
 				}
 
-				$yieldFromType = $yieldScope->toMutatingScope()->getType($yieldNode->expr);
-				$keyTypes[] = $yieldScope->toMutatingScope()->getIterableKeyType($yieldFromType);
-				$valueTypes[] = $yieldScope->toMutatingScope()->getIterableValueType($yieldFromType);
+				$yieldFromType = $readScope->getType($yieldNode->expr);
+				$keyTypes[] = $readScope->getIterableKeyType($yieldFromType);
+				$valueTypes[] = $readScope->getIterableValueType($yieldFromType);
 			}
 
 			$returnType = new GenericObjectType(Generator::class, [
