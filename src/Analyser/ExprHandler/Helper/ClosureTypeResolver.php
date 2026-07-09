@@ -28,6 +28,8 @@ use PHPStan\Parser\ImmediatelyInvokedClosureVisitor;
 use PHPStan\Reflection\Callables\SimpleImpurePoint;
 use PHPStan\Reflection\Callables\SimpleThrowPoint;
 use PHPStan\Reflection\ExtendedParameterReflection;
+use PHPStan\Reflection\InitializerExprContext;
+use PHPStan\Reflection\InitializerExprTypeResolver;
 use PHPStan\Reflection\Native\NativeParameterReflection;
 use PHPStan\Reflection\ParameterReflection;
 use PHPStan\Reflection\PassedByReference;
@@ -74,6 +76,7 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 
 	public function __construct(
 		private NodeScopeResolver $nodeScopeResolver,
+		private InitializerExprTypeResolver $initializerExprTypeResolver,
 	)
 	{
 		$this->cachedTypes = new WeakMap();
@@ -712,7 +715,9 @@ final class ClosureTypeResolver implements PerFileAnalysisResettable
 					? PassedByReference::createCreatesNewVariable()
 					: PassedByReference::createNo(),
 				$param->variadic,
-				$param->default !== null ? $scope->getType($param->default) : null,
+				// a default is a constant expression - price it without a scope
+				// walk, the same way parameter defaults are priced elsewhere
+				$param->default !== null ? $this->initializerExprTypeResolver->getType($param->default, InitializerExprContext::fromScope($scope)) : null,
 			);
 		}
 
