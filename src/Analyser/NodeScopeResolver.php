@@ -1040,8 +1040,7 @@ class NodeScopeResolver
 			$bodyStorage = $storage->duplicate();
 			$scope->pushExpressionResultStorage($bodyStorage);
 			try {
-				$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $functionScope, $bodyStorage, static function (Node $node, Scope $scope) use ($nodeCallback, $functionScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$functionImpurePoints): void {
-					$nodeCallback($node, $scope);
+				$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $functionScope, $bodyStorage, new GatheringNodeCallback(static function (Node $node, Scope $scope) use ($functionScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$functionImpurePoints): void {
 					if ($scope->getFunction() !== $functionScope->getFunction()) {
 						return;
 					}
@@ -1070,7 +1069,7 @@ class NodeScopeResolver
 					}
 
 					$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
-				}, StatementContext::createTopLevel())->toPublic();
+				}, $nodeCallback), StatementContext::createTopLevel())->toPublic();
 
 				$this->callNodeCallback($nodeCallback, new FunctionReturnStatementsNode(
 					$stmt,
@@ -1207,8 +1206,7 @@ class NodeScopeResolver
 				$bodyStorage = $storage->duplicate();
 				$scope->pushExpressionResultStorage($bodyStorage);
 				try {
-					$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $methodScope, $bodyStorage, function (Node $node, Scope $scope) use ($nodeCallback, $methodScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$methodImpurePoints): void {
-						$nodeCallback($node, $scope);
+					$statementResult = $this->processStmtNodesInternal($stmt, $stmt->stmts, $methodScope, $bodyStorage, new GatheringNodeCallback(function (Node $node, Scope $scope) use ($methodScope, &$gatheredReturnStatements, &$gatheredYieldStatements, &$executionEnds, &$methodImpurePoints): void {
 						if ($scope->getFunction() !== $methodScope->getFunction()) {
 							return;
 						}
@@ -1246,7 +1244,7 @@ class NodeScopeResolver
 						}
 
 						$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
-					}, StatementContext::createTopLevel())->toPublic();
+					}, $nodeCallback), StatementContext::createTopLevel())->toPublic();
 
 					$methodReflection = $methodScope->getFunction();
 					if (!$methodReflection instanceof PhpMethodFromParserNodeReflection) {
@@ -1372,7 +1370,7 @@ class NodeScopeResolver
 			}
 			$hasAssign = false;
 			$currentScope = $scope;
-			$result = $this->processExprNode($stmt, $stmt->expr, $scope, $storage, static function (Node $node, Scope $scope) use ($nodeCallback, $currentScope, &$hasAssign): void {
+			$result = $this->processExprNode($stmt, $stmt->expr, $scope, $storage, new GatheringNodeCallback(static function (Node $node, Scope $scope) use ($currentScope, &$hasAssign): void {
 				if (
 					($node instanceof VariableAssignNode || $node instanceof PropertyAssignNode)
 					&& $scope->getAnonymousFunctionReflection() === $currentScope->getAnonymousFunctionReflection()
@@ -1380,8 +1378,7 @@ class NodeScopeResolver
 				) {
 					$hasAssign = true;
 				}
-				$nodeCallback($node, $scope);
-			}, ExpressionContext::createTopLevel());
+			}, $nodeCallback), ExpressionContext::createTopLevel());
 			$throwPoints = array_filter($result->getThrowPoints(), static fn ($throwPoint) => $throwPoint->isExplicit());
 			if (
 				count($result->getImpurePoints()) === 0
@@ -3685,8 +3682,7 @@ class NodeScopeResolver
 		$gatheredYieldStatementsWithScope = [];
 		$closureImpurePoints = [];
 		$invalidateExpressions = [];
-		$closureStmtsCallback = static function (Node $node, Scope $scope) use ($nodeCallback, &$executionEnds, &$gatheredReturnStatements, &$gatheredReturnStatementsWithScope, &$gatheredYieldStatements, &$gatheredYieldStatementsWithScope, &$closureScope, &$closureImpurePoints, &$invalidateExpressions): void {
-			$nodeCallback($node, $scope);
+		$closureStmtsCallback = new GatheringNodeCallback(static function (Node $node, Scope $scope) use (&$executionEnds, &$gatheredReturnStatements, &$gatheredReturnStatementsWithScope, &$gatheredYieldStatements, &$gatheredYieldStatementsWithScope, &$closureScope, &$closureImpurePoints, &$invalidateExpressions): void {
 			if ($scope->getAnonymousFunctionReflection() !== $closureScope->getAnonymousFunctionReflection()) {
 				return;
 			}
@@ -3719,7 +3715,7 @@ class NodeScopeResolver
 
 			$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
 			$gatheredReturnStatementsWithScope[] = [$node, $scope];
-		};
+		}, $nodeCallback);
 
 		if (count($byRefUses) === 0) {
 			$statementResult = $this->processStmtNodesInternalWithoutFlushingPendingFibers($expr, $expr->stmts, $closureScope, $storage, $closureStmtsCallback, StatementContext::createTopLevel());
@@ -3907,8 +3903,7 @@ class NodeScopeResolver
 		// feeds ClosureTypeResolver::buildClosureTypeForArrowFunction().
 		$arrowFunctionImpurePoints = [];
 		$invalidateExpressions = [];
-		$arrowFunctionStmtsCallback = static function (Node $node, Scope $innerScope) use ($nodeCallback, $arrowFunctionScope, &$arrowFunctionImpurePoints, &$invalidateExpressions): void {
-			$nodeCallback($node, $innerScope);
+		$arrowFunctionStmtsCallback = new GatheringNodeCallback(static function (Node $node, Scope $innerScope) use ($arrowFunctionScope, &$arrowFunctionImpurePoints, &$invalidateExpressions): void {
 			if ($innerScope->getAnonymousFunctionReflection() !== $arrowFunctionScope->getAnonymousFunctionReflection()) {
 				return;
 			}
@@ -3930,7 +3925,7 @@ class NodeScopeResolver
 				true,
 			);
 			$invalidateExpressions[] = new InvalidateExprNode($node->getPropertyFetch());
-		};
+		}, $nodeCallback);
 
 		$exprResult = $this->processExprNode($stmt, $expr->expr, $arrowFunctionScope, $storage, $arrowFunctionStmtsCallback, ExpressionContext::createTopLevel());
 
@@ -4235,8 +4230,7 @@ class NodeScopeResolver
 			$gatheredReturnStatements = [];
 			$executionEnds = [];
 			$methodImpurePoints = [];
-			$statementResult = $this->processStmtNodesInternal(new PropertyHookStatementNode($hook), $stmts, $hookScope, $storage, static function (Node $node, Scope $scope) use ($nodeCallback, $hookScope, &$gatheredReturnStatements, &$executionEnds, &$hookImpurePoints): void {
-				$nodeCallback($node, $scope);
+			$statementResult = $this->processStmtNodesInternal(new PropertyHookStatementNode($hook), $stmts, $hookScope, $storage, new GatheringNodeCallback(static function (Node $node, Scope $scope) use ($hookScope, &$gatheredReturnStatements, &$executionEnds, &$hookImpurePoints): void {
 				if ($scope->getFunction() !== $hookScope->getFunction()) {
 					return;
 				}
@@ -4262,7 +4256,7 @@ class NodeScopeResolver
 				}
 
 				$gatheredReturnStatements[] = new ReturnStatement($scope, $node);
-			}, StatementContext::createTopLevel())->toPublic();
+			}, $nodeCallback), StatementContext::createTopLevel())->toPublic();
 
 			$this->callNodeCallback($nodeCallback, new PropertyHookReturnStatementsNode(
 				$hook,

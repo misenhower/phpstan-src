@@ -19,6 +19,7 @@ use PHPStan\Analyser\ExpressionContext;
 use PHPStan\Analyser\ExpressionResult;
 use PHPStan\Analyser\ExpressionResultFactory;
 use PHPStan\Analyser\ExpressionResultStorage;
+use PHPStan\Analyser\GatheringNodeCallback;
 use PHPStan\Analyser\ExprHandler;
 use PHPStan\Analyser\ExprHandler\Helper\DefaultNarrowingHelper;
 use PHPStan\Analyser\ExprHandler\Helper\DynamicReturnTypeStoragePrimer;
@@ -263,7 +264,7 @@ final class FuncCallHandler implements ExprHandler
 			if ($firstParamName !== null) {
 				$arrayWalkArrayArg = $normalizedExpr->getArgs()[0]->value;
 
-				$nodeCallbackForArgs = static function (Node $node, Scope $scope) use ($nodeCallback, $callbackArg, $firstParamName, &$arrayWalkValueTypes): void {
+				$nodeCallbackForArgs = new GatheringNodeCallback(static function (Node $node, Scope $scope) use ($callbackArg, $firstParamName, &$arrayWalkValueTypes): void {
 					if ($node instanceof ClosureReturnStatementsNode && $node->getClosureExpr() === $callbackArg) {
 						$types = [];
 						$nativeTypes = [];
@@ -291,8 +292,7 @@ final class FuncCallHandler implements ExprHandler
 							];
 						}
 					}
-					$nodeCallback($node, $scope);
-				};
+				}, $nodeCallback);
 			}
 		}
 
