@@ -871,6 +871,12 @@ final class AssignHandler implements ExprHandler
 			}
 
 			$scopeBeforeAssignEval = $scope;
+			// The raw target fetch was emitted to node callbacks at the top of
+			// processAssignVar() but the assign flow never processes it as a
+			// read. Price and store it once here, consuming the receiver's and
+			// name's stored results, so askers parked on it (DependencyResolver,
+			// property rules) resume with its pre-assign type.
+			$nodeScopeResolver->processExprNodeConsumingStored($stmt, $var, $scopeBeforeAssignEval, $storage, new NoopNodeCallback(), $context->enterDeep());
 			$result = $processExprCallback($scope);
 			$hasYield = $hasYield || $result->hasYield();
 			$throwPoints = array_merge($throwPoints, $result->getThrowPoints());
@@ -983,6 +989,9 @@ final class AssignHandler implements ExprHandler
 			}
 
 			$scopeBeforeAssignEval = $scope;
+			// Same as the PropertyFetch branch above: the emitted target fetch
+			// needs a stored result for parked askers.
+			$nodeScopeResolver->processExprNodeConsumingStored($stmt, $var, $scopeBeforeAssignEval, $storage, new NoopNodeCallback(), $context->enterDeep());
 			$result = $processExprCallback($scope);
 			$hasYield = $hasYield || $result->hasYield();
 			$throwPoints = array_merge($throwPoints, $result->getThrowPoints());

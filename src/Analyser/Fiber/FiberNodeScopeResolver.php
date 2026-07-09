@@ -152,8 +152,16 @@ final class FiberNodeScopeResolver extends NodeScopeResolver
 			// on-demand path here. A node from the file's parsed AST left pending
 			// means a rule asked about its type but it was never processed and
 			// stored during natural traversal - a gap to fix at the producing
-			// handler. Guard kept dormant; enable with PHPSTAN_GUARD_NW=1.
-			if (self::$guardNewWorld && isset(self::$guardRealExprIds[spl_object_id($request->expr)])) {
+			// handler. A node that WAS stored but whose per-body storage has been
+			// released since (class-level rules asking about gathered method-body
+			// exprs) is fine - the on-demand re-price below is the rule-facing
+			// bridge for those, same as in the other guards' processed check.
+			// Guard kept dormant; enable with PHPSTAN_GUARD_NW=1.
+			if (
+				self::$guardNewWorld
+				&& isset(self::$guardRealExprIds[spl_object_id($request->expr)])
+				&& !isset(self::$guardProcessedExprIds[spl_object_id($request->expr)])
+			) {
 				throw new ShouldNotHappenException(sprintf(
 					'Pending fiber about real AST node %s on line %d - it should have been processed and its result stored during natural traversal.',
 					get_class($request->expr),
