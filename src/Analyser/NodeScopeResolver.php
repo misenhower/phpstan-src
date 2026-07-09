@@ -4274,6 +4274,7 @@ class NodeScopeResolver
 		});
 
 		$argResults = [];
+		$countStableMetadataAcceptor = null;
 		foreach ($processingOrder as $i) {
 			$arg = $args[$i];
 
@@ -4296,19 +4297,40 @@ class NodeScopeResolver
 				$metadataAcceptor !== null
 				&& (count($parametersAcceptors) > 1 || ParametersAcceptorSelector::hasAcceptorTemplateOrLateResolvableParameterType($metadataAcceptor))
 			) {
-				// Resolve the acceptor for this argument from the args gathered SO FAR, padded to the
-				// full argument count with mixed. Closures sort last and by-ref out-params follow the
-				// args that pin them, so determining siblings are already processed; the mixed pad keeps
-				// the argument COUNT correct so the by-ref/variadic variant stays stable (e.g. sscanf),
-				// while processed siblings resolve a generic callable(T) parameter. No forward read.
-				$paddedTypes = [];
-				$paddedUnpack = false;
-				$paddedHasName = false;
-				foreach ($args as $j => $paddedArg) {
-					$paddedOriginalArg = $paddedArg->getAttribute(ArgumentsNormalizer::ORIGINAL_ARG_ATTRIBUTE) ?? $paddedArg;
-					$this->addGatheredArgType($paddedTypes, $paddedUnpack, $paddedHasName, $paddedOriginalArg, $j, $gatheredArgTypeByIndex[$j] ?? new MixedType());
+				if ($this->argConsumesResolvedParameterType($arg->value)) {
+					// Resolve the acceptor for this argument from the args gathered SO FAR, padded to the
+					// full argument count with mixed. Closures sort last and by-ref out-params follow the
+					// args that pin them, so determining siblings are already processed; the mixed pad keeps
+					// the argument COUNT correct so the by-ref/variadic variant stays stable (e.g. sscanf),
+					// while processed siblings resolve a generic callable(T) parameter. No forward read.
+					$paddedTypes = [];
+					$paddedUnpack = false;
+					$paddedHasName = false;
+					foreach ($args as $j => $paddedArg) {
+						$paddedOriginalArg = $paddedArg->getAttribute(ArgumentsNormalizer::ORIGINAL_ARG_ATTRIBUTE) ?? $paddedArg;
+						$this->addGatheredArgType($paddedTypes, $paddedUnpack, $paddedHasName, $paddedOriginalArg, $j, $gatheredArgTypeByIndex[$j] ?? new MixedType());
+					}
+					$argMetadataAcceptor = $this->selectArgsMetadataAcceptor($args, $paddedTypes, $parametersAcceptors, $namedArgumentsVariants, $paddedHasName, $paddedUnpack, $scope);
+				} else {
+					// Only a closure/arrow function consumes the generic-RESOLVED
+					// parameter type: its body is inferred from the resolved
+					// callable(T) - directly, or through the in-function-call stack
+					// when nested anywhere inside the argument. Every other argument
+					// reads variant-stable facts off its parameter (by-ref flag,
+					// callable bookkeeping), so one all-mixed count-stable selection
+					// serves them all instead of a full template inference per argument.
+					if ($countStableMetadataAcceptor === null) {
+						$paddedTypes = [];
+						$paddedUnpack = false;
+						$paddedHasName = false;
+						foreach ($args as $j => $paddedArg) {
+							$paddedOriginalArg = $paddedArg->getAttribute(ArgumentsNormalizer::ORIGINAL_ARG_ATTRIBUTE) ?? $paddedArg;
+							$this->addGatheredArgType($paddedTypes, $paddedUnpack, $paddedHasName, $paddedOriginalArg, $j, new MixedType());
+						}
+						$countStableMetadataAcceptor = $this->selectArgsMetadataAcceptor($args, $paddedTypes, $parametersAcceptors, $namedArgumentsVariants, $paddedHasName, $paddedUnpack, $scope);
+					}
+					$argMetadataAcceptor = $countStableMetadataAcceptor;
 				}
-				$argMetadataAcceptor = $this->selectArgsMetadataAcceptor($args, $paddedTypes, $parametersAcceptors, $namedArgumentsVariants, $paddedHasName, $paddedUnpack, $scope);
 			}
 			$parameters = $argMetadataAcceptor?->getParameters();
 
@@ -4823,6 +4845,35 @@ class NodeScopeResolver
 		} else {
 			$types[$index] = $type;
 		}
+	}
+
+	/**
+	 * Whether processing this argument consumes the generic-RESOLVED parameter
+	 * type: a closure/arrow function does - its parameters and body scope are
+	 * typed from the resolved callable(T) - whether it IS the argument or is
+	 * nested anywhere inside it (the enclosing parameter is pushed on the
+	 * in-function-call stack and the nested closure types itself from there).
+	 * Every other argument only reads variant-stable facts off its parameter.
+	 */
+	private function argConsumesResolvedParameterType(Expr $value): bool
+	{
+		if ($value instanceof Expr\Closure || $value instanceof Expr\ArrowFunction) {
+			return true;
+		}
+
+		// cached on the node - args are re-processed across convergence passes
+		$cached = $value->getAttribute('phpstanArgContainsClosure');
+		if ($cached !== null) {
+			return $cached;
+		}
+
+		$contains = (new NodeFinder())->findFirst(
+			[$value],
+			static fn (Node $node): bool => $node instanceof Expr\Closure || $node instanceof Expr\ArrowFunction,
+		) !== null;
+		$value->setAttribute('phpstanArgContainsClosure', $contains);
+
+		return $contains;
 	}
 
 	/**
