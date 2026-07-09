@@ -3361,38 +3361,185 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 	public function invalidateExpression(Expr $expressionToInvalidate, bool $requireMoreCharacters = false, ?ClassReflection $invalidatingClass = null): self
 	{
+		$expressionTypes = $this->expressionTypes;
+		$nativeExpressionTypes = $this->nativeExpressionTypes;
+		$invalidated = false;
 		$exprStringToInvalidate = $this->getNodeKey($expressionToInvalidate);
 
-		$result = ScopeOps::invalidateExpressionEntries(
-			$this,
-			$this->exprPrinter,
-			$exprStringToInvalidate,
-			$expressionToInvalidate,
-			$requireMoreCharacters,
-			$invalidatingClass,
-			$this->expressionTypes,
-			$this->nativeExpressionTypes,
-			$this->conditionalExpressions,
-		);
-		if ($result === null) {
+		foreach ($expressionTypes as $exprString => $exprTypeHolder) {
+			if (!$this->shouldInvalidateExpression($exprStringToInvalidate, $expressionToInvalidate, $exprTypeHolder, $exprString, $requireMoreCharacters, $invalidatingClass)) {
+				continue;
+			}
+
+			unset($expressionTypes[$exprString]);
+			unset($nativeExpressionTypes[$exprString]);
+			$invalidated = true;
+		}
+
+		$newConditionalExpressions = [];
+		foreach ($this->conditionalExpressions as $conditionalExprString => $holders) {
+			if (count($holders) === 0) {
+				continue;
+			}
+			$firstHolder = $holders[array_key_first($holders)]->getTypeHolder();
+			if ($this->shouldInvalidateExpression($exprStringToInvalidate, $expressionToInvalidate, $firstHolder, $this->getNodeKey($firstHolder->getExpr()), $requireMoreCharacters, $invalidatingClass)) {
+				$invalidated = true;
+				continue;
+			}
+			$filteredHolders = [];
+			foreach ($holders as $key => $holder) {
+				$shouldKeep = true;
+				$conditionalTypeHolders = $holder->getConditionExpressionTypeHolders();
+				foreach ($conditionalTypeHolders as $conditionalTypeHolderExprString => $conditionalTypeHolder) {
+					if ($this->shouldInvalidateExpression($exprStringToInvalidate, $expressionToInvalidate, $conditionalTypeHolder, $conditionalTypeHolderExprString, false, $invalidatingClass)) {
+						$invalidated = true;
+						$shouldKeep = false;
+						break;
+					}
+				}
+				if (!$shouldKeep) {
+					continue;
+				}
+
+				$filteredHolders[$key] = $holder;
+			}
+			if (count($filteredHolders) <= 0) {
+				continue;
+			}
+
+			$newConditionalExpressions[$conditionalExprString] = $filteredHolders;
+		}
+
+		if (!$invalidated) {
 			return $this;
 		}
 
-		/** @var static */
-		return ScopeOps::scopeWith(
-			$this,
-			$result[0],
-			$result[1],
-			$result[2],
+		return $this->scopeFactory->create(
+			$this->context,
+			$this->isDeclareStrictTypes(),
+			$this->getFunction(),
+			$this->getNamespace(),
+			$expressionTypes,
+			$nativeExpressionTypes,
+			$newConditionalExpressions,
+			$this->inClosureBindScopeClasses,
+			$this->anonymousFunctionReflection,
+			$this->inFirstLevelStatement,
 			$this->currentlyAssignedExpressions,
 			$this->currentlyAllowedUndefinedExpressions,
 			[],
-			$this->inFirstLevelStatement,
 			$this->afterExtractCall,
+			$this->parentScope,
+			$this->nativeTypesPromoted,
 		);
 	}
 
-	/** @internal called by ScopeOps */
+	private function getIntertwinedRefRootVariableName(Expr $expr): ?string
+	{
+		if ($expr instanceof Variable && is_string($expr->name)) {
+			return $expr->name;
+		}
+		if ($expr instanceof Expr\ArrayDimFetch) {
+			return $this->getIntertwinedRefRootVariableName($expr->var);
+		}
+		return null;
+	}
+
+	private function shouldInvalidateExpression(string $exprStringToInvalidate, Expr $exprToInvalidate, ExpressionTypeHolder $exprTypeHolder, string $exprString, bool $requireMoreCharacters = false, ?ClassReflection $invalidatingClass = null): bool
+	{
+		$expr = $exprTypeHolder->getExpr();
+		if (
+			$expr instanceof IntertwinedVariableByReferenceWithExpr
+			&& $exprToInvalidate instanceof Variable
+			&& is_string($exprToInvalidate->name)
+			&& (
+				$expr->getVariableName() === $exprToInvalidate->name
+				|| $this->getIntertwinedRefRootVariableName($expr->getExpr()) === $exprToInvalidate->name
+				|| $this->getIntertwinedRefRootVariableName($expr->getAssignedExpr()) === $exprToInvalidate->name
+			)
+		) {
+			return false;
+		}
+
+		if ($requireMoreCharacters && $exprStringToInvalidate === $exprString) {
+			return false;
+		}
+
+		// Variables will not contain traversable expressions. skip the NodeFinder overhead
+		if ($expr instanceof Variable && is_string($expr->name) && !$requireMoreCharacters) {
+			return $exprStringToInvalidate === $exprString;
+		}
+
+		// getNodeKey() is the pretty-printed expression, and the standard printer is
+		// compositional: the key of any sub-expression appears verbatim as a substring of
+		// the key of the expression containing it. So if the invalidated expression's key
+		// does not appear anywhere in this expression's key, this expression cannot contain
+		// it and we can skip the expensive AST traversal below.
+		// Carve-outs where that invariant does not hold:
+		// - '$this' is special-cased in the visitor to also match self/static/parent,
+		// - PHPStan's virtual nodes (printed as '__phpstan…') use non-compositional printers
+		//   (e.g. a wrapped variable is printed by name, not as '$name'),
+		// - keys carrying a getNodeKey() suffix ('/*…*/') are not plain substrings.
+		if (
+			$exprStringToInvalidate !== '$this'
+			&& !str_contains($exprStringToInvalidate, '__phpstan')
+			&& !str_contains($exprStringToInvalidate, '/*')
+			&& !str_contains($exprString, '__phpstan')
+			&& !str_contains($exprString, $exprStringToInvalidate)
+		) {
+			return false;
+		}
+
+		if ($exprStringToInvalidate === '$this') {
+			// '$this' also matches self/static/parent and the current class name -
+			// name resolution depends on this scope, so the holder-cached key
+			// index below cannot answer it
+			$nodeFinder = new NodeFinder();
+			$expressionToInvalidateClass = get_class($exprToInvalidate);
+			$found = $nodeFinder->findFirst([$expr], function (Node $node) use ($expressionToInvalidateClass, $exprStringToInvalidate): bool {
+				if (
+					$node instanceof Name
+					&& (
+						in_array($node->toLowerString(), ['self', 'static', 'parent'], true)
+						|| ($this->getClassReflection() !== null && $this->getClassReflection()->is($this->resolveName($node)))
+					)
+				) {
+					return true;
+				}
+
+				if (!$node instanceof $expressionToInvalidateClass) {
+					return false;
+				}
+
+				return $this->getNodeKey($node) === $exprStringToInvalidate;
+			});
+
+			if ($found === null) {
+				return false;
+			}
+		} elseif (!isset($exprTypeHolder->getContainedNodeKeys($this->getNodeKey(...))[$exprStringToInvalidate][get_class($exprToInvalidate)])) {
+			return false;
+		}
+
+		if (
+			$expr instanceof PropertyFetch
+			&& $requireMoreCharacters
+			&& $this->isReadonlyPropertyFetch($expr, false)
+		) {
+			return false;
+		}
+
+		if (
+			$invalidatingClass !== null
+			&& $requireMoreCharacters
+			&& $this->isPrivatePropertyOfDifferentClass($expr, $invalidatingClass)
+		) {
+			return false;
+		}
+
+		return true;
+	}
+
 	public function isPrivatePropertyOfDifferentClass(Expr $expr, ClassReflection $invalidatingClass): bool
 	{
 		if ($expr instanceof Expr\StaticPropertyFetch || $expr instanceof PropertyFetch) {
@@ -3408,7 +3555,6 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 
 		return false;
 	}
-
 	private function invalidateMethodsOnExpression(Expr $expressionToInvalidate): self
 	{
 		$result = ScopeOps::invalidateMethodsOnExpression(
@@ -4270,7 +4416,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		$newVariableTypeHolders = [];
 		foreach ($variableTypeHolders as $variableExprString => $variableTypeHolder) {
 			foreach ($generalizedExpressions as $generalizedExprString => $generalizedExpr) {
-				if (!ScopeOps::shouldInvalidateExpression($this, $this->exprPrinter, $generalizedExprString, $generalizedExpr, $variableTypeHolder->getExpr(), $variableExprString)) {
+				if (!$this->shouldInvalidateExpression($generalizedExprString, $generalizedExpr, $variableTypeHolder, $variableExprString)) {
 					continue;
 				}
 
