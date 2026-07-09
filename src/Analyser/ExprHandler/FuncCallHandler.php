@@ -172,10 +172,6 @@ final class FuncCallHandler implements ExprHandler
 			// normalization, the impure point and the throw points - generics are
 			// resolved type-driven by processArgs() into $resolvedParametersAcceptor.
 			$parametersAcceptor = ParametersAcceptorSelector::combineVariantsForNormalization($expr->getArgs(), $variants, $namedArgumentsVariants);
-			$impurePoint = SimpleImpurePoint::createFromVariant($functionReflection, $parametersAcceptor, $scope, $expr->getArgs());
-			if ($impurePoint !== null) {
-				$impurePoints[] = new ImpurePoint($scope, $expr, $impurePoint->getIdentifier(), $impurePoint->getDescription(), $impurePoint->isCertain());
-			}
 		} else {
 			$impurePoints[] = new ImpurePoint(
 				$scope,
@@ -305,6 +301,16 @@ final class FuncCallHandler implements ExprHandler
 		$throwPoints = array_merge($throwPoints, $argsResult->getThrowPoints());
 		$impurePoints = array_merge($impurePoints, $argsResult->getImpurePoints());
 		$isAlwaysTerminating = $isAlwaysTerminating || $argsResult->isAlwaysTerminating();
+
+		if ($functionReflection !== null) {
+			// created after the args were processed - the side-effect flip
+			// parameters (print_r's $return, ...) read an argument's type, which
+			// is only available once its result is stored
+			$impurePoint = SimpleImpurePoint::createFromVariant($functionReflection, $parametersAcceptor, $scope, $expr->getArgs());
+			if ($impurePoint !== null) {
+				$impurePoints[] = new ImpurePoint($scopeBeforeArgs, $expr, $impurePoint->getIdentifier(), $impurePoint->getDescription(), $impurePoint->isCertain());
+			}
+		}
 
 		if ($arrayWalkValueTypes !== null && $arrayWalkArrayArg !== null) {
 			$arrayWalkOriginalArrayType = $scope->getType($arrayWalkArrayArg);
