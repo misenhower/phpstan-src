@@ -542,11 +542,19 @@ class NodeScopeResolver
 	{
 		$bodyScope = $scope;
 		$count = 0;
+		$prevEntryScope = null;
 		do {
 			$prevScope = $bodyScope;
 			if ($mergeBodyScopeEachIteration) {
 				$bodyScope = $bodyScope->mergeWith($scope);
 			}
+			if ($prevEntryScope !== null && $bodyScope->equals($prevEntryScope)) {
+				// walking is deterministic in the entry scope - an unchanged entry
+				// reproduces the previous pass's exit, so the verification walk is skipped
+				$bodyScope = $prevScope;
+				break;
+			}
+			$prevEntryScope = $bodyScope;
 			$tempStorage = $storage->duplicate();
 			$bodyScopeResult = $this->processStmtNodesInternal(
 				$parentNode,
@@ -1800,9 +1808,17 @@ class NodeScopeResolver
 						$scope->popExpressionResultStorage();
 					}
 					$count = 0;
+					$prevEntryScope = null;
 					do {
 						$prevScope = $bodyScope;
 						$bodyScope = $bodyScope->mergeWith($nonEmptyIterateeScope);
+						if ($prevEntryScope !== null && $bodyScope->equals($prevEntryScope)) {
+							// walking is deterministic in the entry scope - an unchanged entry
+							// reproduces the previous pass's exit, so the verification walk is skipped
+							$bodyScope = $prevScope;
+							break;
+						}
+						$prevEntryScope = $bodyScope;
 						$storage = $originalStorage->duplicate();
 						$scope->pushExpressionResultStorage($storage);
 						try {
@@ -2065,9 +2081,17 @@ class NodeScopeResolver
 
 			if ($context->isTopLevel()) {
 				$count = 0;
+				$prevEntryScope = null;
 				do {
 					$prevScope = $bodyScope;
 					$bodyScope = $bodyScope->mergeWith($scope);
+					if ($prevEntryScope !== null && $bodyScope->equals($prevEntryScope)) {
+						// walking is deterministic in the entry scope - an unchanged entry
+						// reproduces the previous pass's exit, so the verification walk is skipped
+						$bodyScope = $prevScope;
+						break;
+					}
+					$prevEntryScope = $bodyScope;
 					$storage = $originalStorage->duplicate();
 					$scope->pushExpressionResultStorage($storage);
 					try {
@@ -2169,9 +2193,18 @@ class NodeScopeResolver
 			$originalStorage = $storage;
 
 			if ($context->isTopLevel()) {
+				$prevEntryScope = null;
 				do {
 					$prevScope = $bodyScope;
 					$bodyScope = $bodyScope->mergeWith($scope);
+					if ($prevEntryScope !== null && $bodyScope->equals($prevEntryScope)) {
+						// walking is deterministic in the entry scope - an unchanged entry
+						// reproduces the previous pass's exit (and repeats only idempotent
+						// merges into the final scope), so the verification walk is skipped
+						$bodyScope = $prevScope;
+						break;
+					}
+					$prevEntryScope = $bodyScope;
 					$storage = $originalStorage->duplicate();
 					$scope->pushExpressionResultStorage($storage);
 					try {
@@ -2303,10 +2336,18 @@ class NodeScopeResolver
 
 			if ($context->isTopLevel()) {
 				$count = 0;
+				$prevEntryScope = null;
 				do {
 					$prevScope = $bodyScope;
 					$storage = $originalStorage->duplicate();
 					$bodyScope = $bodyScope->mergeWith($initScope);
+					if ($prevEntryScope !== null && $bodyScope->equals($prevEntryScope)) {
+						// walking is deterministic in the entry scope - an unchanged entry
+						// reproduces the previous pass's exit, so the verification walk is skipped
+						$bodyScope = $prevScope;
+						break;
+					}
+					$prevEntryScope = $bodyScope;
 					$scope->pushExpressionResultStorage($storage);
 					try {
 						if ($lastCondExpr !== null) {
