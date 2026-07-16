@@ -3574,7 +3574,7 @@ class MutatingScope implements Scope, NodeCallbackInvoker, CollectedDataEmitter
 		return true;
 	}
 
-	public function isPrivatePropertyOfDifferentClass(Expr $expr, ClassReflection $invalidatingClass): bool
+	private function isPrivatePropertyOfDifferentClass(Expr $expr, ClassReflection $invalidatingClass): bool
 	{
 		if ($expr instanceof Expr\StaticPropertyFetch || $expr instanceof PropertyFetch) {
 			$propertyReflection = $this->propertyReflectionFinder->findPropertyReflectionFromNode($expr, $this);

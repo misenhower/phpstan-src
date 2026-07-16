@@ -4,18 +4,13 @@ namespace PHPStan\Analyser;
 
 use PhpParser\Node;
 use PhpParser\Node\Expr;
-use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\MethodCall;
-use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\Variable;
-use PhpParser\Node\Name;
 use PhpParser\NodeFinder;
-use PHPStan\Node\Expr\IntertwinedVariableByReferenceWithExpr;
 use PHPStan\Node\Printer\ExprPrinter;
 use PHPStan\Node\VirtualNode;
 use PHPStan\Parser\ArrayMapArgVisitor;
-use PHPStan\Reflection\ClassReflection;
 use PHPStan\Reflection\FunctionReflection;
 use PHPStan\Reflection\MethodReflection;
 use PHPStan\Reflection\ParameterReflection;
@@ -24,15 +19,10 @@ use PHPStan\Type\ErrorType;
 use PHPStan\Type\Type;
 use function array_filter;
 use function array_key_exists;
-use function array_key_first;
+use function array_keys;
 use function count;
-use function get_class;
 use function in_array;
-use function is_array;
 use function is_string;
-use function str_contains;
-use function strlen;
-use function usort;
 
 /**
  * Hot scope-table operations extracted from MutatingScope.
@@ -374,7 +364,7 @@ final class ScopeOps
 		// branch — but it remains a valid conditional *target*, so only exclude
 		// it from guard selection instead of dropping it entirely.
 		$guardsToExclude = [];
-		foreach ($differingKeys as $exprString => $unusedDiffMarker) {
+		foreach (array_keys($differingKeys) as $exprString) {
 			if (!array_key_exists($exprString, $theirExpressionTypes)) {
 				continue;
 			}
@@ -399,7 +389,7 @@ final class ScopeOps
 		}
 
 		$typeGuards = [];
-		foreach ($differingKeys as $exprString => $unusedDiffMarker) {
+		foreach (array_keys($differingKeys) as $exprString) {
 			if (!array_key_exists($exprString, $newVariableTypes)) {
 				continue;
 			}
@@ -443,7 +433,7 @@ final class ScopeOps
 		$guardIsSuperTypeOfTheirExprCache = [];
 		$theirExprIsSuperTypeOfGuardCache = [];
 
-		foreach ($differingKeys as $exprString => $unusedDiffMarker) {
+		foreach (array_keys($differingKeys) as $exprString) {
 			if (!array_key_exists($exprString, $newVariableTypes)) {
 				continue;
 			}
@@ -508,7 +498,7 @@ final class ScopeOps
 			}
 		}
 
-		foreach ($differingKeys as $exprString => $unusedDiffMarker) {
+		foreach (array_keys($differingKeys) as $exprString) {
 			if (!array_key_exists($exprString, $mergedExpressionTypes)) {
 				continue;
 			}
@@ -524,130 +514,6 @@ final class ScopeOps
 		}
 
 		return $conditionalExpressions;
-	}
-
-	/**
-	 * Depth-first pre-order search for the invalidated expression, replacing a
-	 * NodeFinder::findFirst() call - this runs for every (stored expression,
-	 * invalidated expression) pair whose keys pass the substring pre-filter,
-	 * so the traverser/visitor machinery overhead was significant.
-	 *
-	 * @param class-string<Expr> $expressionToInvalidateClass
-	 */
-	private static function containsExpressionToInvalidate(Scope $scope, ExprPrinter $exprPrinter, Node $node, string $expressionToInvalidateClass, string $exprStringToInvalidate): bool
-	{
-		if (
-			$exprStringToInvalidate === '$this'
-			&& $node instanceof Name
-			&& (
-				in_array($node->toLowerString(), ['self', 'static', 'parent'], true)
-				|| ($scope->getClassReflection() !== null && $scope->getClassReflection()->is($scope->resolveName($node)))
-			)
-		) {
-			return true;
-		}
-
-		if (
-			$node instanceof $expressionToInvalidateClass
-			&& self::nodeKey($node, $exprPrinter) === $exprStringToInvalidate
-		) {
-			return true;
-		}
-
-		foreach ($node->getSubNodeNames() as $subNodeName) {
-			$subNode = $node->$subNodeName;
-			if ($subNode instanceof Node) {
-				if (self::containsExpressionToInvalidate($scope, $exprPrinter, $subNode, $expressionToInvalidateClass, $exprStringToInvalidate)) {
-					return true;
-				}
-			} elseif (is_array($subNode)) {
-				foreach ($subNode as $subNodeItem) {
-					if (
-						$subNodeItem instanceof Node
-						&& self::containsExpressionToInvalidate($scope, $exprPrinter, $subNodeItem, $expressionToInvalidateClass, $exprStringToInvalidate)
-					) {
-						return true;
-					}
-				}
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * The scan of MutatingScope::invalidateExpression(): computes the tables
-	 * with the invalidated entries removed, or null when nothing changed.
-	 *
-	 * @param array<string, ExpressionTypeHolder> $expressionTypes
-	 * @param array<string, ExpressionTypeHolder> $nativeExpressionTypes
-	 * @param array<string, ConditionalExpressionHolder[]> $conditionalExpressions
-	 * @return array{array<string, ExpressionTypeHolder>, array<string, ExpressionTypeHolder>, array<string, ConditionalExpressionHolder[]>}|null
-	 */
-	public static function invalidateExpressionEntries(
-		MutatingScope $scope,
-		ExprPrinter $exprPrinter,
-		string $exprStringToInvalidate,
-		Expr $expressionToInvalidate,
-		bool $requireMoreCharacters,
-		?ClassReflection $invalidatingClass,
-		array $expressionTypes,
-		array $nativeExpressionTypes,
-		array $conditionalExpressions,
-	): ?array
-	{
-		$invalidated = false;
-
-		foreach ($expressionTypes as $exprString => $exprTypeHolder) {
-			$exprExpr = $exprTypeHolder->getExpr();
-			if (!self::shouldInvalidateExpression($scope, $exprPrinter, $exprStringToInvalidate, $expressionToInvalidate, $exprExpr, (string) $exprString, $requireMoreCharacters, $invalidatingClass)) {
-				continue;
-			}
-
-			unset($expressionTypes[$exprString]);
-			unset($nativeExpressionTypes[$exprString]);
-			$invalidated = true;
-		}
-
-		$newConditionalExpressions = [];
-		foreach ($conditionalExpressions as $conditionalExprString => $holders) {
-			if (count($holders) === 0) {
-				continue;
-			}
-			$firstExpr = $holders[array_key_first($holders)]->getTypeHolder()->getExpr();
-			if (self::shouldInvalidateExpression($scope, $exprPrinter, $exprStringToInvalidate, $expressionToInvalidate, $firstExpr, self::nodeKey($firstExpr, $exprPrinter), $requireMoreCharacters, $invalidatingClass)) {
-				$invalidated = true;
-				continue;
-			}
-			$filteredHolders = [];
-			foreach ($holders as $key => $holder) {
-				$shouldKeep = true;
-				$conditionalTypeHolders = $holder->getConditionExpressionTypeHolders();
-				foreach ($conditionalTypeHolders as $conditionalTypeHolderExprString => $conditionalTypeHolder) {
-					if (self::shouldInvalidateExpression($scope, $exprPrinter, $exprStringToInvalidate, $expressionToInvalidate, $conditionalTypeHolder->getExpr(), (string) $conditionalTypeHolderExprString, invalidatingClass: $invalidatingClass)) {
-						$invalidated = true;
-						$shouldKeep = false;
-						break;
-					}
-				}
-				if (!$shouldKeep) {
-					continue;
-				}
-
-				$filteredHolders[$key] = $holder;
-			}
-			if (count($filteredHolders) <= 0) {
-				continue;
-			}
-
-			$newConditionalExpressions[$conditionalExprString] = $filteredHolders;
-		}
-
-		if (!$invalidated) {
-			return null;
-		}
-
-		return [$expressionTypes, $nativeExpressionTypes, $newConditionalExpressions];
 	}
 
 	/**
@@ -689,76 +555,6 @@ final class ScopeOps
 		return [$expressionTypes, $nativeExpressionTypes];
 	}
 
-	/**
-	 * Mirrors the former MutatingScope::shouldInvalidateExpression().
-	 */
-	public static function shouldInvalidateExpression(MutatingScope $scope, ExprPrinter $exprPrinter, string $exprStringToInvalidate, Expr $exprToInvalidate, Expr $expr, string $exprString, bool $requireMoreCharacters = false, ?ClassReflection $invalidatingClass = null): bool
-	{
-		if (
-			$expr instanceof IntertwinedVariableByReferenceWithExpr
-			&& $exprToInvalidate instanceof Variable
-			&& is_string($exprToInvalidate->name)
-			&& (
-				$expr->getVariableName() === $exprToInvalidate->name
-				|| self::getIntertwinedRefRootVariableName($expr->getExpr()) === $exprToInvalidate->name
-				|| self::getIntertwinedRefRootVariableName($expr->getAssignedExpr()) === $exprToInvalidate->name
-			)
-		) {
-			return false;
-		}
-
-		if ($requireMoreCharacters && $exprStringToInvalidate === $exprString) {
-			return false;
-		}
-
-		// Variables will not contain traversable expressions. skip the NodeFinder overhead
-		if ($expr instanceof Variable && is_string($expr->name) && !$requireMoreCharacters) {
-			return $exprStringToInvalidate === $exprString;
-		}
-
-		// getNodeKey() is the pretty-printed expression, and the standard printer is
-		// compositional: the key of any sub-expression appears verbatim as a substring of
-		// the key of the expression containing it. So if the invalidated expression's key
-		// does not appear anywhere in this expression's key, this expression cannot contain
-		// it and we can skip the expensive AST traversal below.
-		// Carve-outs where that invariant does not hold:
-		// - '$this' is special-cased in the visitor to also match self/static/parent,
-		// - PHPStan's virtual nodes (printed as '__phpstan…') use non-compositional printers
-		//   (e.g. a wrapped variable is printed by name, not as '$name'),
-		// - keys carrying a getNodeKey() suffix ('/*…*/') are not plain substrings.
-		if (
-			$exprStringToInvalidate !== '$this'
-			&& !str_contains($exprStringToInvalidate, '__phpstan')
-			&& !str_contains($exprStringToInvalidate, '/*')
-			&& !str_contains($exprString, '__phpstan')
-			&& !str_contains($exprString, $exprStringToInvalidate)
-		) {
-			return false;
-		}
-
-		if (!self::containsExpressionToInvalidate($scope, $exprPrinter, $expr, get_class($exprToInvalidate), $exprStringToInvalidate)) {
-			return false;
-		}
-
-		if (
-			$expr instanceof PropertyFetch
-			&& $requireMoreCharacters
-			&& $scope->isReadonlyPropertyFetch($expr, false)
-		) {
-			return false;
-		}
-
-		if (
-			$invalidatingClass !== null
-			&& $requireMoreCharacters
-			&& $scope->isPrivatePropertyOfDifferentClass($expr, $invalidatingClass)
-		) {
-			return false;
-		}
-
-		return true;
-	}
-
 	public static function getIntertwinedRefRootVariableName(Expr $expr): ?string
 	{
 		if ($expr instanceof Variable && is_string($expr->name)) {
@@ -768,51 +564,6 @@ final class ScopeOps
 			return self::getIntertwinedRefRootVariableName($expr->var);
 		}
 		return null;
-	}
-
-	/**
-	 * The sorted type-specification list of MutatingScope::filterBySpecifiedTypes().
-	 *
-	 * @param array<string|int, array{Expr, Type}> $sureTypes
-	 * @param array<string|int, array{Expr, Type}> $sureNotTypes
-	 * @return list<array{sure: bool, exprString: string, expr: Expr, type: Type}>
-	 */
-	public static function buildTypeSpecifications(array $sureTypes, array $sureNotTypes): array
-	{
-		$typeSpecifications = [];
-		foreach ($sureTypes as $exprString => [$expr, $type]) {
-			if ($expr instanceof Node\Scalar || $expr instanceof Array_ || $expr instanceof Expr\UnaryMinus && $expr->expr instanceof Node\Scalar) {
-				continue;
-			}
-			$typeSpecifications[] = [
-				'sure' => true,
-				'exprString' => (string) $exprString,
-				'expr' => $expr,
-				'type' => $type,
-			];
-		}
-		foreach ($sureNotTypes as $exprString => [$expr, $type]) {
-			if ($expr instanceof Node\Scalar || $expr instanceof Array_ || $expr instanceof Expr\UnaryMinus && $expr->expr instanceof Node\Scalar) {
-				continue;
-			}
-			$typeSpecifications[] = [
-				'sure' => false,
-				'exprString' => (string) $exprString,
-				'expr' => $expr,
-				'type' => $type,
-			];
-		}
-
-		usort($typeSpecifications, static function (array $a, array $b): int {
-			$length = strlen($a['exprString']) - strlen($b['exprString']);
-			if ($length !== 0) {
-				return $length;
-			}
-
-			return $b['sure'] - $a['sure']; // @phpstan-ignore minus.leftNonNumeric, minus.rightNonNumeric
-		});
-
-		return $typeSpecifications;
 	}
 
 	/**
