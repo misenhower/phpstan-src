@@ -46,6 +46,8 @@ final class LazyInternalScopeFactory implements InternalScopeFactory
 
 	private ?AttributeReflectionFactory $attributeReflectionFactory = null;
 
+	private ?self $twin = null;
+
 	/**
 	 * @param callable(Node $node, Scope $scope): void|null $nodeCallback
 	 */
@@ -131,12 +133,28 @@ final class LazyInternalScopeFactory implements InternalScopeFactory
 
 	public function toFiberFactory(): InternalScopeFactory
 	{
-		return new self($this->container, $this->nodeCallback, true);
+		return $this->fiber ? $this : $this->twin();
 	}
 
 	public function toMutatingFactory(): InternalScopeFactory
 	{
-		return new self($this->container, $this->nodeCallback, false);
+		return $this->fiber ? $this->twin() : $this;
+	}
+
+	/**
+	 * The factory for the other scope flavour, created once and paired both
+	 * ways. Scopes switch flavour constantly, and a fresh factory would start
+	 * with empty memos — resolving every service above out of the container
+	 * again on its first create().
+	 */
+	private function twin(): self
+	{
+		if ($this->twin === null) {
+			$this->twin = new self($this->container, $this->nodeCallback, !$this->fiber);
+			$this->twin->twin = $this;
+		}
+
+		return $this->twin;
 	}
 
 }
